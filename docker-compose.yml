@@ -1,0 +1,12 @@
+# 로컬에 Mosquitto를 직접 설치하기 귀찮다면, Docker로 간단히 띄울 수 있습니다.
+# 실행: docker compose up -d
+# 종료: docker compose down
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: induction-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
