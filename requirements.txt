@@ -1,0 +1,3 @@
+# Offline TTS engine. No LLM package is installed in this stage.
+pyttsx3>=2.90,<3.0
+google-genai
