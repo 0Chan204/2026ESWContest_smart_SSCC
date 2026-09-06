@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="HomeVIS">
+  <rect width="512" height="512" fill="#1B4FCA"/>
+  <path d="M256 160 L376 260 v112 a20 20 0 0 1 -20 20 H156 a20 20 0 0 1 -20 -20 V260 Z"
+        fill="none" stroke="#ffffff" stroke-width="26" stroke-linejoin="round"/>
+  <path d="M208 308 l32 36 70 -80" fill="none" stroke="#ffffff" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

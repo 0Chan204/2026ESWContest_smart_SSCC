@@ -1,0 +1,16 @@
+{
+  "name": "HomeVIS 스마트홈 안전 모니터링",
+  "short_name": "HomeVIS",
+  "description": "집 안 공간의 사용자 상태와 가전 상태를 모니터링하고 위험 상황을 알려줍니다.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#F5F7FB",
+  "theme_color": "#1B4FCA",
+  "lang": "ko",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
