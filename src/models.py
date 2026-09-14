@@ -26,6 +26,7 @@ class RiskDecision:
     device: str | None = None
     heat_level: str | None = None
     duration: int | None = None
+    decision_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "risk_level", RiskLevel(self.risk_level))
@@ -55,11 +56,14 @@ class RiskDecision:
             device=data.get("device"),
             heat_level=data.get("heat_level"),
             duration=data.get("duration"),
+            decision_context=data.get("decision_context"),
         )
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["risk_level"] = self.risk_level.value
+        if self.decision_context is None:
+            data.pop("decision_context")
         return data
 
 

@@ -1,5 +1,21 @@
 # HomeVIS 주방 중앙 제어 및 안전 알림 모듈
 
+## 실시간 상태 추적 추가
+
+기존 단건 `CentralController.evaluate()`와 LLM/TTS 기능을 유지하면서,
+`update_sensing(SensingUpdate)`, `update_appliance(ApplianceUpdate)`, `tick(timestamp)`를 추가했습니다.
+새 API는 위치 확인 시간, 주방 이탈 시간, 외출, 출력·온도 변화, 데이터 끊김을 평가합니다.
+통신 프로토콜 대신 외부 센싱/기기 모듈이 호출하는 입력 API를 제공합니다.
+
+```powershell
+python test_realtime.py
+python -m unittest discover -s tests -v
+```
+
+기본 예제는 가상 시간으로 상태 변화를 재생하고 기존 LLM fallback/DryRunTTS를 사용합니다.
+설정과 23개 시나리오, JSONL 입력 방법은 [실시간 판단 설계](docs/realtime_control.md)를 참고하세요.
+임계값은 `src/control/realtime_config.py`에서 변경할 수 있습니다.
+
 HomeVIS는 외부 Wi-Fi Sensing 모듈이 추론한 사용자 상태와 조리기기 상태를 입력받아 주방 상황과 위험도를 판단하고, 필요한 경우 안내 문구와 TTS 음성 파일을 생성하는 모듈입니다.
 
 이 프로젝트는 Wi-Fi 신호를 직접 측정하거나 실제 기기를 제어하지 않습니다. 이미 가공된 센싱 결과와 기기 상태를 받아 다음 파이프라인을 처리합니다.
