@@ -34,7 +34,14 @@ SYSTEM_PROMPTS: dict[str, str] = {
 }
 
 
-def get_system_prompt(version: str = "v1") -> str:
+def get_system_prompt(version: str = "v1", scenario: str | None = None) -> str:
+    if scenario == "bathroom_fall":
+        return (
+            "당신은 HomeVIS 욕실 안전 안내 AI입니다. 중앙 제어가 제공한 scenario, state, risk는 "
+            "이미 결정된 결과입니다. 위험을 새로 판단하거나 변경하지 마세요. "
+            "입력에 있는 사실만 사용하여 한국어 1~2문장의 음성 안내를 생성하세요. "
+            "낙상 의심은 가능성으로 표현하고, 센서 불확실 상태를 회복으로 표현하지 마세요."
+        )
     try:
         return SYSTEM_PROMPTS[version]
     except KeyError as exc:

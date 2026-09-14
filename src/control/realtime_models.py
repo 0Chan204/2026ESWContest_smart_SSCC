@@ -28,9 +28,11 @@ class SensingUpdate:
     activity: str = "unknown"
     confidence: float = 1.0
     detected: bool = True
+    motion_state: str | None = None
+    fall_detected: bool | None = None
 
     def __post_init__(self):
-        if self.location not in {"kitchen", "living_room", "bedroom", "entrance", "outside", "unknown"}:
+        if self.location not in {"kitchen", "bathroom", "living_room", "bedroom", "entrance", "outside", "unknown"}:
             raise ValueError("Unsupported realtime location")
         finite("timestamp", self.timestamp)
         finite("confidence", self.confidence)
@@ -38,6 +40,10 @@ class SensingUpdate:
             raise ValueError("confidence must be between 0 and 1")
         if type(self.detected) is not bool:
             raise ValueError("detected must be boolean")
+        if self.motion_state not in {None, "moving", "still", "unknown"}:
+            raise ValueError("Unsupported motion state")
+        if self.fall_detected is not None and type(self.fall_detected) is not bool:
+            raise ValueError("fall_detected must be boolean or None")
 
 
 @dataclass(frozen=True)

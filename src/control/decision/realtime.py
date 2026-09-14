@@ -43,7 +43,7 @@ class RealtimeDecisionEngine:
             self.outside_start_time = None
         self._sensing = sample
         self.last_sensor_update = sample.timestamp
-        uncertain = sample.confidence < c.MIN_CONFIDENCE or (sample.detected and sample.location == "unknown")
+        uncertain = not sample.detected or sample.confidence < c.MIN_CONFIDENCE or sample.location == "unknown"
         if uncertain:
             if self._unknown_since is None:
                 self._unknown_since = sample.timestamp
@@ -51,7 +51,7 @@ class RealtimeDecisionEngine:
             self.outside_start_time = None
         else:
             self._unknown_since = None
-            location = sample.location if sample.detected else "outside"
+            location = sample.location
             if location != self._candidate:
                 self._candidate = location
                 self._candidate_since = sample.timestamp

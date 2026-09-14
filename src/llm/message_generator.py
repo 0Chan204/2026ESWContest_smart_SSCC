@@ -34,6 +34,10 @@ def get_default_message(decision: RiskDecision) -> str:
         return ""
 
     situation = (decision.situation or "").upper()
+    if (decision.decision_context or {}).get("scenario") == "bathroom_fall":
+        if situation == "FALL_EMERGENCY":
+            return "욕실에서 낙상 후 움직임이 확인되지 않고 있습니다."
+        return "욕실에서 낙상 가능성이 감지되었습니다. 괜찮으신가요?"
     user_state = (decision.user_state or "").upper()
 
     unattended = situation == "COOKING_UNATTENDED" or user_state == "OUT"
@@ -81,7 +85,7 @@ class LLMMessageGenerator:
 
         try:
             response = self.llm.generate(
-                get_system_prompt(self.prompt_version),
+                get_system_prompt(self.prompt_version, (decision.decision_context or {}).get("scenario")),
                 build_user_prompt(decision),
             )
             cleaned = response.strip()

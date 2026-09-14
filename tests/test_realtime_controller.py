@@ -93,11 +93,13 @@ class RealtimeControllerTest(unittest.TestCase):
         self.assertEqual(result.state, "SENSOR_UNCERTAIN")
         self.assertNotEqual(result.user_location, "outside")
 
-    def test_explicit_non_detection_confirms_outside(self):
+    def test_explicit_non_detection_preserves_location_then_uncertain(self):
         self.start()
         self.c.update_sensing(SensingUpdate("unknown", 10, detected=False))
         result = self.c.update_sensing(SensingUpdate("unknown", 20, detected=False))
-        self.assertEqual(result.state, "DANGER")
+        self.assertEqual(result.user_location, "kitchen")
+        self.assertNotEqual(result.state, "DANGER")
+        self.assertEqual(self.c.tick(30).state, "SENSOR_UNCERTAIN")
 
     def test_missing_updates_do_not_confirm_outside(self):
         self.start()
