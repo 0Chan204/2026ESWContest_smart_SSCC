@@ -1,13 +1,84 @@
 from __future__ import annotations
 
-from .base import BaseLLMAdapter, LLMNotConfiguredError
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from .base import BaseLLMAdapter
 
 
 class QwenAdapter(BaseLLMAdapter):
-    name = "qwen"
+    name = "qwen3-8b"
 
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
-        # TODO: Connect the local Qwen implementation here later.
-        raise LLMNotConfiguredError(
-            "QwenAdapter is a placeholder. Connect the local Qwen model here."
+    def __init__(
+        self,
+        model_name: str = "Qwen/Qwen3-8B",
+        max_new_tokens: int = 128,
+    ) -> None:
+        self.model_name = model_name
+        self.max_new_tokens = max_new_tokens
+
+        print(f"[Qwen] Loading {model_name}...")
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name
         )
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype="auto",
+            device_map="auto",
+        )
+
+        self.model.eval()
+
+        print("[Qwen] Model loaded.")
+
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+
+        messages = [
+            {
+                "role": "system",
+                "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+            },
+        ]
+
+        text = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+
+        model_inputs = self.tokenizer(
+            [text],
+            return_tensors="pt",
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **model_inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=True,
+                temperature=0.7,
+                top_p=0.8,
+                top_k=20,
+            )
+
+        output_ids = generated_ids[0][
+            len(model_inputs.input_ids[0]):
+        ]
+
+        response = self.tokenizer.decode(
+            output_ids,
+            skip_special_tokens=True,
+        )
+
+        return response.strip()
