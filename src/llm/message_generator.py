@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from src.llm.adapters.base import BaseLLMAdapter
-from src.llm.prompts import build_user_prompt, get_system_prompt
+from src.llm.prompts import build_device_command_user_prompt, build_user_prompt, get_system_prompt
 from src.models import RiskDecision, RiskLevel
+
+if TYPE_CHECKING:
+    from src.control.scenario_models import DeviceCommand
 
 
 DEFAULT_MESSAGES: dict[str, str] = {
@@ -49,6 +53,25 @@ def get_default_message(decision: RiskDecision) -> str:
     return DEFAULT_MESSAGES[decision.risk_level.value]
 
 
+def get_default_device_command_message(command: "DeviceCommand") -> str:
+    return f"물 {command.amount_ml}밀리리터를 준비하도록 요청했습니다."
+
+
+def claims_dispense_completion(message: str) -> bool:
+    return any(phrase in message for phrase in (
+        "준비되었습니다",
+        "준비됐습니다",
+        "준비했습니다",
+        "준비가 완료",
+        "출수가 완료",
+        "출수 완료",
+        "출수되었습니다",
+        "출수됐습니다",
+        "나왔습니다",
+        "나왔어요",
+    ))
+
+
 class LLMMessageGenerator:
     """Generate a spoken message with LLM -> fallback behavior."""
 
@@ -91,6 +114,44 @@ class LLMMessageGenerator:
             cleaned = response.strip()
             if not cleaned:
                 raise ValueError("LLM returned an empty response")
+
+            return MessageGenerationResult(
+                message=cleaned,
+                llm_name=self.llm_name,
+                prompt_version=self.prompt_version,
+                fallback_used=False,
+            )
+        except Exception as exc:
+            return MessageGenerationResult(
+                message=fallback,
+                llm_name=self.llm_name,
+                prompt_version=self.prompt_version,
+                fallback_used=True,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    def generate_device_command(self, command: "DeviceCommand") -> MessageGenerationResult:
+        """Describe an issued morning-water command without claiming completion."""
+        fallback = get_default_device_command_message(command)
+
+        if self.llm is None:
+            return MessageGenerationResult(
+                message=fallback,
+                llm_name="none",
+                prompt_version=self.prompt_version,
+                fallback_used=True,
+            )
+
+        try:
+            response = self.llm.generate(
+                get_system_prompt(self.prompt_version, "morning_water"),
+                build_device_command_user_prompt(command),
+            )
+            cleaned = response.strip()
+            if not cleaned:
+                raise ValueError("LLM returned an empty response")
+            if claims_dispense_completion(cleaned):
+                raise ValueError("LLM claimed unconfirmed water dispensing completion")
 
             return MessageGenerationResult(
                 message=cleaned,

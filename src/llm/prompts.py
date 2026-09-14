@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 from src.models import RiskDecision
+
+if TYPE_CHECKING:
+    from src.control.scenario_models import DeviceCommand
 
 
 SYSTEM_PROMPTS: dict[str, str] = {
@@ -33,8 +37,20 @@ SYSTEM_PROMPTS: dict[str, str] = {
 - 실제로 사용자가 듣게 될 안내 문장만 출력하세요."""
 }
 
+MORNING_WATER_SYSTEM_PROMPT = (
+    "당신은 HomeVIS 생활 지원 안내 AI입니다. "
+    "중앙 제어 시스템에서 생성된 장치 제어 명령을 사용자가 이해하기 쉬운 "
+    "짧고 자연스러운 한국어 음성 안내로 변환하세요. "
+    "중앙 제어가 이미 결정한 DeviceCommand를 재판단하거나 변경하지 마세요. "
+    "명령에 포함된 내용만 전달하고 입력에 없는 사실을 추가하지 마세요. "
+    "실제 출수 완료가 확인되지 않았으므로 완료되었다고 단정하지 마세요. "
+    "TTS로 읽기 좋은 한 문장으로 답하세요."
+)
+
 
 def get_system_prompt(version: str = "v1", scenario: str | None = None) -> str:
+    if scenario == "morning_water":
+        return MORNING_WATER_SYSTEM_PROMPT
     if scenario == "bathroom_fall":
         return (
             "당신은 HomeVIS 욕실 안전 안내 AI입니다. 중앙 제어가 제공한 scenario, state, risk는 "
@@ -60,5 +76,21 @@ def build_user_prompt(decision: RiskDecision) -> str:
     return (
         "다음은 외부 상황 판단 모델이 전달한 결과입니다.\n"
         "이 결과를 재판단하지 말고, 사용자가 실제로 들을 안내 문장만 생성하세요.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def build_device_command_user_prompt(command: "DeviceCommand") -> str:
+    payload = {
+        "scenario": "morning_water",
+        "command_type": command.command_type,
+        "device": command.device,
+        "amount_ml": command.amount_ml,
+        "water_temperature": command.water_temperature,
+        "reason": command.reason,
+    }
+    return (
+        "다음은 중앙 제어 시스템이 이미 결정한 장치 제어 명령입니다.\n"
+        "이 명령을 재판단하지 말고, 실제 동작 완료를 단정하지 않는 사용자 안내 문장만 생성하세요.\n\n"
         + json.dumps(payload, ensure_ascii=False, indent=2)
     )

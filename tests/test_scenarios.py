@@ -3,9 +3,9 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from src.alert_service import AlertService
-from src.control import ApplianceUpdate, CentralController, ScenarioConfig, SensingUpdate
+from src.control import ApplianceUpdate, CentralController, DeviceCommand, ScenarioConfig, SensingUpdate
 from src.llm.message_generator import LLMMessageGenerator
-from src.llm.prompts import get_system_prompt
+from src.llm.prompts import build_device_command_user_prompt, get_system_prompt
 from src.voice.tts import DryRunTTS
 
 
@@ -220,3 +220,81 @@ class ScenarioTest(unittest.TestCase):
         kitchen = self.c.update_appliance(ApplianceUpdate(False, self.base + 12))
         self.assertEqual(kitchen.state, "RECOVERED")
         self.assertEqual(self.c.bathroom_decision.risk, "HIGH")
+
+    def test_generated_water_command_can_create_llm_message(self):
+        class RecordingLLM:
+            name = "qwen3-8b"
+
+            def generate(inner, system_prompt, user_prompt):
+                self.assertIn("완료되었다고 단정하지 마세요", system_prompt)
+                self.assertIn('"scenario": "morning_water"', user_prompt)
+                self.assertIn('"command_type": "DISPENSE_WATER"', user_prompt)
+                self.assertIn('"amount_ml": 250', user_prompt)
+                return "아침에 드실 물 250밀리리터를 준비하고 있습니다."
+
+        self.dispense()
+        command = self.c.drain_device_commands()[0]
+        result = LLMMessageGenerator(RecordingLLM()).generate_device_command(command)
+        self.assertEqual(result.message, "아침에 드실 물 250밀리리터를 준비하고 있습니다.")
+        self.assertEqual(result.llm_name, "qwen3-8b")
+        self.assertFalse(result.fallback_used)
+
+    def test_water_command_without_llm_uses_fallback(self):
+        command = DeviceCommand(timestamp=self.base, amount_ml=250)
+        result = LLMMessageGenerator().generate_device_command(command)
+        self.assertEqual(result.message, "물 250밀리리터를 준비하도록 요청했습니다.")
+        self.assertTrue(result.fallback_used)
+        self.assertEqual(result.llm_name, "none")
+
+    def test_water_command_llm_error_uses_fallback(self):
+        class FailingLLM:
+            name = "qwen3-8b"
+
+            def generate(self, system_prompt, user_prompt):
+                raise RuntimeError("Qwen unavailable")
+
+        command = DeviceCommand(timestamp=self.base, amount_ml=250)
+        result = LLMMessageGenerator(FailingLLM()).generate_device_command(command)
+        self.assertEqual(result.message, "물 250밀리리터를 준비하도록 요청했습니다.")
+        self.assertTrue(result.fallback_used)
+        self.assertIn("Qwen unavailable", result.error)
+
+    def test_water_command_fallback_uses_configured_amount(self):
+        command = DeviceCommand(timestamp=self.base, amount_ml=150)
+        result = LLMMessageGenerator().generate_device_command(command)
+        self.assertEqual(result.message, "물 150밀리리터를 준비하도록 요청했습니다.")
+
+    def test_water_command_empty_or_completion_claim_uses_fallback(self):
+        class FakeLLM:
+            name = "qwen3-8b"
+
+            def __init__(self, message):
+                self.message = message
+
+            def generate(self, system_prompt, user_prompt):
+                return self.message
+
+        command = DeviceCommand(timestamp=self.base, amount_ml=250)
+        for message in ("   ", "물이 준비되었습니다.", "출수가 완료되었습니다."):
+            with self.subTest(message=message):
+                result = LLMMessageGenerator(FakeLLM(message)).generate_device_command(command)
+                self.assertTrue(result.fallback_used)
+                self.assertEqual(result.message, "물 250밀리리터를 준비하도록 요청했습니다.")
+
+    def test_morning_water_prompt_and_existing_prompts_are_distinct(self):
+        morning = get_system_prompt("v1", "morning_water")
+        bathroom = get_system_prompt("v1", "bathroom_fall")
+        kitchen = get_system_prompt("v1")
+        self.assertIn("DeviceCommand를 재판단하거나 변경하지 마세요", morning)
+        self.assertIn("완료되었다고 단정하지 마세요", morning)
+        self.assertIn("욕실 안전 안내", bathroom)
+        self.assertIn("센서 불확실 상태를 회복으로 표현하지 마세요", bathroom)
+        self.assertIn("조리 안전 안내", kitchen)
+        self.assertIn("위험도를 새로 판단하거나 변경하지 마세요", kitchen)
+
+    def test_water_command_prompt_contains_required_fields(self):
+        command = DeviceCommand(timestamp=self.base, amount_ml=150, reason="test reason")
+        prompt = build_device_command_user_prompt(command)
+        for value in ("morning_water", "DISPENSE_WATER", "water_dispenser",
+                      "150", "room_temp", "test reason"):
+            self.assertIn(value, prompt)

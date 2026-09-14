@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -11,22 +13,28 @@ class QwenAdapter(BaseLLMAdapter):
 
     def __init__(
         self,
-        model_name: str = "Qwen/Qwen3-8B",
+        model_path: str | None = None,
         max_new_tokens: int = 128,
     ) -> None:
-        self.model_name = model_name
+        self.model_path = model_path or str(
+            Path.home() / "models" / "Qwen3-8B"
+        )
         self.max_new_tokens = max_new_tokens
 
-        print(f"[Qwen] Loading {model_name}...")
+        print(f"[Qwen] Loading local model: {self.model_path}")
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name
+            self.model_path,
+            local_files_only=True,
+            trust_remote_code=True,
         )
 
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
+            self.model_path,
             torch_dtype="auto",
             device_map="auto",
+            local_files_only=True,
+            trust_remote_code=True,
         )
 
         self.model.eval()
@@ -58,7 +66,7 @@ class QwenAdapter(BaseLLMAdapter):
         )
 
         model_inputs = self.tokenizer(
-            [text],
+            text,
             return_tensors="pt",
         ).to(self.model.device)
 
@@ -73,7 +81,7 @@ class QwenAdapter(BaseLLMAdapter):
             )
 
         output_ids = generated_ids[0][
-            len(model_inputs.input_ids[0]):
+            model_inputs["input_ids"].shape[1]:
         ]
 
         response = self.tokenizer.decode(
