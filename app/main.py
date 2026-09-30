@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="HomeVIS Induction Backend",
+    title="HomeVIS",
     description="ESWC 스마트가전 프로젝트 - 인덕션 담당 백엔드 (FastAPI + MQTT)",
     version=API_VERSION,
     lifespan=lifespan,
