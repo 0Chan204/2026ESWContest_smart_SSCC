@@ -11,8 +11,14 @@ ESWC 개발계획서 기준: 백엔드는 **Python FastAPI**, 가전과의 통�
 - **MQTT**: 가전(인덕션)과 서버가 실제로 데이터를 주고받는 통신 방식. HTTP처럼 "요청하면 응답"이 아니라, 브로커(우체국)를 사이에 두고 서로 메시지를 던지고(publish) 받는(subscribe) 방식입니다.
 - **Mosquitto**: MQTT 브로커 소프트웨어 이름. 이번 프로젝트에서는 이게 그 "우체국" 역할을 합니다.
 - 이 프로젝트에서의 역할 분담:
-  - 인덕션(가전) → MQTT publish → 우리 FastAPI 서버가 MQTT subscribe로 받아서 상태 저장
-  - 대시보드 → FastAPI REST 호출(`POST /induction/{id}/control`) → 우리 서버가 MQTT publish → 인덕션이 subscribe해서 실행
+  - 인덕션(가전) → MQTT publish(telemetry) → 우리 FastAPI 서버가 MQTT subscribe로 받아서 상태 저장
+  - 인덕션(가전) → MQTT publish(ack) → 서버가 명령 처리 결과(applied/rejected/failed) 반영
+  - 대시보드 → FastAPI REST 호출(`POST /api/v1/appliances/{id}/burners/{burnerId}/commands`) → 우리 서버가 MQTT publish → 인덕션이 subscribe해서 실행
+
+> v0.2 업데이트: 프론트/임베디드 팀과 API 명세를 확정하면서 화구를 1개로 줄이고,
+> REST 경로는 `/api/v1` 하위로, Swagger 문서는 **인덕션(디바이스)**용(`/docs/device`)과
+> **프론트 대시보드**용(`/docs/dashboard`) 두 개로 분리했습니다. 자세한 엔드포인트 목록은
+> `docs/dev-note.md`를 참고하세요.
 
 즉 우리 FastAPI 서버는 **REST와 MQTT를 동시에 다루는 다리(hub) 역할**을 합니다.
 
@@ -27,14 +33,21 @@ induction-backend/
 ├── docker-compose.yml        # 로컬 Mosquitto 브로커 실행용
 ├── mosquitto/mosquitto.conf  # Mosquitto 설정
 ├── app/
-│   ├── main.py                # FastAPI 앱 진입점
-│   ├── config.py               # 설정값 (브로커 주소, 토픽 이름 등)
-│   ├── schemas.py               # 인덕션 데이터 명세를 코드로 옮긴 것 (Pydantic 모델)
-│   ├── rules.py                  # overheat 등 안전 규칙 검증 로직
-│   ├── state_store.py             # 최신 상태를 잠깐 저장하는 메모리 저장소
-│   ├── mqtt_client.py              # MQTT 연결/구독/발행 담당
-│   └── routers/induction.py         # REST API 엔드포인트
-└── tests/simulate_device.py          # 실제 하드웨어 없이 테스트할 수 있는 가짜 인덕션
+│   ├── main.py                # FastAPI 앱 진입점 (Swagger 문서 2개 분리 설정 포함)
+│   ├── config.py               # 설정값 (브로커 주소, 토픽 이름, 부재중 정책 기본값 등)
+│   ├── schemas.py               # v0.2 API 명세를 코드로 옮긴 것 (Pydantic 모델)
+│   ├── rules.py                  # overheated 등 안전 규칙 검증 로직
+│   ├── state_store.py             # 모든 상태를 담아두는 메모리 저장소
+│   ├── mqtt_client.py              # MQTT 연결/구독(telemetry, ack)/발행(command) 담당
+│   ├── device_service.py           # telemetry/ack 처리, 조리 세션 관리
+│   ├── commands_service.py         # 화구 제어 명령 발행/ack 반영
+│   ├── safety_service.py           # 안전 이벤트, 부재중 자동 제어 정책
+│   ├── ws_hub.py                   # WebSocket(/stream) 연결 관리 + 브로드캐스트
+│   └── routers/
+│       ├── device.py                # 인덕션(디바이스) 조회용 REST (tag=device)
+│       ├── dashboard.py              # 프론트 대시보드용 REST (tag=dashboard)
+│       └── stream.py                 # WebSocket /stream
+└── tests/simulate_device.py          # 실제 하드웨어 없이 테스트할 수 있는 가짜 인덕션 (화구 1개)
 ```
 
 파일이 이렇게 나뉘어 있는 이유: 처음엔 "그냥 main.py 하나에 다 쓰면 안 되나?" 싶을 수 있는데,
@@ -100,7 +113,10 @@ mosquitto -c mosquitto/mosquitto.conf
 uvicorn app.main:app --reload
 ```
 
-`http://127.0.0.1:8000/docs` 로 들어가면 FastAPI가 자동으로 만들어주는 API 문서(Swagger UI)가 보입니다.
+Swagger 문서는 두 개로 나뉘어 있습니다:
+- `http://127.0.0.1:8000/docs/device` — 인덕션(디바이스) 관련 (서버가 캐시한 telemetry 조회 등)
+- `http://127.0.0.1:8000/docs/dashboard` — 프론트 대시보드 / AI 모델이 호출하는 API 전체
+
 여기서 바로 API를 테스트해볼 수 있습니다.
 
 ---
@@ -119,49 +135,66 @@ python tests/simulate_device.py
 
 이제 세 개의 터미널이 동시에 떠 있어야 합니다: **① Mosquitto, ② uvicorn 서버, ③ 시뮬레이터**
 
-### 5-1. 상태 조회
+### 5-1. 상태(telemetry) 조회
 ```bash
-curl http://127.0.0.1:8000/induction/induction-01/state
+curl http://127.0.0.1:8000/api/v1/devices/induction-01/telemetry
 ```
-시뮬레이터가 publish한 최신 상태(JSON)가 그대로 보이면 성공입니다.
+시뮬레이터가 publish한 최신 telemetry(JSON)가 그대로 보이면 성공입니다.
 
-### 5-2. 제어 명령 보내기 (화구 1을 화력 5로 켜기)
+### 5-2. 제어 명령 보내기 (화구 화력을 5로 설정)
 ```bash
-curl -X POST http://127.0.0.1:8000/induction/induction-01/control \
+curl -X POST http://127.0.0.1:8000/api/v1/appliances/induction-01/burners/burner-1/commands \
   -H "Content-Type: application/json" \
-  -d '{"element_1": {"state": "control_on", "level": 5}}'
+  -d '{"type": "set_level", "level": 5}'
 ```
 - uvicorn 로그에 "제어 명령 발행" 이 찍히고
-- 시뮬레이터 터미널에 "제어 명령 수신" + "명령 적용 완료" 가 찍히고
-- 몇 초 후 시뮬레이터가 올리는 상태에서 element_1.state가 "on", level이 5로 바뀝니다.
-- 다시 `GET /induction/induction-01/state`를 호출하면 `last_control.command_id`가
-  방금 응답으로 받은 command_id와 같은 값인지 확인해보세요. (명령이 실제로 적용됐다는 증거)
+- 시뮬레이터 터미널에 "제어 명령 수신" + "명령 적용 결과=applied" + "ack 발행" 이 찍히고
+- 응답으로 받은 `commandId`를 `GET /api/v1/commands/{commandId}`로 조회하면
+  상태가 `sent` → (시뮬레이터가 ack를 보낸 뒤) `acked`로 바뀌는 걸 확인할 수 있습니다.
+  (명령이 실제로 적용됐다는 증거이자, 팀이 확정한 "별도 ack" 방식입니다.)
 
 ### 5-3. 과열 상황 테스트
 화력을 계속 높게 켜두면(level 8~9) 시뮬레이터가 온도를 계속 올려서 150도가 넘는 순간
-자동으로 `overheat` 상태가 됩니다. 이 상태에서 다시 `control_on`을 보내보면:
+자동으로 `overheated` 상태가 됩니다. 이 상태에서 다시 켜보면:
 ```bash
-curl -X POST http://127.0.0.1:8000/induction/induction-01/control \
+curl -X POST http://127.0.0.1:8000/api/v1/appliances/induction-01/burners/burner-1/commands \
   -H "Content-Type: application/json" \
-  -d '{"element_1": {"state": "control_on"}}'
+  -d '{"type": "turn_on"}'
 ```
-응답에 `"accepted": false` 와 함께 거부 사유가 나오는 걸 확인할 수 있습니다.
-(MQTT까지 나가지도 않고 서버 단계에서 막힙니다 — 이게 명세서의 "overheat 상태에서는
-control_on을 거부한다" 규칙입니다.)
+`409 Conflict`와 함께 `BURNER_OVERHEATED` 사유가 나오는 걸 확인할 수 있습니다.
+(MQTT까지 나가지도 않고 서버 단계에서 막힙니다 — "overheated 상태에서는
+turn_on/set_level을 거부한다" 규칙입니다. turn_off는 항상 허용됩니다.)
+
+### 5-4. 실시간 스트림 / 부재중 자동 제어 (v0.2 신규)
+```bash
+# 실시간 이벤트 구독 (다른 터미널에서, websocat 등 WS 클라이언트 필요)
+websocat ws://127.0.0.1:8000/api/v1/stream
+
+# AI 모델이 "10분 넘게 자리를 비웠다"고 보고하는 상황을 재현
+curl -X POST http://127.0.0.1:8000/api/v1/presence \
+  -H "Content-Type: application/json" \
+  -d '{"room": "kitchen", "zone": "kitchen", "present": false, "absentSec": 700, "confidence": 0.95, "observedAt": "2026-09-30T10:00:00+09:00", "modelVersion": "v1"}'
+```
+`absentSec`이 정책(`GET /api/v1/policies/kitchen-absence`)의 `offAfterSec`(기본 600초)을 넘으면
+서버가 자동으로 화구를 끄고 `auto_power_off` 안전 이벤트를 생성하며, WS로 구독 중이면 실시간으로 알림이 옵니다.
 
 ---
 
 ## 6. 지금 이 코드가 아직 안 하는 것 (다음 단계)
 
-- **DB 연동 없음**: 지금은 상태를 메모리에만 저장합니다. 서버를 재시작하면 사라집니다.
-  개발계획서 기준으로는 제어 이력 → MariaDB, 센서 이벤트 로그 → MongoDB로 나눠 저장해야 합니다.
-  (`state_store.py`의 함수들 내부만 DB 호출로 바꾸면 되도록 미리 구조를 잡아뒀습니다)
-- **Context Fusion / Rule-based Decision Tree 없음**: 지금은 "요청받은 대로 제어"만 합니다.
-  "조리 중 이탈 감지 시 자동으로 화력을 낮춘다" 같은 로직은, 다른 팀원이 만드는 Context Fusion
-  결과를 받아서 이 서버의 `send_control`과 같은 방식으로 호출하는 코드를 추가하면 됩니다.
+- **DB 연동 없음**: 지금은 모든 상태(telemetry, 명령, 안전 이벤트, 세션, 정책)를 메모리에만
+  저장합니다(`state_store.py`). 서버를 재시작하면 사라집니다. 개발계획서 기준으로는 제어 이력 →
+  MariaDB, 센서 이벤트 로그 → MongoDB로 나눠 저장해야 합니다. (`state_store.py`의 함수들
+  내부만 DB 호출로 바꾸면 되도록 구조를 잡아뒀습니다 — DB 종류는 아직 팀에서 미정)
+- **부재중 자동 제어는 v0.2에서 반영됨**: "조리 중 이탈 감지 시 자동으로 화력을 낮춘다/끈다"
+  로직은 `safety_service.evaluate_presence()`에 구현되어 있습니다. 다른 팀원이 만드는 실제
+  AI 재실 판단 모델이 `POST /api/v1/presence`를 호출하기만 하면 이 로직이 그대로 동작합니다.
+  지금은 이 엔드포인트를 curl로 흉내 내서 테스트하고 있는 상태입니다.
 - **인증 없음**: 지금은 아무나 MQTT/REST에 접근할 수 있습니다. 대회 시연 단계에서 필요하면 추가합니다.
+- **환경 센서 데이터 없음**: `/api/v1/snapshot` 응답의 `rooms.kitchen.environment`는 아직 빈
+  객체로만 채워둔 자리입니다. 실제 센서 연동 시 채워 넣으면 됩니다.
 
-이 세 가지는 지금 당장 필요한 게 아니라면, 먼저 이 기본 골격이 잘 도는 것부터 확인하고
+이것들은 지금 당장 필요한 게 아니라면, 먼저 이 기본 골격이 잘 도는 것부터 확인하고
 다음 단계로 넘어가는 걸 추천합니다.
 
 ---

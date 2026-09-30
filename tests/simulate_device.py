@@ -1,123 +1,145 @@
 """
 실제 인덕션 하드웨어(ESP32 + Pico W)가 아직 준비되지 않았을 때,
-그 자리를 대신해서 MQTT로 상태를 publish하고 명령을 subscribe하는
-"가짜 인덕션" 스크립트입니다.
+그 자리를 대신해서 MQTT로 telemetry를 publish하고 command를 subscribe하는
+"가짜 인덕션" 스크립트입니다. (v0.2: 화구 1개, camelCase, ack 토픽 반영)
 
 실행 방법:
     python tests/simulate_device.py
 
-이 스크립트를 켜두고, 다른 터미널에서 uvicorn 서버를 띄운 뒤
-curl이나 FastAPI 자동 문서(/docs)로 제어 명령을 보내보면
-"서버 -> MQTT -> 이 가짜 가전"으로 명령이 전달되고,
-"이 가짜 가전 -> MQTT -> 서버"로 상태가 다시 갱신되는 전체 흐름을 눈으로 확인할 수 있습니다.
-
 내부적으로 아주 단순한 온도 시뮬레이션을 합니다:
-- 화구가 켜져 있으면(level > 0) 시간이 지날수록 온도가 올라갑니다.
-- 화구가 꺼져 있으면 서서히 실온(약 25도)으로 식습니다.
-- 온도가 150도를 넘으면 명세서 규칙대로 overheat 상태(안전 잠금)가 되고 level은 0이 됩니다.
-- overheat 상태에서 온도가 60도 밑으로 내려오면 자동으로 off로 돌아옵니다. (명세서 4.3 상태 전이도 참고)
+- 화구가 on 이고 level > 0 이면 시간이 지날수록 온도가 올라갑니다.
+- 온도가 overheatEnterC(기본 150도)를 넘으면 overheated 상태(안전 잠금)가 되고 level은 0이 됩니다.
+- overheated 상태에서 온도가 overheatExitC(기본 60도) 밑으로 내려오면 자동으로 off로 복귀합니다.
+- turn_off 명령을 받았을 때 아직 많이 뜨거우면(실온+5도 초과) 곧바로 off가 아니라
+  "cooling"(식는 중) 상태를 거쳐 실온 근처에서 off로 바뀝니다.
+- 명령을 적용한 뒤에는 MQTT ack 토픽으로 처리 결과(applied/rejected)를 보고합니다.
 """
 
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
-# app 패키지를 import하기 위해 프로젝트 루트를 sys.path에 추가합니다.
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from app.config import settings  # noqa: E402
 
 DEVICE_ID = settings.INDUCTION_DEVICE_ID
+BURNER_ID = settings.BURNER_ID
 STATE_TOPIC = settings.state_topic(DEVICE_ID)
 COMMAND_TOPIC = settings.command_topic(DEVICE_ID)
+ACK_TOPIC = settings.ack_topic(DEVICE_ID)
+
+TICK_SECONDS = 3
 
 ROOM_TEMP = 25.0
-OVERHEAT_THRESHOLD = 150.0
-OVERHEAT_RECOVER_THRESHOLD = 60.0
+OVERHEAT_ENTER_C = settings.DEFAULT_POLICY["overheatEnterC"]
+OVERHEAT_EXIT_C = settings.DEFAULT_POLICY["overheatExitC"]
 
-# 이 가짜 가전이 기억하는 자기 자신의 현재 상태
-elements = {
-    "element_1": {"state": "off", "temp": ROOM_TEMP, "level": 0},
-    "element_2": {"state": "off", "temp": ROOM_TEMP, "level": 0},
+# 이 가짜 가전이 기억하는 자기 자신의 현재 상태 (화구 1개)
+burner = {
+    "burnerId": BURNER_ID,
+    "deviceState": "off",
+    "level": 0,
+    "temperature": ROOM_TEMP,
+    "activeSec": 0,
 }
-last_control = {"publisher": "system", "command_id": None}
+last_control = {"publisher": "system", "commandId": None}
 alarm = "off"
 last_processed_command_id: str | None = None
 
+_client: mqtt.Client | None = None
+
 
 def now_iso() -> str:
-    import datetime
-
-    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def step_physics(elem: dict) -> None:
-    """1틱(=이 스크립트의 publish 주기)이 지날 때마다 온도를 갱신합니다."""
-    if elem["state"] == "on" and elem["level"] > 0:
-        elem["temp"] += elem["level"] * 1.5  # 화력이 셀수록 빨리 뜨거워짐
-        if elem["temp"] >= OVERHEAT_THRESHOLD:
-            elem["state"] = "overheat"
-            elem["level"] = 0
-            print(f"  !! 과열 감지 -> overheat 상태로 전환 (temp={elem['temp']:.1f}℃)")
-    elif elem["state"] == "overheat":
-        elem["temp"] -= 3.0  # 전원 꺼진 채로 식는 중
-        if elem["temp"] <= OVERHEAT_RECOVER_THRESHOLD:
-            elem["state"] = "off"
-            print(f"  -- 온도 안정화 -> overheat에서 off로 자동 복귀 (temp={elem['temp']:.1f}℃)")
+def step_physics() -> None:
+    """1틱(=이 스크립트의 publish 주기)이 지날 때마다 온도/누적시간을 갱신합니다."""
+    if burner["deviceState"] == "on" and burner["level"] > 0:
+        burner["temperature"] += burner["level"] * 1.5
+        burner["activeSec"] += TICK_SECONDS
+        if burner["temperature"] >= OVERHEAT_ENTER_C:
+            burner["deviceState"] = "overheated"
+            burner["level"] = 0
+            print(f"  !! 과열 감지 -> overheated 상태로 전환 (temp={burner['temperature']:.1f}℃)")
+    elif burner["deviceState"] == "overheated":
+        burner["temperature"] -= 3.0
+        if burner["temperature"] <= OVERHEAT_EXIT_C:
+            burner["deviceState"] = "off"
+            burner["activeSec"] = 0
+            print(f"  -- 온도 안정화 -> overheated에서 off로 자동 복귀 (temp={burner['temperature']:.1f}℃)")
+    elif burner["deviceState"] == "cooling":
+        burner["temperature"] = max(ROOM_TEMP, burner["temperature"] - 2.0)
+        if burner["temperature"] <= ROOM_TEMP + 1:
+            burner["deviceState"] = "off"
+            print("  -- 냉각 완료 -> off")
     else:  # off
-        if elem["temp"] > ROOM_TEMP:
-            elem["temp"] = max(ROOM_TEMP, elem["temp"] - 2.0)
+        if burner["temperature"] > ROOM_TEMP:
+            burner["temperature"] = max(ROOM_TEMP, burner["temperature"] - 2.0)
+
+
+def publish_ack(command_id: str | None, result: str) -> None:
+    if _client is None or command_id is None:
+        return
+    payload = {
+        "commandId": command_id,
+        "result": result,
+        "appliedAt": now_iso(),
+        "burnerState": dict(burner),
+    }
+    _client.publish(ACK_TOPIC, json.dumps(payload, ensure_ascii=False), qos=1)
+    print(f"  -> ack 발행 (commandId={command_id}, result={result})")
 
 
 def apply_control(payload: dict) -> None:
-    """서버에서 받은 제어 명령(payload)을 이 가짜 가전의 상태에 반영합니다."""
+    """서버에서 받은 제어 명령(payload)을 이 가짜 가전의 상태에 반영하고 ack를 보고합니다."""
     global last_control, alarm, last_processed_command_id
 
-    command_id = payload.get("command_id")
+    command_id = payload.get("commandId")
 
-    # 명세서 규칙: 가전은 마지막으로 처리한 command_id를 저장해서 중복 실행을 막는다.
     if command_id is not None and command_id == last_processed_command_id:
         print(f"  (중복 명령 무시: {command_id})")
         return
 
-    applied_something = False
+    if payload.get("burnerId") not in (None, BURNER_ID):
+        print(f"  (알 수 없는 burnerId 무시: {payload.get('burnerId')})")
+        return
 
-    for name in ("element_1", "element_2"):
-        control = payload.get(name)
-        if not control:
-            continue
+    cmd_type = payload.get("type")
+    result = "applied"
 
-        elem = elements[name]
+    if burner["deviceState"] == "overheated" and cmd_type in ("turn_on", "set_level"):
+        print(f"  !! overheated 상태라 {cmd_type} 명령을 거부합니다.")
+        result = "rejected"
+    elif cmd_type == "turn_on":
+        burner["deviceState"] = "on"
+        if burner["level"] == 0:
+            burner["level"] = 5
+    elif cmd_type == "turn_off":
+        burner["deviceState"] = "cooling" if burner["temperature"] > ROOM_TEMP + 5 else "off"
+        burner["level"] = 0
+        burner["activeSec"] = 0
+    elif cmd_type == "set_level":
+        level = payload.get("level") or 0
+        burner["level"] = level
+        if level > 0:
+            burner["deviceState"] = "on"
+    else:
+        result = "failed"
 
-        if elem["state"] == "overheat" and control.get("state") == "control_on":
-            print(f"  !! {name}는 overheat 상태라 control_on 명령을 무시합니다.")
-            continue
+    last_control = {"publisher": "api", "commandId": command_id}
+    last_processed_command_id = command_id
+    print(f"  -> 명령 적용 결과={result} (commandId={command_id}, type={cmd_type})")
 
-        if control.get("state") == "control_on":
-            elem["state"] = "on"
-            applied_something = True
-        elif control.get("state") == "control_off":
-            elem["state"] = "off"
-            elem["level"] = 0
-            applied_something = True
-
-        if control.get("level") is not None and elem["state"] != "overheat":
-            elem["level"] = control["level"]
-            if elem["state"] == "off":
-                elem["state"] = "on"  # 명세서 규칙: control_on + level 조합 대응
-            applied_something = True
-
-    if "alarm" in payload:
-        alarm = "on" if payload["alarm"] == "control_on" else "off"
-        applied_something = True
-
-    if applied_something:
-        last_control = {"publisher": "api", "command_id": command_id}
-        last_processed_command_id = command_id
-        print(f"  -> 명령 적용 완료 (command_id={command_id})")
+    publish_ack(command_id, result)
+    if result == "applied" and _client is not None:
+        # 상태가 바뀐 직후 telemetry도 즉시 한 번 더 보내서 대시보드가 빠르게 반영되도록 함
+        _client.publish(STATE_TOPIC, json.dumps(build_state_payload(), ensure_ascii=False), qos=1)
 
 
 def on_connect(client: mqtt.Client, userdata, flags, rc: int) -> None:
@@ -134,39 +156,34 @@ def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
 
 def build_state_payload() -> dict:
     return {
-        "timestamp": now_iso(),
-        "element_1": elements["element_1"],
-        "element_2": elements["element_2"],
-        "last_control": last_control,
+        "reportedAt": now_iso(),
+        "burners": [dict(burner)],
+        "lastControl": last_control,
         "alarm": alarm,
     }
 
 
 def main() -> None:
-    client = mqtt.Client(client_id=f"induction-simulator-{DEVICE_ID}")
-    client.on_connect = on_connect
-    client.on_message = on_message
-    client.connect(settings.MQTT_BROKER_HOST, settings.MQTT_BROKER_PORT, keepalive=60)
-    client.loop_start()
+    global _client
+    _client = mqtt.Client(client_id=f"induction-simulator-{DEVICE_ID}")
+    _client.on_connect = on_connect
+    _client.on_message = on_message
+    _client.connect(settings.MQTT_BROKER_HOST, settings.MQTT_BROKER_PORT, keepalive=60)
+    _client.loop_start()
 
-    print(f"[가짜 인덕션] {STATE_TOPIC} 로 3초마다 상태를 publish합니다. (Ctrl+C로 종료)")
+    print(f"[가짜 인덕션] {STATE_TOPIC} 로 {TICK_SECONDS}초마다 telemetry를 publish합니다. (Ctrl+C로 종료)")
     try:
         while True:
-            for elem in elements.values():
-                step_physics(elem)
-
+            step_physics()
             payload = build_state_payload()
-            client.publish(STATE_TOPIC, json.dumps(payload, ensure_ascii=False), qos=1)
-            print(
-                f"[가짜 인덕션] state 발행: element_1={elements['element_1']} "
-                f"element_2={elements['element_2']} alarm={alarm}"
-            )
-            time.sleep(3)
+            _client.publish(STATE_TOPIC, json.dumps(payload, ensure_ascii=False), qos=1)
+            print(f"[가짜 인덕션] telemetry 발행: {burner} alarm={alarm}")
+            time.sleep(TICK_SECONDS)
     except KeyboardInterrupt:
         print("\n[가짜 인덕션] 종료합니다.")
     finally:
-        client.loop_stop()
-        client.disconnect()
+        _client.loop_stop()
+        _client.disconnect()
 
 
 if __name__ == "__main__":

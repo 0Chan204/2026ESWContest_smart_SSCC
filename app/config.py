@@ -1,17 +1,17 @@
 """
 프로젝트 전역 설정값을 한 곳에서 관리하는 모듈입니다.
 
-FastAPI 프로젝트를 처음 시작할 때 가장 먼저 만들어두면 좋은 파일 중 하나입니다.
-"MQTT 브로커 주소가 어디였지?", "토픽 이름이 뭐였지?" 를 코드 여기저기에
-하드코딩하면 나중에 값 하나 바꿀 때 모든 파일을 뒤져야 합니다.
-그래서 이렇게 한 군데에 모아두고, 다른 파일에서는 이 모듈을 import해서 씁니다.
+v0.2 변경사항 (프론트/임베디드 팀과 API 명세 확정 반영):
+- 화구 개수를 2개(element_1/2) -> 1개(burners[0])로 축소
+- MQTT ack 토픽 추가 (가전이 명령 처리 결과를 별도로 보고)
+- 부재중 안전 정책 기본값(과열 150°C 진입 / 60°C 해제 등) 추가
+- "오프라인 판정"은 별도 heartbeat 메시지 없이, 상태(telemetry) 토픽이
+  일정 시간(HEARTBEAT_TIMEOUT_SEC) 이상 안 오면 offline으로 봄 (팀 결정)
 """
 
 import os
 from dotenv import load_dotenv
 
-# .env 파일이 있으면 그 안의 값을 환경변수로 읽어옵니다.
-# (.env 파일이 없어도 에러가 나지 않고, 아래 기본값들이 그대로 사용됩니다.)
 load_dotenv()
 
 
@@ -22,15 +22,16 @@ class Settings:
     MQTT_USERNAME: str | None = os.getenv("MQTT_USERNAME") or None
     MQTT_PASSWORD: str | None = os.getenv("MQTT_PASSWORD") or None
 
-    # --- 이번에 다루는 인덕션 가전의 식별자 ---
-    # 나중에 가전이 여러 대가 되면, 이 값 대신 DB에 등록된 device_id 목록을 순회하게 됩니다.
+    # --- 가전 / 화구 식별자 (화구 1개로 확정) ---
     INDUCTION_DEVICE_ID: str = os.getenv("INDUCTION_DEVICE_ID", "induction-01")
+    BURNER_ID: str = os.getenv("BURNER_ID", "burner-1")
+    KITCHEN_ROOM: str = os.getenv("KITCHEN_ROOM", "kitchen")
 
     # --- MQTT 토픽 규칙 ---
-    # {device_id} 자리에 실제 가전 ID가 들어갑니다.
-    # 예: home/kitchen/induction/induction-01/state
-    STATE_TOPIC_TEMPLATE: str = "home/kitchen/induction/{device_id}/state"
+    # 토픽명은 기존 그대로 유지하기로 팀에서 확정함 (변경 없음)
+    STATE_TOPIC_TEMPLATE: str = "home/kitchen/induction/{device_id}/state"       # = telemetry
     COMMAND_TOPIC_TEMPLATE: str = "home/kitchen/induction/{device_id}/command"
+    ACK_TOPIC_TEMPLATE: str = "home/kitchen/induction/{device_id}/ack"           # 신규: 명령 처리 결과 보고
 
     def state_topic(self, device_id: str | None = None) -> str:
         return self.STATE_TOPIC_TEMPLATE.format(device_id=device_id or self.INDUCTION_DEVICE_ID)
@@ -38,10 +39,30 @@ class Settings:
     def command_topic(self, device_id: str | None = None) -> str:
         return self.COMMAND_TOPIC_TEMPLATE.format(device_id=device_id or self.INDUCTION_DEVICE_ID)
 
+    def ack_topic(self, device_id: str | None = None) -> str:
+        return self.ACK_TOPIC_TEMPLATE.format(device_id=device_id or self.INDUCTION_DEVICE_ID)
+
     def state_topic_wildcard(self) -> str:
-        # 가전이 여러 대일 때 전부 구독하기 위한 와일드카드 토픽
         return self.STATE_TOPIC_TEMPLATE.format(device_id="+")
 
+    def ack_topic_wildcard(self) -> str:
+        return self.ACK_TOPIC_TEMPLATE.format(device_id="+")
 
-# 다른 파일에서는 "from app.config import settings" 로 가져다 씁니다.
+    # --- 부재중 안전 정책 기본값 (GET/PUT /policies/kitchen-absence 초기값) ---
+    # 과열 진입 150°C / 해제 60°C 는 팀 논의로 확정된 값.
+    DEFAULT_POLICY: dict = {
+        "watchAfterSec": 60,
+        "reduceAfterSec": 180,
+        "offAfterSec": 600,
+        "reduceToLevel": 1,
+        "minConfidence": 0.7,
+        "nearZoneMultiplier": 2.0,
+        "overheatEnterC": 150.0,
+        "overheatExitC": 60.0,
+        "heartbeatTimeoutSec": 15,
+    }
+
+    API_PREFIX: str = "/api/v1"
+
+
 settings = Settings()
