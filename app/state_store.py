@@ -4,6 +4,8 @@
 DB(MariaDB/MongoDB) 연동 전이라 전부 파이썬 dict/list로 시작합니다.
 나중에 DB를 붙일 때는 이 파일의 함수 "내부 구현"만 바꾸면 되고,
 호출하는 쪽(routers, services)은 그대로 둬도 됩니다. (리포지토리 패턴)
+
+v0.2.1 추가: 보호자 연락처(1명), 낙상 사건(FallIncident) + 확인 토큰, 낙상 안전 정책.
 """
 
 import threading
@@ -18,6 +20,9 @@ from app.schemas import (
     SessionRecord,
     KitchenAbsencePolicy,
     PresenceReport,
+    GuardianContact,
+    FallIncident,
+    FallPolicy,
 )
 
 _lock = threading.Lock()
@@ -45,6 +50,16 @@ _absence_stage_by_room: dict[str, Optional[str]] = {}
 
 # --- 부재중 안전 정책 (GET/PUT /policies/kitchen-absence) ---
 _policy = KitchenAbsencePolicy(**settings.DEFAULT_POLICY)
+
+# --- 보호자 연락처 (GET/PUT /guardian, 현재는 1명만 지원) ---
+_guardian: Optional[GuardianContact] = None
+
+# --- 낙상 사건 (incidentId -> FallIncident / 확인용 토큰) ---
+_fall_incidents: dict[str, FallIncident] = {}
+_fall_tokens: dict[str, str] = {}
+
+# --- 낙상 안전 정책 (GET/PUT /policies/fall-safety) ---
+_fall_policy = FallPolicy(**settings.DEFAULT_FALL_POLICY)
 
 
 # ---------------------------------------------------------------------------
@@ -220,3 +235,60 @@ def set_policy(policy: KitchenAbsencePolicy) -> None:
     global _policy
     with _lock:
         _policy = policy
+
+
+# ---------------------------------------------------------------------------
+# 보호자 연락처 (낙상 사고 안전 기능)
+# ---------------------------------------------------------------------------
+
+def get_guardian() -> Optional[GuardianContact]:
+    with _lock:
+        return _guardian
+
+
+def set_guardian(contact: GuardianContact) -> None:
+    global _guardian
+    with _lock:
+        _guardian = contact
+
+
+# ---------------------------------------------------------------------------
+# 낙상 사건 (낙상 사고 안전 기능)
+# ---------------------------------------------------------------------------
+
+def save_fall_incident(incident: FallIncident, token: str) -> None:
+    with _lock:
+        _fall_incidents[incident.incidentId] = incident
+        _fall_tokens[incident.incidentId] = token
+
+
+def get_fall_incident(incident_id: str) -> Optional[FallIncident]:
+    with _lock:
+        return _fall_incidents.get(incident_id)
+
+
+def update_fall_incident(incident_id: str, **changes) -> Optional[FallIncident]:
+    with _lock:
+        incident = _fall_incidents.get(incident_id)
+        if incident is None:
+            return None
+        updated = incident.model_copy(update=changes)
+        _fall_incidents[incident_id] = updated
+        return updated
+
+
+def get_fall_token(incident_id: str) -> Optional[str]:
+    """SMS 링크에 담긴 token과 대조해서 확인 페이지 요청이 유효한지 검증하는 데 사용."""
+    with _lock:
+        return _fall_tokens.get(incident_id)
+
+
+def get_fall_policy() -> FallPolicy:
+    with _lock:
+        return _fall_policy
+
+
+def set_fall_policy(policy: FallPolicy) -> None:
+    global _fall_policy
+    with _lock:
+        _fall_policy = policy

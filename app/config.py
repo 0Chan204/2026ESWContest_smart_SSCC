@@ -7,6 +7,11 @@ v0.2 변경사항 (프론트/임베디드 팀과 API 명세 확정 반영):
 - 부재중 안전 정책 기본값(과열 150°C 진입 / 60°C 해제 등) 추가
 - "오프라인 판정"은 별도 heartbeat 메시지 없이, 상태(telemetry) 토픽이
   일정 시간(HEARTBEAT_TIMEOUT_SEC) 이상 안 오면 offline으로 봄 (팀 결정)
+
+v0.2.1 추가 (낙상 사고 안전 기능):
+- 보호자 SMS 발송: 네이버 클라우드 플랫폼 SENS 사용 (팀 결정)
+- 낙상 감지는 재실 판단 모델과 같은 패턴으로, 별도 AI 모델이 서버로 이벤트를 보냄
+- SMS 링크로 들어가는 "해결/신고" 확인 페이지는 프론트가 만들고, 백엔드는 API만 제공
 """
 
 import os
@@ -61,6 +66,24 @@ class Settings:
         "overheatExitC": 60.0,
         "heartbeatTimeoutSec": 15,
     }
+
+    # --- 낙상 사고 안전 정책 기본값 (GET/PUT /policies/fall-safety 초기값) ---
+    # autoReportSec: 확인 링크를 누르지 않았을 때 자동으로 "신고" 처리하기까지의 대기 시간.
+    # 테스트 중에는 1분(60초)으로 짧게 두고, 실제 운영 값은 팀 논의 후 늘릴 예정.
+    DEFAULT_FALL_POLICY: dict = {
+        "autoReportSec": 60,
+    }
+
+    # --- 보호자 SMS 발송 (네이버 클라우드 플랫폼 SENS) ---
+    # NCP 콘솔에서 발급받기 전까지는 비워둬도 서버는 정상 동작하고,
+    # 실제 발송 대신 로그만 남깁니다 (app/sms_service.py 참고).
+    NAVER_SENS_SERVICE_ID: str = os.getenv("NAVER_SENS_SERVICE_ID", "")
+    NAVER_SENS_ACCESS_KEY: str = os.getenv("NAVER_SENS_ACCESS_KEY", "")
+    NAVER_SENS_SECRET_KEY: str = os.getenv("NAVER_SENS_SECRET_KEY", "")
+    NAVER_SENS_SENDER_PHONE: str = os.getenv("NAVER_SENS_SENDER_PHONE", "")
+
+    # --- SMS에 담을 확인 링크의 기준 URL (프론트가 만드는 모바일 확인 페이지) ---
+    FRONTEND_BASE_URL: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
 
     API_PREFIX: str = "/api/v1"
 

@@ -199,6 +199,51 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 
 ---
 
+## 7. 낙상 사고 안전 기능 (v0.2.1)
+
+보호자 알림 + 인덕션 비상 차단 기능입니다. 전체 로직은 `app/fall_service.py` 하나에 모여 있고,
+라우터(`app/routers/dashboard.py`)는 입출력 변환만 합니다.
+
+**흐름**
+
+1. (아직 미구현/다른 팀원 담당) 낙상 감지 AI 모델이 `POST /api/v1/safety/fall-events`를
+   호출합니다. 재실 판단 모델과 같은 패턴 — 모델은 "감지 사실"만 보고하고, 조치는 서버가 다 합니다.
+2. 접수 즉시 서버가 동시에 수행:
+   - 인덕션 **비상 전원 차단** (재실 부재 정책의 점진적 저감과 달리 바로 `turn_off`)
+   - 안전 이벤트(`fall_detected`) 생성 + WebSocket `/stream`으로 대시보드에 실시간 알림
+   - 등록된 보호자에게 **SMS**로 확인 링크 발송 (`확인 링크 = FRONTEND_BASE_URL/fall/{incidentId}?token=...`)
+3. 보호자가 SMS 링크(프론트가 만드는 모바일 페이지)에서 "해결"/"신고"를 누르면 그 페이지가
+   `POST /api/v1/fall-incidents/{id}/resolve` 또는 `.../report`를 `?token=...`과 함께 호출합니다.
+4. `policies/fall-safety`의 `autoReportSec`(테스트 기본값 60초) 안에 아무 응답이 없으면
+   서버가 알아서 `auto_reported`로 처리합니다 (안전 이벤트 `fall_auto_reported` 발생).
+
+**새 엔드포인트**
+
+| 메서드 | 경로 | 설명 |
+| --- | --- | --- |
+| PUT | `/api/v1/guardian` | 보호자 연락처 등록/변경 (1명). 저장과 동시에 확인 문자 발송 |
+| GET | `/api/v1/guardian` | 보호자 연락처 조회 |
+| POST | `/api/v1/safety/fall-events` | 낙상 감지 AI 모델 -> 서버 |
+| GET | `/api/v1/fall-incidents/{id}` | 낙상 사건 상태 조회 (프론트 모바일 페이지가 폴링용으로 사용 가능) |
+| POST | `/api/v1/fall-incidents/{id}/resolve?token=` | "해결" 처리 |
+| POST | `/api/v1/fall-incidents/{id}/report?token=` | "신고" 처리 |
+| GET/PUT | `/api/v1/policies/fall-safety` | `autoReportSec` 조회/수정 |
+
+**SMS 연동**: 네이버 클라우드 플랫폼 SENS (`app/sms_service.py`). NCP 콘솔에서 서비스 ID/Access
+Key/Secret Key/발신번호를 발급받아 `.env`의 `NAVER_SENS_*`에 채워 넣으면 됩니다. **비워둬도 서버는
+정상 동작**하고, 그럴 땐 실제 발송 대신 로그만 남깁니다 — 키 발급 전에도 나머지 흐름은 테스트 가능.
+
+**테스트 방법**: `python tests/simulate_fall.py` 로 가짜 낙상 이벤트를 하나 보내고,
+출력된 `confirmUrl`로 해결/신고를 curl로 시뮬레이션해볼 수 있습니다.
+
+**아직 안 된 것 / 다음 단계**:
+- 모바일 확인 페이지(해결/신고 버튼 UI)는 프론트 팀 작업 — 백엔드는 API만 제공
+- "신고" 처리는 지금 안전 이벤트/로그만 남깁니다. 실제 119·응급 연동은 아직 없음 (범위 밖)
+- 보호자는 현재 1명만 지원 (팀 결정)
+- 날씨 API 연동은 일단 스킵 (프론트에서 바로 가능하면 프론트에서 처리, 우선순위 낮음)
+
+---
+
 ## 9. 실제 임베디드 하드웨어와 연동하기
 
 지금까지는 `tests/simulate_device.py`라는 가짜 인덕션으로 테스트했습니다. 실제 ESP32/Pico W로 바꿀 때 체크할 것들을 정리합니다.

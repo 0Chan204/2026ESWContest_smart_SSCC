@@ -7,6 +7,12 @@ v0.2 API 명세(프론트/임베디드 팀 합의 반영)를 코드로 옮긴 �
 - state(on/off/overheat) -> deviceState(off/on/overheated/cooling)
 - 명령 처리 확인: last_control 간접 확인 + 별도 ack 메시지(팀 확정안)
 - 안전 이벤트 / 조리 세션 / 부재중 정책 / 실시간 스트림 스키마 추가
+
+v0.2.1 추가 (낙상 사고 안전 기능):
+- 보호자 연락처(GuardianContact), 낙상 이벤트(FallDetectedReport), 낙상 사건
+  생애주기(FallIncident), 낙상 안전 정책(FallPolicy) 스키마 추가
+- SafetyEventType에 fall_detected / fall_resolved / fall_reported /
+  fall_auto_reported 4종 추가
 """
 
 from typing import Literal, Optional
@@ -130,6 +136,11 @@ SafetyEventType = Literal[
     "overheat_cleared",
     "user_returned",
     "cooking_ended",
+    # v0.2.1: 낙상 사고 안전 기능
+    "fall_detected",
+    "fall_resolved",
+    "fall_reported",
+    "fall_auto_reported",
 ]
 SafetyEventSeverity = Literal["info", "warning", "danger"]
 
@@ -231,3 +242,71 @@ class StreamEnvelope(BaseModel):
     event: str
     at: str
     data: dict
+
+
+# ---------------------------------------------------------------------------
+# 8. 낙상 사고 안전 기능 (v0.2.1 추가)
+#
+# 흐름: 낙상 감지 AI 모델 -> POST /safety/fall-events -> 서버가
+#   (1) 인덕션 즉시 비상 전원 차단(0단계), (2) 안전 이벤트 생성 + 대시보드 알림,
+#   (3) 보호자에게 SMS로 확인 링크 발송 을 동시에 수행하고 FallIncident를 만듭니다.
+# 보호자가 SMS 링크(프론트가 만드는 모바일 페이지)에서 "해결" 또는 "신고"를 누르면
+# 그 페이지가 POST .../resolve 또는 .../report를 호출합니다.
+# 일정 시간(policy.autoReportSec) 안에 아무 응답이 없으면 서버가 자동으로 "신고" 처리합니다.
+# ---------------------------------------------------------------------------
+
+class GuardianContact(BaseModel):
+    """대시보드에서 등록/수정하는 보호자 연락처 (현재는 1명만 지원하기로 팀 결정)."""
+
+    name: str
+    phone: str = Field(..., description="010-xxxx-xxxx 형식 권장")
+
+
+class GuardianContactUpdateResult(BaseModel):
+    guardian: GuardianContact
+    verificationSent: bool = Field(..., description="연락처 저장 후 확인 문자 발송 성공 여부")
+    message: str
+
+
+class FallDetectedReport(BaseModel):
+    """낙상 감지 AI 모델 -> 서버. 재실 판단 모델(PresenceReport)과 동일한 패턴으로,
+    모델은 '감지 사실'만 보고하고 조치(차단/알림/SMS)는 전적으로 서버가 결정합니다."""
+
+    room: str
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    observedAt: str
+    modelVersion: str
+
+
+FallIncidentStatus = Literal["pending", "resolved", "reported", "auto_reported"]
+
+
+class FallIncident(BaseModel):
+    """낙상 사건 하나의 전체 생애주기를 추적하는 레코드."""
+
+    incidentId: str
+    room: str
+    status: FallIncidentStatus
+    detectedAt: str
+    confidence: float
+    confirmUrl: str = Field(..., description="SMS로 발송되는, 프론트의 모바일 확인 페이지 링크")
+    autoReportAt: str = Field(..., description="이 시각까지 응답이 없으면 자동으로 신고 처리됨")
+    eventId: Optional[str] = None
+    resolvedAt: Optional[str] = None
+    reportedAt: Optional[str] = None
+
+
+class FallIncidentAccepted(BaseModel):
+    incidentId: str
+    status: FallIncidentStatus
+    confirmUrl: str
+
+
+class FallActionResult(BaseModel):
+    incidentId: str
+    status: FallIncidentStatus
+    message: str
+
+
+class FallPolicy(BaseModel):
+    autoReportSec: int = Field(..., description="확인 링크 미응답 시 자동 신고까지 대기 시간(초). 테스트 기본값 60초")
