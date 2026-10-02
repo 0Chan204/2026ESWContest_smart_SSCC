@@ -76,3 +76,12 @@ def broadcast_threadsafe(event: str, data: dict) -> None:
         logger.warning("이벤트 루프가 아직 바인딩되지 않아 브로드캐스트를 건너뜁니다: %s", event)
         return
     asyncio.run_coroutine_threadsafe(manager.broadcast(event, data), _loop)
+
+
+def run_coroutine_threadsafe(coro) -> "asyncio.Future | None":
+    """동기 코드(FastAPI의 sync 라우터 등)에서 지연 실행이 필요한 코루틴(예: 낙상 사고
+    자동 신고 타이머)을 메인 이벤트 루프에 예약할 때 사용하는 범용 헬퍼입니다."""
+    if _loop is None:
+        logger.warning("이벤트 루프가 아직 바인딩되지 않아 작업 예약을 건너뜁니다.")
+        return None
+    return asyncio.run_coroutine_threadsafe(coro, _loop)
