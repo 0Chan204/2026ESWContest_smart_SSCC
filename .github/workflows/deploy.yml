@@ -1,0 +1,65 @@
+# CD: develop 에 머지(push)되면 테스트를 한 번 더 돌린 뒤 GCP VM에 자동 배포합니다.
+#
+# 필요한 GitHub Secrets (Settings > Secrets and variables > Actions):
+#   GCP_HOST     VM 외부 IP (고정 IP 권장)
+#   GCP_USER     VM 접속 계정
+#   GCP_SSH_KEY  배포 전용 SSH 개인키 전체 내용
+#
+# Actions 탭에서 "Run workflow" 버튼으로 수동 실행도 가능합니다.
+name: Deploy
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-develop
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: 의존성 설치
+        run: pip install -r requirements-dev.txt
+
+      - name: 테스트 실행
+        run: pytest -v
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      GCP_HOST: ${{ secrets.GCP_HOST }}
+      GCP_USER: ${{ secrets.GCP_USER }}
+      GCP_SSH_KEY: ${{ secrets.GCP_SSH_KEY }}
+    steps:
+      - name: SSH 키 준비
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$GCP_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$GCP_HOST" >> ~/.ssh/known_hosts
+
+      - name: VM에 배포
+        run: |
+          ssh -i ~/.ssh/deploy_key "$GCP_USER@$GCP_HOST" 'bash -s' << 'REMOTE'
+          set -euo pipefail
+          cd ~/app-server-new
+          git pull --ff-only origin develop
+          venv/bin/pip install -q -r requirements.txt
+          sudo systemctl restart homevis-backend homevis-simulator
+          sleep 5
+          curl -fsS http://localhost:8000/health
+          echo
+          systemctl is-active homevis-mosquitto homevis-backend homevis-simulator
+          REMOTE
