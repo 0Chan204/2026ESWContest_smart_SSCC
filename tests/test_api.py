@@ -1,0 +1,193 @@
+"""
+주요 API 흐름을 검증하는 테스트입니다. (CI에서 PR마다 자동 실행)
+
+실행: pytest
+"""
+
+import time
+
+from app import state_store
+from app.config import settings
+from app.schemas import BurnerTelemetry, LastControl, TelemetryReport
+
+PREFIX = settings.API_PREFIX
+DEVICE = settings.INDUCTION_DEVICE_ID
+BURNER = settings.BURNER_ID
+ROOM = settings.KITCHEN_ROOM
+
+FALL_REPORT = {
+    "room": ROOM,
+    "confidence": 0.95,
+    "observedAt": "2026-10-02T12:00:00+00:00",
+    "modelVersion": "test-model",
+}
+
+
+def _save_telemetry(device_state: str, level: int, temperature: float) -> None:
+    state_store.save_telemetry(
+        DEVICE,
+        TelemetryReport(
+            reportedAt="2026-10-02T12:00:00+00:00",
+            burners=[
+                BurnerTelemetry(burnerId=BURNER, deviceState=device_state, level=level, temperature=temperature)
+            ],
+            lastControl=LastControl(publisher="user"),
+            alarm="off",
+        ),
+    )
+
+
+def _event_types(client) -> list[str]:
+    return [e["type"] for e in client.get(f"{PREFIX}/safety-events").json()["items"]]
+
+
+def _token_of(confirm_url: str) -> str:
+    return confirm_url.split("token=")[1]
+
+
+# ---------------------------------------------------------------------------
+# 기본
+# ---------------------------------------------------------------------------
+
+def test_health(client):
+    assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_swagger_has_device_and_dashboard_tags(client):
+    tags = [t["name"] for t in client.get("/openapi.json").json()["tags"]]
+    assert tags == ["device", "dashboard"]
+
+
+def test_snapshot_before_any_telemetry(client):
+    body = client.get(f"{PREFIX}/snapshot").json()
+    assert body["appliances"][0]["online"] is False
+    assert body["rooms"][ROOM]["safetyPhase"] == "normal"
+
+
+# ---------------------------------------------------------------------------
+# 화구 제어 + 과열 안전 규칙
+# ---------------------------------------------------------------------------
+
+def test_burner_command_is_published(client, published):
+    res = client.post(
+        f"{PREFIX}/appliances/{DEVICE}/burners/{BURNER}/commands", json={"type": "set_level", "level": 5}
+    )
+    assert res.status_code == 202
+    assert published[-1]["type"] == "set_level"
+    assert published[-1]["level"] == 5
+    assert client.get(f"{PREFIX}/commands/{res.json()['commandId']}").json()["status"] == "sent"
+
+
+def test_overheated_blocks_turn_on_but_allows_turn_off(client, published):
+    _save_telemetry("overheated", 0, 160.0)
+    url = f"{PREFIX}/appliances/{DEVICE}/burners/{BURNER}/commands"
+
+    blocked = client.post(url, json={"type": "turn_on"})
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "BURNER_OVERHEATED"
+    assert published == []
+    assert "command_blocked" in _event_types(client)
+
+    assert client.post(url, json={"type": "turn_off"}).status_code == 202
+    assert published[-1]["type"] == "turn_off"
+
+
+# ---------------------------------------------------------------------------
+# 부재중 자동 제어 정책
+# ---------------------------------------------------------------------------
+
+def _presence(absent_sec: int, present: bool = False, zone: str = "far") -> dict:
+    return {
+        "room": ROOM,
+        "zone": zone,
+        "present": present,
+        "absentSec": absent_sec,
+        "confidence": 0.9,
+        "observedAt": "2026-10-02T12:00:00+00:00",
+        "modelVersion": "test-model",
+    }
+
+
+def test_absence_reduces_then_turns_off_then_user_returns(client, published):
+    res = client.post(f"{PREFIX}/presence", json=_presence(200))
+    assert res.json()["safetyPhase"] == "auto_reduced"
+    assert published[-1]["type"] == "set_level"
+
+    res = client.post(f"{PREFIX}/presence", json=_presence(700))
+    assert res.json()["safetyPhase"] == "auto_off"
+    assert published[-1]["type"] == "turn_off"
+
+    res = client.post(f"{PREFIX}/presence", json=_presence(0, present=True, zone="kitchen"))
+    assert res.json()["safetyPhase"] == "normal"
+    assert _event_types(client) == ["auto_power_reduced", "auto_power_off", "user_returned"]
+
+
+def test_near_zone_waits_longer(client, published):
+    # near 구역은 임계값이 2배(180초 -> 360초)라서 200초로는 저감되지 않고 관찰만 한다
+    res = client.post(f"{PREFIX}/presence", json=_presence(200, zone="near"))
+    assert res.json()["safetyPhase"] == "absence_watch"
+    assert published == []
+
+
+# ---------------------------------------------------------------------------
+# 낙상 사고 안전 기능
+# ---------------------------------------------------------------------------
+
+def test_guardian_register_and_read(client):
+    assert client.get(f"{PREFIX}/guardian").status_code == 404
+
+    res = client.put(f"{PREFIX}/guardian", json={"name": "보호자", "phone": "01000000000"})
+    assert res.status_code == 200
+    # CI에는 NAVER_SENS_* 키가 없으므로 실제 발송은 되지 않는 것이 정상
+    assert res.json()["verificationSent"] is False
+    assert client.get(f"{PREFIX}/guardian").json()["phone"] == "01000000000"
+
+
+def test_fall_turns_off_burner_and_can_be_resolved(client, published):
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT)
+    assert accepted.status_code == 202
+    incident_id = accepted.json()["incidentId"]
+    token = _token_of(accepted.json()["confirmUrl"])
+
+    # 재실 정책과 달리 단계 없이 즉시 전원 차단
+    assert published[-1]["type"] == "turn_off"
+    assert client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"] == "pending"
+
+    wrong = client.post(f"{PREFIX}/fall-incidents/{incident_id}/resolve", params={"token": "wrong"})
+    assert wrong.status_code == 403
+
+    resolved = client.post(f"{PREFIX}/fall-incidents/{incident_id}/resolve", params={"token": token})
+    assert resolved.json()["status"] == "resolved"
+
+    again = client.post(f"{PREFIX}/fall-incidents/{incident_id}/report", params={"token": token})
+    assert again.status_code == 409
+    assert _event_types(client) == ["fall_detected", "fall_resolved"]
+
+
+def test_fall_can_be_reported(client):
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    res = client.post(
+        f"{PREFIX}/fall-incidents/{accepted['incidentId']}/report",
+        params={"token": _token_of(accepted["confirmUrl"])},
+    )
+    assert res.json()["status"] == "reported"
+
+
+def test_fall_is_auto_reported_when_nobody_answers(client):
+    client.put(f"{PREFIX}/policies/fall-safety", json={"autoReportSec": 1})
+    incident_id = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["incidentId"]
+
+    status = "pending"
+    for _ in range(40):  # 최대 4초 대기
+        status = client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"]
+        if status != "pending":
+            break
+        time.sleep(0.1)
+
+    assert status == "auto_reported"
+    assert "fall_auto_reported" in _event_types(client)
+
+
+def test_unknown_fall_incident_is_404(client):
+    assert client.get(f"{PREFIX}/fall-incidents/nope").status_code == 404
+    assert client.post(f"{PREFIX}/fall-incidents/nope/resolve", params={"token": "x"}).status_code == 404
