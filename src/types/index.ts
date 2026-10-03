@@ -1,115 +1,190 @@
-/** 화면 모드. 일반 = 정보 밀도 높음, 어르신 = 단순화 + 큰 타이포 */
-export type Mode = 'normal' | 'elderly'
+/**
+ * 프론트엔드 도메인 타입.
+ *
+ * 인덕션·안전 이벤트·세션·낙상·정책은 백엔드 v0.2.1(app/schemas.py)과 필드명·값을 맞췄다.
+ * 백엔드가 아직 제공하지 않는 정보(정수기·환풍기·욕실 조명, 위치, 안내 문장)는
+ * 임베디드/중앙제어 파트 설계(중간발표 자료)를 따라 프론트 확장 필드로 둔다.
+ */
 
+export type Mode = 'normal' | 'elderly'
 export type Language = 'ko' | 'en'
 
-/** 현재 지원 공간. 침실/거실 등은 이 유니온에 추가만 하면 확장된다. */
-export type RoomId = 'kitchen' | 'bathroom'
+/** 부스 구성: 침실 · 거실 · 주방 · 욕실 */
+export type RoomId = 'kitchen' | 'bathroom' | 'bedroom' | 'living'
+/** 사용자 현재 위치 (중앙제어: 집 밖 / 판단 불가 포함) */
+export type Location = RoomId | 'outside' | 'unknown'
 
-/** 기기·공간의 안전 상태 */
-export type DeviceStatus = 'normal' | 'warning' | 'danger' | 'offline'
+/** 화면에 보여줄 위험 단계 (중앙제어 CAUTION/WARNING/DANGER + 센서 불확실) */
+export type Risk = 'normal' | 'caution' | 'warning' | 'danger' | 'uncertain'
 
-/** 전원 상태. STANDBY 는 '대기'(정수기 등) */
-export type PowerState = 'ON' | 'OFF' | 'STANDBY'
+// ── 인덕션 (BE BurnerTelemetry) ───────────────────────────────────────────
+export type BurnerState = 'off' | 'on' | 'overheated' | 'cooling'
+export type Publisher = 'user' | 'system' | 'api'
 
-/** ApplianceCard 시각 변형 */
-export type ApplianceVariant = 'active' | 'standby' | 'off' | 'warning' | 'danger' | 'offline'
-
-export type TimelineKind = 'normal' | 'warning' | 'danger' | 'info'
-
-export interface TimelineEvent {
-  /** HH:MM */
-  time: string
-  kind: TimelineKind
-  text: string
+export interface Burner {
+  burnerId: string
+  deviceState: BurnerState
+  /** 0~9 (off·overheated 면 0) */
+  level: number
+  temperature: number
+  activeSec: number
 }
 
-export interface Appliance {
+/** BE compute_safety_phase() 와 같은 값 */
+export type KitchenPhase = 'normal' | 'absence_watch' | 'auto_reduced' | 'auto_off' | 'overheat'
+
+// ── 기기 ─────────────────────────────────────────────────────────────────
+interface DeviceBase {
   id: string
   name: string
   room: RoomId
-  power: PowerState
-  status: DeviceStatus
-  /** 카드에 노출되는 핵심 상태 한 줄 (예: "화력 3단계") */
-  detail: string
-  /** 상세 팝업의 보조 정보 (예: "표면 온도 62°C · 작동 12분") */
-  sub: string
-  lastUpdate: string
-  /**
-   * 실제로 제어 API 가 존재하는 기기만 true.
-   * false 인 기기는 버튼도 음성도 제어 UI 를 렌더링하지 않는다.
-   */
-  supportsControl: boolean
-  history: TimelineEvent[]
+  online: boolean
 }
+
+export interface InductionDevice extends DeviceBase {
+  kind: 'induction'
+  burner: Burner
+  /** 마지막으로 상태를 바꾼 주체 (user=본체 조작, system=안전 자동 조치) */
+  lastControl: Publisher
+  alarm: boolean
+  /** 온도 추이 (최근 → 마지막 원소) */
+  tempHistory: number[]
+}
+
+export interface PurifierDevice extends DeviceBase {
+  kind: 'purifier'
+  dispensing: boolean
+  lastDispense: { at: string; ml: number; auto: boolean } | null
+  /** 아침 자동 출수는 하루 1회 */
+  autoDispensedToday: boolean
+}
+
+export interface FanDevice extends DeviceBase {
+  kind: 'fan'
+  on: boolean
+  /** 풍량 1~3 (PWM 단계) */
+  speed: 1 | 2 | 3
+  auto: boolean
+}
+
+export interface LightDevice extends DeviceBase {
+  kind: 'light'
+  on: boolean
+  brightness: number
+  auto: boolean
+}
+
+export type Device = InductionDevice | PurifierDevice | FanDevice | LightDevice
+
+// ── 재실 (BE PresenceReport) ─────────────────────────────────────────────
+export type Zone = 'kitchen' | 'near' | 'far' | 'unknown'
 
 export interface Presence {
-  room: RoomId
-  detected: boolean
-  /** 예: "움직임 감지" */
-  action: string
-  /** 마지막 감지로부터 경과 초 */
-  lastDetectedSec: number
-  /** 0~100. 어르신 모드에서는 표시하지 않는다. */
+  room: 'kitchen' | 'bathroom'
+  present: boolean
+  zone: Zone
+  absentSec: number
+  /** 0~1 */
   confidence: number
+  observedAt: string
 }
 
-export interface EnvMetric {
-  key: 'lux' | 'temp' | 'humidity' | 'air'
-  value: string
-  unit: string
-  status: DeviceStatus
-}
+// ── 안전 이벤트 (BE SafetyEvent) ──────────────────────────────────────────
+export type SafetyEventType =
+  | 'cooking_started'
+  | 'absence_detected'
+  | 'auto_power_reduced'
+  | 'auto_power_off'
+  | 'overheat_detected'
+  | 'command_blocked'
+  | 'overheat_cleared'
+  | 'user_returned'
+  | 'cooking_ended'
+  | 'fall_detected'
+  | 'fall_resolved'
+  | 'fall_reported'
+  | 'fall_auto_reported'
+  /** 프론트 확장: 중앙제어 아침 자동 출수 */
+  | 'auto_dispense'
 
-export interface Environment {
+export type Severity = 'info' | 'warning' | 'danger'
+
+export interface SafetyEvent {
+  eventId: string
+  type: SafetyEventType
+  severity: Severity
+  occurredAt: string
   room: RoomId
-  metrics: EnvMetric[]
+  sessionId?: string
+  temperature?: number
+  trigger?: string
+  action?: string
+  reasoning?: string
+  /** 중앙제어 LLM 이 만든 안내 문장 (BE 연동 예정 필드) */
+  guidance?: string
+  feedback?: { verdict: 'approved' | 'rejected'; submittedAt: string }
 }
 
-export type SafetyResult = 'success' | 'warning' | 'canceled'
+// ── 조리 세션 (BE SessionRecord) ──────────────────────────────────────────
+export interface SessionEntry {
+  at: string
+  type: string
+  summary: string
+}
 
-/**
- * 처리 이력. 기획서에 따라 '상태 감지' / '상태 판단' 같은 중간 이벤트는
- * 여기에 담지 않는다. 실제로 시스템이 수행한 안전 처리만 기록한다.
- */
-export interface SafetyLog {
-  id: string
-  /** ISO8601 (로컬 기준) */
-  datetime: string
+export interface CookingSession {
+  sessionId: string
+  startedAt: string
+  endedAt?: string
+  status: 'active' | 'ended'
+  peakTemperature: number
+  timeline: SessionEntry[]
+}
+
+// ── 낙상 (BE FallIncident) ───────────────────────────────────────────────
+export type FallStatus = 'pending' | 'resolved' | 'reported' | 'auto_reported'
+
+export interface FallIncident {
+  incidentId: string
   room: RoomId
-  content: string
-  result: SafetyResult
-  /** 판단 근거 목록 */
-  reasoning: string[]
-  relatedDevices: string[]
+  status: FallStatus
+  detectedAt: string
   confidence: number
+  confirmUrl: string
+  autoReportAt: string
+  eventId?: string
+  resolvedAt?: string
+  reportedAt?: string
+  /** 프론트 표시용: 보호자 문자 발송 여부 / 인덕션 비상 차단 여부 */
+  guardianNotified?: boolean
+  burnerShutOff?: boolean
 }
 
-/** 진행 중인 위험 상황 */
-export interface SafetyIncident {
-  id: string
-  room: RoomId
-  title: string
-  description: string
-  /** 카운트다운 초 */
-  countdownSec: number
-  facts: { icon: 'flame' | 'userX' | 'droplets'; text: string; emphasis?: boolean }[]
-  reasoning: string[]
-  relatedDevices: string[]
-  confidence: number
-  /** 카운트다운 종료 시 수행할 안전 조치 */
-  action: {
-    applianceId: string
-    /** 조치 후 detail 로 교체될 문자열 */
-    nextDetail: string
-    /** 이력에 남길 내용 */
-    logContent: string
-    /** 기기 이력 타임라인에 남길 문구 */
-    deviceHistoryText: string
-  }
+// ── 연락처 / 정책 ────────────────────────────────────────────────────────
+export interface Contact {
+  name: string
+  /** 숫자만 저장 */
+  phone: string
 }
 
-export interface ConnectionIssue {
-  room: RoomId
-  lastReceivedSec: number
+export interface ContactSaveResult {
+  contact: Contact
+  verificationSent: boolean
+  message: string
+}
+
+export interface KitchenPolicy {
+  watchAfterSec: number
+  reduceAfterSec: number
+  offAfterSec: number
+  reduceToLevel: number
+  minConfidence: number
+  nearZoneMultiplier: number
+  overheatEnterC: number
+  overheatExitC: number
+  heartbeatTimeoutSec: number
+}
+
+export interface FallPolicy {
+  autoReportSec: number
 }

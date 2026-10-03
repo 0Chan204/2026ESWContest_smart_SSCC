@@ -1,202 +1,187 @@
 import { useState } from 'react'
-import { AlertTriangle, Bath, CheckCircle2, Shield, UtensilsCrossed, Wifi } from 'lucide-react'
-import { ApplianceCard } from '@/components/ApplianceCard'
-import { ApplianceDetailModal } from '@/features/appliance/ApplianceDetailModal'
+import { useNavigate } from 'react-router'
+import { Bath, ChevronRight, MapPin, ShieldAlert, ShieldCheck, UserRound, UtensilsCrossed } from 'lucide-react'
+import { PageHeader } from '@/app/PageHeader'
+import { Card, CardTitle } from '@/components/ui/Card'
+import { StatusText } from '@/components/ui/StatusDot'
+import { DeviceTile } from '@/features/devices/DeviceTile'
+import { DeviceSheet } from '@/features/devices/DeviceSheet'
+import { EventRow } from '@/features/history/EventRow'
+import { EventDetailSheet } from '@/features/history/EventDetailSheet'
+import { HomeMap } from './HomeMap'
+import { useHome } from '@/store/HomeStore'
 import { usePreferences } from '@/store/PreferencesContext'
-import { useHomeState } from '@/store/HomeStateContext'
+import { HERO_TITLE, describeBathroom, describeKitchen } from '@/lib/rooms'
+import { LOCATION_LABEL, RISK_TONE, isRecord } from '@/lib/labels'
+import { maskPhone } from '@/lib/phone'
 import { cn } from '@/lib/cn'
 
 export function HomePage() {
   const { elderly } = usePreferences()
-  const [selected, setSelected] = useState<string | null>(null)
-
-  return (
-    <>
-      {elderly ? <HomeElderly /> : <HomeNormal onSelect={setSelected} />}
-      <ApplianceDetailModal applianceId={selected} onClose={() => setSelected(null)} />
-    </>
-  )
+  return elderly ? <HomeElderly /> : <HomeNormal />
 }
 
-/* ── 일반 모드 ─────────────────────────────────────────────────────────────
-   상단 12-column Summary(6/3/3) + 가전 그리드 4열.
-   '마지막 활동' 카드는 기획서 요구에 따라 두지 않는다.
-   ───────────────────────────────────────────────────────────────────────── */
-function HomeNormal({ onSelect }: { onSelect: (id: string) => void }) {
-  const { t } = usePreferences()
-  const { appliances, alertCount, onlineCount } = useHomeState()
-  const safe = alertCount === 0
+function useRoomLines() {
+  const { kitchenPhase, induction, presence, fall } = useHome()
+  return { kitchen: describeKitchen(kitchenPhase, induction, presence.kitchen), bathroom: describeBathroom(fall, presence.bathroom) }
+}
+
+/* ── 일반 모드 ──────────────────────────────────────────────────────────── */
+function HomeNormal() {
+  const navigate = useNavigate()
+  const { overallRisk, devices, events, contacts, location } = useHome()
+  // 상단 상태 배너가 떠 있으면(위험·연결 끊김) 세로 공간이 줄어드므로 기록을 2건만 보여준다
+  const bannerShown = overallRisk !== 'normal' || devices.some((d) => !d.online)
+  const lines = useRoomLines()
+  const [deviceId, setDeviceId] = useState<string | null>(null)
+  const [eventId, setEventId] = useState<string | null>(null)
+  const records = events.filter(isRecord).slice(0, bannerShown ? 2 : 3)
+  const safe = overallRisk === 'normal'
+  const HeroIcon = safe ? ShieldCheck : ShieldAlert
 
   return (
-    <div className="mx-auto flex h-full max-w-[1400px] flex-col gap-5 px-6 py-4">
-      <div className="grid shrink-0 grid-cols-12 gap-4">
-        <section
-          className={cn(
-            'col-span-6 flex items-center gap-5 rounded-2xl border p-6',
-            safe ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50',
-          )}
-        >
-          <span
-            className={cn(
-              'flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl',
-              safe ? 'bg-emerald-100' : 'bg-amber-100',
-            )}
-          >
-            {safe
-              ? <Shield className="h-8 w-8 text-emerald-600" aria-hidden="true" />
-              : <AlertTriangle className="h-8 w-8 text-amber-600" aria-hidden="true" />}
-          </span>
-          <div className="min-w-0">
-            <h2
-              className={cn(
-                'mb-1 text-xs font-semibold tracking-wider uppercase',
-                safe ? 'text-emerald-600' : 'text-amber-600',
-              )}
-            >
-              {t('home.summary.overall')}
-            </h2>
-            <p className={cn('text-2xl leading-tight font-bold', safe ? 'text-emerald-800' : 'text-amber-800')}>
-              {t(safe ? 'home.summary.safe' : 'home.summary.attention')}
-            </p>
-            <p className={cn('mt-0.5 text-sm', safe ? 'text-emerald-700' : 'text-amber-700')}>
-              {t(safe ? 'home.summary.safeSub' : 'home.summary.attentionSub')}
-            </p>
+    <div className="flex h-full flex-col">
+      <PageHeader title="우리 집" subtitle={safe ? '모든 공간과 기기가 정상이에요' : '확인이 필요한 공간이 있어요'} />
+
+      <div className="grid min-h-0 flex-1 gap-4 px-8 pt-5 pb-7" style={{ gridTemplateRows: 'minmax(172px,1fr) auto auto' }}>
+        {/* 1행: 전체 상태 + 지금 위치 */}
+        <div className="grid min-h-0 grid-cols-12 gap-5">
+          <Card className={cn('col-span-7 flex min-h-0 flex-col justify-between px-7 py-6', !safe && RISK_TONE[overallRisk].soft)}>
+            <div className="flex items-center gap-4">
+              <span className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl', safe ? 'bg-ok-soft' : 'bg-surface')}>
+                <HeroIcon className={cn('h-6 w-6', RISK_TONE[overallRisk].text)} aria-hidden="true" />
+              </span>
+              <h2 className="text-[1.75rem] leading-tight font-bold text-ink">{HERO_TITLE[overallRisk]}</h2>
+            </div>
+            <ul className="mt-3">
+              <RoomLine Icon={UtensilsCrossed} name="주방" text={lines.kitchen.text} risk={lines.kitchen.risk} onClick={() => navigate('/kitchen')} />
+              <RoomLine Icon={Bath} name="욕실" text={lines.bathroom.text} risk={lines.bathroom.risk} onClick={() => navigate('/bathroom')} />
+            </ul>
+          </Card>
+
+          <Card className="col-span-5 flex min-h-0 flex-col px-6 py-5">
+            <CardTitle title="지금 위치" action={
+              <span className="flex items-center gap-1 text-[0.9375rem] font-semibold text-brand">
+                <MapPin className="h-4 w-4" aria-hidden="true" />{LOCATION_LABEL[location]}
+              </span>
+            } />
+            <div className="flex min-h-0 flex-1 flex-col justify-center"><HomeMap height={112} /></div>
+          </Card>
+        </div>
+
+        {/* 2행: 기기 */}
+        <section>
+          <h2 className="mb-2.5 text-[0.9375rem] font-semibold text-ink">기기 <span className="font-normal text-ink-3">{devices.length}</span></h2>
+          <div className="grid grid-cols-4 gap-4" style={{ gridAutoRows: '158px' }}>
+            {devices.map((d) => <DeviceTile key={d.id} device={d} onOpen={() => setDeviceId(d.id)} />)}
           </div>
         </section>
 
-        <section className="col-span-3 flex flex-col justify-between rounded-2xl border border-gray-100 bg-white p-5">
-          <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50">
-            <Wifi className="h-5 w-5 text-blue-600" aria-hidden="true" />
-          </span>
-          <div>
-            <h2 className="mb-0.5 text-xs text-gray-500">{t('home.summary.devices')}</h2>
-            <p className="tabular text-2xl font-bold text-gray-900">
-              {t('home.summary.count', { n: appliances.length, m: onlineCount })}
-            </p>
-            <p className="mt-0.5 flex items-center gap-1 text-xs text-emerald-600">
-              <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-              {t('home.summary.devicesAllOk')}
-            </p>
-          </div>
-        </section>
-
-        <section
-          className={cn(
-            'col-span-3 flex flex-col justify-between rounded-2xl border p-5',
-            safe ? 'border-gray-100 bg-white' : 'border-amber-200 bg-amber-50',
-          )}
-        >
-          <span
-            className={cn(
-              'mb-3 flex h-10 w-10 items-center justify-center rounded-xl',
-              safe ? 'bg-gray-50' : 'bg-amber-100',
-            )}
-          >
-            <AlertTriangle className={cn('h-5 w-5', safe ? 'text-gray-400' : 'text-amber-600')} aria-hidden="true" />
-          </span>
-          <div>
-            <h2 className="mb-0.5 text-xs text-gray-500">{t('home.summary.alerts')}</h2>
-            <p className={cn('tabular text-2xl font-bold', safe ? 'text-gray-900' : 'text-amber-800')}>
-              {t('home.summary.cases', { n: alertCount })}
-            </p>
-            <p className={cn('mt-0.5 text-xs', safe ? 'text-gray-500' : 'text-amber-700')}>
-              {t(safe ? 'home.summary.alertsNone' : 'home.summary.alertsSome')}
-            </p>
-          </div>
-        </section>
+        {/* 3행: 최근 안전 기록 + 보호자 알림 */}
+        <div className="grid grid-cols-12 gap-5">
+          <Card className="col-span-8 px-3 py-2.5">
+            <div className="flex items-center justify-between px-3 pt-1 pb-1">
+              <h2 className="text-[0.9375rem] font-semibold text-ink">최근 안전 기록</h2>
+              <button type="button" onClick={() => navigate('/history')} className="flex items-center text-sm font-semibold text-brand">
+                전체 보기<ChevronRight className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            {records.map((e) => <EventRow key={e.eventId} event={e} compact onClick={() => setEventId(e.eventId)} />)}
+          </Card>
+          <GuardianCard className="col-span-4" guardian={contacts.guardian} onRegister={() => navigate('/settings?section=contacts')} />
+        </div>
       </div>
 
-      <section className="flex min-h-0 flex-1 flex-col">
-        <div className="mb-3 flex shrink-0 items-center justify-between">
-          <h2 className="text-base font-bold text-gray-900">{t('home.appliances')}</h2>
-          <span className="text-sm text-gray-500">
-            {t('home.appliances.count', { n: appliances.length })}
-          </span>
-        </div>
-        <div className="grid grid-cols-4 gap-4" style={{ gridAutoRows: 'minmax(180px, auto)' }}>
-          {appliances.map((appliance) => (
-            <ApplianceCard key={appliance.id} appliance={appliance} onClick={() => onSelect(appliance.id)} />
-          ))}
-        </div>
-      </section>
+      <DeviceSheet deviceId={deviceId} onClose={() => setDeviceId(null)} />
+      <EventDetailSheet eventId={eventId} onClose={() => setEventId(null)} />
     </div>
   )
 }
 
-/* ── 어르신 모드 ───────────────────────────────────────────────────────────
-   정보를 늘리지 않는다. 큰 상태 문구 + 큰 카드 3개만.
-   전문 용어(AI 신뢰도, 센서, API)를 쓰지 않는다.
-   ───────────────────────────────────────────────────────────────────────── */
+function RoomLine({ Icon, name, text, risk, onClick }: {
+  Icon: typeof Bath; name: string; text: string; risk: Parameters<typeof StatusText>[0]['risk']; onClick: () => void
+}) {
+  return (
+    <li>
+      <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-xl py-1.5 text-left hover:opacity-80">
+        <Icon className="h-5 w-5 shrink-0 text-ink-2" aria-hidden="true" />
+        <span className="w-12 shrink-0 text-[1.0625rem] font-semibold text-ink">{name}</span>
+        <StatusText risk={risk} className="min-w-0 flex-1 truncate text-[1rem]">{text}</StatusText>
+        <ChevronRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
+      </button>
+    </li>
+  )
+}
+
+function GuardianCard({ guardian, onRegister, className }: {
+  guardian: { name: string; phone: string } | null; onRegister: () => void; className?: string
+}) {
+  if (!guardian) {
+    return (
+      <Card className={cn('flex flex-col justify-between bg-warn-soft p-6', className)}>
+        <div>
+          <p className="text-[0.9375rem] font-semibold text-[#9a4a00]">보호자 연락처가 없어요</p>
+          <p className="mt-1 text-[0.875rem] leading-relaxed text-[#9a4a00]/85">등록하면 낙상이 감지될 때 보호자에게 바로 문자로 알려드려요.</p>
+        </div>
+        <button type="button" onClick={onRegister}
+          className="mt-4 min-h-11 rounded-xl bg-surface text-[0.9375rem] font-semibold text-ink hover:bg-sunken">
+          보호자 등록하기
+        </button>
+      </Card>
+    )
+  }
+  return (
+    <Card className={cn('flex flex-col justify-between p-6', className)}>
+      <p className="text-[0.9375rem] font-semibold text-ink">위급할 때 알림</p>
+      <div className="mt-3 flex items-center gap-3">
+        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-sunken"><UserRound className="h-5 w-5 text-ink-2" aria-hidden="true" /></span>
+        <div>
+          <p className="text-[1rem] font-semibold text-ink">보호자 {guardian.name}</p>
+          <p className="tabular text-[0.875rem] text-ink-2">{maskPhone(guardian.phone)}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-[0.8125rem] text-ink-3">낙상이 감지되면 이 번호로 확인 문자를 보내요.</p>
+    </Card>
+  )
+}
+
+/* ── 어르신 모드: 정보는 줄이고 크게 ───────────────────────────────────── */
 function HomeElderly() {
-  const { t } = usePreferences()
-  const { alertCount, presence } = useHomeState()
-  const safe = alertCount === 0
-  const bathroomInUse = presence.bathroom?.detected ?? false
+  const navigate = useNavigate()
+  const { overallRisk, location, contacts } = useHome()
+  const lines = useRoomLines()
+  const safe = overallRisk === 'normal'
 
   const cards = [
-    {
-      key: 'kitchen',
-      label: t('room.kitchen'),
-      value: `✓ ${t('home.elderly.kitchenSafe')}`,
-      tone: 'emerald' as const,
-      Icon: UtensilsCrossed,
-    },
-    {
-      key: 'bathroom',
-      label: t('room.bathroom'),
-      value: bathroomInUse ? t('home.elderly.bathroomInUse') : `✓ ${t('home.elderly.kitchenSafe')}`,
-      tone: bathroomInUse ? ('blue' as const) : ('emerald' as const),
-      Icon: Bath,
-    },
-    {
-      key: 'connection',
-      label: t('home.elderly.connection'),
-      value: `✓ ${t('home.elderly.connectionOk')}`,
-      tone: 'emerald' as const,
-      Icon: Wifi,
-    },
+    { key: 'kitchen', Icon: UtensilsCrossed, name: '주방', short: lines.kitchen.short, risk: lines.kitchen.risk, to: '/kitchen' },
+    { key: 'bathroom', Icon: Bath, name: '욕실', short: lines.bathroom.short, risk: lines.bathroom.risk, to: '/bathroom' },
+    { key: 'where', Icon: MapPin, name: '지금 위치', short: LOCATION_LABEL[location], risk: 'normal' as const, to: '/home' },
   ]
 
-  const TONES = {
-    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
-    blue: 'bg-blue-50 border-blue-200 text-blue-700',
-  }
-
   return (
-    <div className="mx-auto flex h-full max-w-[1000px] flex-col px-6 py-6">
-      <div className="mb-6 shrink-0 text-center">
-        <p
-          className={cn(
-            'inline-flex items-center gap-3 rounded-2xl border px-7 py-4',
-            safe ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50',
-          )}
-        >
-          <CheckCircle2
-            className={cn('h-7 w-7 shrink-0', safe ? 'text-emerald-600' : 'text-amber-600')}
-            aria-hidden="true"
-          />
-          <span className={cn('text-2xl font-bold', safe ? 'text-emerald-700' : 'text-amber-700')}>
-            {t(safe ? 'home.summary.safe' : 'home.summary.attention')}
-          </span>
-        </p>
-      </div>
-
-      <div className="grid flex-1 grid-cols-3 gap-5">
-        {cards.map(({ key, label, value, tone, Icon }) => (
-          <div
-            key={key}
-            className={cn(
-              'flex flex-col items-center justify-center rounded-2xl border-2 p-6 text-center',
-              TONES[tone],
-            )}
-          >
-            <span className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white shadow-sm">
-              <Icon className="h-8 w-8 text-gray-600" aria-hidden="true" />
-            </span>
-            <p className="mb-2 text-2xl font-bold text-gray-900">{label}</p>
-            <p className="text-lg font-semibold break-keep">{value}</p>
-          </div>
-        ))}
+    <div className="flex h-full flex-col">
+      <PageHeader title="우리 집" />
+      <div className="flex min-h-0 flex-1 flex-col gap-5 px-8 pt-5 pb-7">
+        <Card className={cn('flex shrink-0 items-center gap-5 px-8 py-7', !safe && RISK_TONE[overallRisk].soft)}>
+          {safe ? <ShieldCheck className="h-12 w-12 text-ok" aria-hidden="true" /> : <ShieldAlert className={cn('h-12 w-12', RISK_TONE[overallRisk].text)} aria-hidden="true" />}
+          <p className="text-4xl font-bold text-ink">{safe ? '✓ ' : '! '}{HERO_TITLE[overallRisk]}</p>
+        </Card>
+        <div className="grid min-h-0 flex-1 grid-cols-3 gap-5">
+          {cards.map(({ key, Icon, name, short, risk, to }) => (
+            <button key={key} type="button" onClick={() => navigate(to)}
+              className={cn('flex flex-col items-center justify-center gap-4 rounded-3xl p-6 text-center', risk === 'normal' ? 'bg-surface' : RISK_TONE[risk].soft)}>
+              <Icon className="h-14 w-14 text-ink-2" strokeWidth={1.6} aria-hidden="true" />
+              <span className="text-3xl font-bold text-ink">{name}</span>
+              <StatusText risk={risk} className="text-2xl">{short}</StatusText>
+            </button>
+          ))}
+        </div>
+        {!contacts.guardian && (
+          <button type="button" onClick={() => navigate('/settings?section=contacts')}
+            className="flex min-h-16 shrink-0 items-center justify-between rounded-3xl bg-warn-soft px-7 text-xl font-semibold text-[#9a4a00]">
+            보호자 연락처를 등록해 주세요<ChevronRight className="h-6 w-6" aria-hidden="true" />
+          </button>
+        )}
       </div>
     </div>
   )

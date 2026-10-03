@@ -1,174 +1,97 @@
 # HomeVIS Frontend
 
-주방에 설치된 **터치 태블릿 / 월패드**용 스마트홈 안전 모니터링 웹 앱.
-집 안 공간의 사용자 상태와 가전 상태를 모니터링하고, 위험 상황을 감지해 안전 조치를 수행한 뒤
-그 이력을 사용자가 확인할 수 있게 한다.
+가정용 **태블릿·월패드 안전 대시보드**와, 낙상 시 보호자가 문자 링크로 여는 **모바일 확인 페이지**.
 
-핵심은 가전 원격 제어가 아니라 **상태 모니터링 → 안전 판단 → 안전 처리 → 처리 이력** 이다.
-
----
+핵심 흐름은 가전 원격 제어가 아니라 **상태 모니터링 → 안전 판단 → 자동 조치 → 기록·피드백** 이다.
+인덕션은 안전을 위해 **조회 전용**이며, 위험할 때 서버가 자동으로 화력을 낮추거나 전원을 끈다.
 
 ## 실행
 
 ```bash
 npm install
 npm run dev        # http://127.0.0.1:5173
+npm run build      # 타입검사 + 정적 빌드 → dist/
+npm run lint
+npm audit
 ```
 
-```bash
-npm run build      # 타입체크 + 정적 빌드 → dist/
-npm run preview    # 빌드 결과 미리보기
-npm run lint       # ESLint (보안 규칙 포함)
-npm run typecheck  # 타입 검사만
-npm run audit      # 런타임 의존성 취약점 점검
-```
+처음 열면 화면 모드(크게 보기 / 기본 보기)를 고른다. 레일 아래 **시연** 버튼으로 주방 이탈·과열·낙상·아침 자동 출수·기기 연결 끊김을 재현할 수 있다(목 데이터일 때만 표시).
 
-## 기준 해상도
+## 화면
 
-| 대상 | 해상도 | 비고 |
+| 경로 | 기기 | 내용 |
 | --- | --- | --- |
-| 태블릿 가로 | 1280 × 800 | |
-| 주방 월패드 | 1440 × 900 | |
+| `/home` | 태블릿 | 집 전체 상태 · 지금 위치(평면 약도) · 기기 · 최근 안전 기록 · 보호자 알림 |
+| `/kitchen` | 태블릿 | 인덕션 온도 추이(과열 기준선) · 재실 감지 · 정수기 · 환풍기 · 이번 조리 흐름 |
+| `/bathroom` | 태블릿 | 낙상 상태 · 욕실 조명 · 낙상 판단 단계 · 욕실 기록 |
+| `/history` | 태블릿 | 안전 기록 필터·페이지 · 상세(판단 근거 · 자동 조치 피드백 · 조리 흐름) |
+| `/settings` | 태블릿 | 화면 모드·글자 크기 · 비상 연락처 · 음성 · 안전 정책(관리자) · 언어 · 정보 |
+| `/fall/:id?token=` | **보호자 휴대폰** | 낙상 확인 · 자동 신고 카운트다운 · 괜찮아요 / 신고 요청 · 119 전화 |
 
-두 해상도 모두 **모든 화면에서 세로 스크롤이 생기지 않는다.**
-어르신 모드에서 글자 크기를 최대(130%)로 올려도 마찬가지다.
-내용이 넘칠 때는 스크롤 대신 카드 높이 조절 / 표시 건수 제한 / 페이지네이션으로 해결한다.
+태블릿 화면 기준: **1280×800 · 1440×900 가로, 세로 스크롤 없음** (어르신 모드 글자 130% 포함).
 
----
+## 디자인 원칙
 
-## 기술 스택
+- 연회색 바탕 + 흰 카드, 테두리 대신 면 대비. 색은 **상태를 알릴 때만** 쓴다.
+- 상태는 색만으로 표현하지 않는다 — 항상 점·아이콘 + 글자.
+- 왼쪽 내비게이션 레일(태블릿 설정 앱·월패드 방식)로 가로 화면의 세로 공간을 확보하고, 마이크 버튼을 레일에 고정해 콘텐츠를 가리지 않는다.
+- 어르신 모드는 정보를 줄이고 크게. 글자 크기는 rem 기준이라 설정값이 모든 글자에 적용되고, 여백·아이콘은 px 로 고정해 레이아웃이 흔들리지 않는다.
 
-| 영역 | 선택 |
+## 백엔드(HomeVIS-Backend v0.2.1)와의 정합
+
+`src/data/source/types.ts` 의 실시간 메시지 이름과 필드는 백엔드 WebSocket(`/api/v1/stream`)과 같다.
+목 데이터 소스(`mockSource.ts`)는 백엔드 서버 규칙(과열 150°C/60°C, 부재 60/180/600초, near 2배, 낙상 자동 신고)을 축소 재현한다.
+
+| 화면 | 백엔드 API |
 | --- | --- |
-| 빌드 | Vite 6 |
-| 언어 | TypeScript (strict) |
-| UI | React 18 |
-| 스타일 | Tailwind CSS v4 |
-| 라우팅 | react-router v7 |
-| 아이콘 | lucide-react |
-| 토스트 | sonner |
-| 상태 | React Context + useReducer (외부 상태관리 라이브러리 없음) |
-| 음성 | 브라우저 내장 Web Speech API |
+| 인덕션 상태 | WS `burner.telemetry` · `session.updated` · `safety.event` |
+| 자동 조치 피드백 | `POST /safety-events/{id}/feedback` |
+| 비상 연락처 | `GET/PUT /user` · `/guardian` |
+| 안전 정책 | `GET/PUT /policies/kitchen-absence` · `/policies/fall-safety` |
+| 낙상 경보 | WS `fall.incident` |
+| 보호자 페이지 | `GET /fall-incidents/{id}` · `POST .../resolve?token=` · `.../report?token=` |
 
-**런타임 의존성 5개.** 유료 SDK·CDN·분석 도구·클라우드 STT를 사용하지 않는다.
+`(FE 확장)` 으로 표시한 메시지(정수기·환풍기·욕실 조명 상태, 사용자 위치, 연결 상태, 안내 문장)는 백엔드에 아직 없어 프론트가 먼저 정의했다.
 
-### 폰트
+### 연동 전 백엔드에 필요한 것
 
-외부 폰트 CDN을 사용하지 않는다. 요청 0건 / 추적 0건 / 오프라인 동작을 위해
-시스템 한글 폰트 스택(Apple SD Gothic Neo, Noto Sans KR, Malgun Gothic 등)을 사용한다.
+- **CORS** 허용 목록 (프론트·백엔드 출처가 다를 경우)
+- **인증** — 현재 누구나 정책 변경·제어 API 호출 가능. 사용자용 인덕션 제어 엔드포인트는 막아 둘 것
+- `FRONTEND_BASE_URL` 을 **외부에서 접근 가능한 HTTPS 주소**로 (보호자 휴대폰에서 열려야 함)
+- `GET /fall-incidents/{id}` 에도 token 검사
+- 정수기·환풍기·조명·위치 이벤트, 안전 이벤트 목록의 날짜·검색 필터
 
-Pretendard를 쓰려면 `public/fonts/` 에 woff2 서브셋을 넣고
-`src/styles/index.css` 의 `@font-face` 주석을 해제하면 된다. CSP는 이미 `font-src 'self'` 로 허용되어 있다.
+`.env` 에 `VITE_API_BASE_URL` 을 넣으면 그 출처만 CSP `connect-src` 에 자동 추가된다. (`VITE_` 값은 번들에 그대로 들어가므로 시크릿 금지)
 
----
+## 보안·개인정보
 
-## 디렉터리 구조
+- 프로덕션 빌드에 CSP 자동 주입 (`default-src 'self'`), 외부 CDN·분석 도구·유료 API 없음
+- `dangerouslySetInnerHTML` · `innerHTML` · `eval` · 인증정보 localStorage 저장을 ESLint 로 차단
+- localStorage 에는 화면 설정만 저장(읽을 때 검증). **연락처는 브라우저에 저장하지 않는다**
+- 연락처는 화면에 가운데를 가려 표시(`010-****-5678`), 입력란 자동완성 끔
+- 보호자 링크의 token 은 읽은 즉시 주소창에서 제거, 메모리에만 보관
+- 음성 인식(외부 전송 가능)은 기본 꺼짐 + 고지. 위험 알림 읽어주기(TTS)는 **기기 내장 음성만** 사용
+
+배포 서버에서 추가로 `frame-ancestors 'none'` 헤더와 SPA fallback(`try_files $uri /index.html`)이 필요하다.
+
+## 구조
 
 ```
 src/
-├─ app/          App, AppShell, NavBar, ConnectionBanner
+├─ app/            App(라우트) · AppShell · NavRail · PageHeader
 ├─ features/
-│  ├─ onboarding/  최초 1회 모드 선택
-│  ├─ home/        홈 (일반/어르신)
-│  ├─ room/        주방·화장실 공통 화면
-│  ├─ appliance/   가전 상세 팝업
-│  ├─ safety/      위험 알림 / 안전 조치 결과
-│  ├─ history/     처리 이력 + 상세
-│  ├─ settings/    설정 드로어 + 글자 크기
-│  └─ voice/       음성 버튼·패널·명령 매칭
-├─ components/   재사용 프리미티브 (카드, 배지, 타임라인, 모달, 드로어, 페이지네이션)
-├─ data/         목 데이터 + 데이터 소스 경계
-├─ store/        PreferencesContext, HomeStateContext
-├─ hooks/        useClock, useDismissable
-├─ i18n/         ko / en 사전
-├─ lib/          포맷·저장소·한국어 조사·클래스 결합
-└─ types/        도메인 타입
+│  ├─ home/        홈 · 평면 약도
+│  ├─ kitchen/     주방
+│  ├─ bathroom/    욕실
+│  ├─ history/     안전 기록 · 상세 · 조리 흐름
+│  ├─ settings/    설정 · 연락처 · 안전 정책
+│  ├─ devices/     기기 타일 · 기기 상세
+│  ├─ alerts/      상태 배너 · 자동 조치 안내 · 낙상 경보 · 시연 도구
+│  ├─ fall/        보호자 모바일 확인 페이지
+│  ├─ voice/       음성 명령
+│  └─ onboarding/  최초 모드 선택
+├─ components/     DeviceIcon · ui/(Card · Button · Sheet · Toggle · Segmented · Sparkline · Pagination …)
+├─ data/           seed · source/(types · mockSource · httpSource) · fallApi · demoChannel
+├─ store/          HomeStore · PreferencesContext
+├─ hooks/  lib/  i18n/  types/
 ```
-
----
-
-## 데이터 소스 교체
-
-현재는 목 데이터로 동작한다. 실시간 시뮬레이터가 환경값과 재실 상태를 주기적으로 갱신한다.
-
-실제 백엔드를 붙일 때는 **`src/data/source/httpSource.ts` 한 파일만** 구현하면 되고,
-화면 코드는 바뀌지 않는다. `SafetyDataSource` 인터페이스가 경계다.
-
-```
-VITE_API_BASE_URL=https://api.example.com   # 설정하면 httpSource 사용
-```
-
-> `VITE_` 로 시작하는 환경변수는 브라우저 번들에 **그대로 포함된다.**
-> API 키·토큰·비밀번호를 절대 넣지 말 것.
-
----
-
-## 보안
-
-빌드 산출물에 적용된 것:
-
-- **CSP** — `default-src 'self'` 기반. 외부 스크립트/폰트/이미지/통신을 전부 차단한다.
-  (`vite.config.ts` 에서 프로덕션 빌드에만 주입. dev 서버는 HMR 때문에 제외)
-- **XSS 차단** — `dangerouslySetInnerHTML`, `innerHTML` 직접 대입, `eval`, `new Function`,
-  `document.write` 를 ESLint 규칙으로 금지한다. 모든 텍스트는 React 기본 이스케이프를 거친다.
-- **localStorage** — UI 설정값(mode / fontScale / language / voice)만 저장한다.
-  읽을 때 화이트리스트·범위 검증을 하므로 값이 조작되어도 기본값으로 안전하게 폴백한다.
-  인증정보를 저장하는 코드는 ESLint 규칙으로 막혀 있다.
-- **시크릿 없음** — 프론트엔드에 키·토큰이 존재하지 않는다.
-- **외부 통신 없음** — 목 데이터 상태에서는 어떤 네트워크 요청도 발생하지 않는다.
-
-### 배포 서버에서 추가로 설정할 것
-
-CSP의 `frame-ancestors` 는 meta 태그로 적용되지 않으므로 **HTTP 헤더로** 넣어야 한다.
-SPA 라우팅을 위한 fallback도 함께 필요하다.
-
-```nginx
-server {
-    root /var/www/homevis/dist;
-
-    # SPA 딥링크(/kitchen, /history 등) 처리
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    add_header Content-Security-Policy "frame-ancestors 'none'" always;
-    add_header X-Frame-Options            "DENY"          always;
-    add_header X-Content-Type-Options     "nosniff"       always;
-    add_header Referrer-Policy            "no-referrer"   always;
-    add_header Permissions-Policy         "geolocation=(), camera=(), microphone=(self)" always;
-}
-```
-
-마이크(음성 인식)는 **HTTPS 또는 localhost** 에서만 동작한다.
-
-### 음성 인식과 개인정보
-
-브라우저의 Web Speech API는 인식 처리를 위해 **음성이 브라우저 제공사 서버로 전송될 수 있다.**
-그래서 이 기능은 **설정에서 기본 꺼짐**이며, 사용자가 명시적으로 켜야 마이크를 요청한다.
-꺼져 있거나 미지원 브라우저에서는 데모 시뮬레이션으로 동일한 상태 전이를 보여준다.
-(설정 화면에 이 내용이 고지되어 있다.)
-
-완전 오프라인이 필요하면 `src/features/voice/speech.ts` 만 온디바이스 STT로 교체하면 된다.
-
----
-
-## 비용
-
-발생하는 과금이 **없다.**
-
-- 모든 의존성이 MIT 계열 오픈소스
-- 지도·AI·STT 등 유료 API 미사용 (음성은 브라우저 내장 기능)
-- 외부 CDN·폰트·분석 도구 미사용
-- 산출물이 정적 파일이라 백엔드가 함께 서빙하거나 기기 로컬 웹서버로 충분
-
----
-
-## 설계 원칙
-
-1. **음성으로 되는 것은 버튼으로도 된다.** Voice-only 기능을 만들지 않는다.
-2. **상태를 바꾸는 음성 명령은 확인을 거친다.** 조회·이동만 즉시 실행한다.
-3. **지원하지 않는 기능은 UI에 만들지 않는다.** `supportsControl: false` 인 기기는
-   버튼도 음성도 제어를 제공하지 않는다. (인덕션은 안전상 자동 안전 조치만 수행)
-4. **상태를 색상만으로 표현하지 않는다.** 항상 아이콘 + 텍스트를 함께 쓴다.
-5. **어르신 화면에 전문 용어를 쓰지 않는다.** AI 신뢰도·센서·API 같은 용어를 노출하지 않는다.
-6. **처리 이력은 안전 처리만 담는다.** 중간 감지·판단 이벤트는 공간 화면의 타임라인에만 있다.

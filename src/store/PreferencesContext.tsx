@@ -21,11 +21,14 @@ interface PreferencesValue {
   fontScale: number
   language: Language
   voiceEnabled: boolean
+  /** 위험 알림을 소리 내어 읽어줄지 (기기 내장 음성만 사용) */
+  ttsEnabled: boolean
   t: Translate
   setMode: (mode: Mode) => void
   setFontScale: (scale: number) => void
   setLanguage: (language: Language) => void
   setVoiceEnabled: (enabled: boolean) => void
+  setTtsEnabled: (enabled: boolean) => void
 }
 
 const PreferencesContext = createContext<PreferencesValue | null>(null)
@@ -49,6 +52,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   )
   // 음성 인식은 개인정보 관점에서 기본 꺼짐. 사용자가 명시적으로 켜야 한다.
   const [voiceEnabled, setVoiceEnabledState] = useState(() => readBool('voice', false))
+  const [ttsEnabled, setTtsEnabledState] = useState(() => readBool('tts', true))
 
   // 어르신 모드에서만 루트 폰트 크기를 키운다.
   // --spacing 이 px 로 고정되어 있어 여백·아이콘·그리드는 그대로 유지된다.
@@ -58,7 +62,6 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       '--font-size-base',
       mode === 'elderly' ? `${(fontScale / 100) * 16}px` : '16px',
     )
-    root.style.setProperty('--nav-h', mode === 'elderly' ? '88px' : '64px')
   }, [mode, fontScale])
 
   useEffect(() => {
@@ -87,6 +90,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     write('voice', next)
   }, [])
 
+  const setTtsEnabled = useCallback((next: boolean) => {
+    setTtsEnabledState(next)
+    write('tts', next)
+  }, [])
+
   const t = useMemo(() => createTranslate(language), [language])
 
   const value = useMemo<PreferencesValue>(
@@ -96,13 +104,15 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       fontScale,
       language,
       voiceEnabled,
+      ttsEnabled,
       t,
       setMode,
       setFontScale,
       setLanguage,
       setVoiceEnabled,
+      setTtsEnabled,
     }),
-    [mode, fontScale, language, voiceEnabled, t, setMode, setFontScale, setLanguage, setVoiceEnabled],
+    [mode, fontScale, language, voiceEnabled, ttsEnabled, t, setMode, setFontScale, setLanguage, setVoiceEnabled, setTtsEnabled],
   )
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>

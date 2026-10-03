@@ -1,81 +1,43 @@
-import { Activity, Home, User } from 'lucide-react'
+import { Check, LayoutGrid, Type } from 'lucide-react'
 import { usePreferences } from '@/store/PreferencesContext'
 import type { Mode } from '@/types'
 
-/**
- * 최초 진입 시 딱 한 번만 노출된다.
- * 선택 결과는 localStorage 에 저장되며, 이후에는 설정에서만 변경한다.
- */
+/** 최초 1회 화면 모드 선택. 선택은 저장되고 이후에는 설정에서만 바꾼다. */
 export function ModeSelect() {
-  const { t, setMode } = usePreferences()
-
-  const cards: {
-    mode: Mode
-    Icon: typeof User
-    iconWrap: string
-    icon: string
-    tagWrap: string
-    tag: string
-    button: string
-    tagKey: 'onboarding.elderly.tag' | 'onboarding.normal.tag'
-    titleKey: 'onboarding.elderly.title' | 'onboarding.normal.title'
-    descKey: 'onboarding.elderly.desc' | 'onboarding.normal.desc'
-    hoverBorder: string
-  }[] = [
-    {
-      mode: 'elderly', Icon: User,
-      iconWrap: 'bg-amber-50 group-hover:bg-amber-100', icon: 'text-amber-600',
-      tagWrap: 'bg-amber-50 border-amber-200', tag: 'text-amber-700',
-      button: 'bg-amber-500 hover:bg-amber-600',
-      tagKey: 'onboarding.elderly.tag', titleKey: 'onboarding.elderly.title',
-      descKey: 'onboarding.elderly.desc', hoverBorder: 'hover:border-amber-400',
-    },
-    {
-      mode: 'normal', Icon: Activity,
-      iconWrap: 'bg-blue-50 group-hover:bg-blue-100', icon: 'text-brand',
-      tagWrap: 'bg-blue-50 border-blue-200', tag: 'text-blue-700',
-      button: 'bg-brand hover:bg-brand-dark',
-      tagKey: 'onboarding.normal.tag', titleKey: 'onboarding.normal.title',
-      descKey: 'onboarding.normal.desc', hoverBorder: 'hover:border-brand',
-    },
+  const { setMode } = usePreferences()
+  const options: { mode: Mode; Icon: typeof Type; title: string; desc: string; points: string[] }[] = [
+    { mode: 'elderly', Icon: Type, title: '크게 보기', desc: '어르신께 추천해요',
+      points: ['글자와 버튼을 크게', '꼭 필요한 정보만', '쉬운 말로 안내'] },
+    { mode: 'normal', Icon: LayoutGrid, title: '기본 보기', desc: '자세히 보고 싶을 때',
+      points: ['온도·기록까지 한눈에', '판단 근거와 정확도 표시', '안전 정책 설정'] },
   ]
-
   return (
-    <main className="flex h-dvh flex-col items-center justify-center overflow-y-auto p-8">
-      <div className="mb-10 flex items-center gap-2.5">
-        <span className="bg-brand flex h-9 w-9 items-center justify-center rounded-xl">
-          <Home className="h-4.5 w-4.5 text-white" aria-hidden="true" />
-        </span>
-        <span className="text-brand text-2xl font-bold tracking-tight">HomeVIS</span>
-      </div>
-
-      <h1 className="mb-2 text-center text-3xl font-bold text-gray-900">{t('onboarding.title')}</h1>
-      <p className="mb-10 text-center text-gray-500">{t('onboarding.subtitle')}</p>
-
-      <div className="grid w-full max-w-[760px] grid-cols-2 gap-5">
-        {cards.map((card) => (
-          <button
-            key={card.mode}
-            type="button"
-            onClick={() => setMode(card.mode)}
-            className={`group rounded-2xl border border-gray-200 bg-white p-8 text-left shadow-sm transition-all hover:shadow-md ${card.hoverBorder}`}
-          >
-            <span className={`mb-5 flex h-16 w-16 items-center justify-center rounded-2xl transition-colors ${card.iconWrap}`}>
-              <card.Icon className={`h-8 w-8 ${card.icon}`} aria-hidden="true" />
+    <main className="flex h-dvh flex-col items-center justify-center bg-canvas px-10">
+      <p className="text-[0.9375rem] font-semibold text-ink-3">HomeVIS</p>
+      <h1 className="mt-2 text-[2.125rem] font-bold tracking-tight text-ink">어떤 화면이 편하세요?</h1>
+      <p className="mt-2 text-lg text-ink-2">나중에 설정에서 언제든 바꿀 수 있어요.</p>
+      <div className="mt-10 grid w-full max-w-[820px] grid-cols-2 gap-5">
+        {options.map(({ mode, Icon, title, desc, points }) => (
+          <button key={mode} type="button" onClick={() => setMode(mode)}
+            className="group flex flex-col rounded-3xl bg-surface p-8 text-left transition-shadow hover:shadow-[0_6px_24px_rgba(0,0,0,0.08)]">
+            <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-sunken group-hover:bg-brand-soft">
+              <Icon className="h-7 w-7 text-ink-2 group-hover:text-brand" aria-hidden="true" />
             </span>
-            <span className={`mb-2 inline-flex items-center rounded-md border px-2 py-0.5 ${card.tagWrap}`}>
-              <span className={`text-xs font-semibold ${card.tag}`}>{t(card.tagKey)}</span>
-            </span>
-            <span className="mt-2 mb-1 block text-xl font-bold text-gray-900">{t(card.titleKey)}</span>
-            <span className="mb-7 block text-sm text-gray-500">{t(card.descKey)}</span>
-            <span className={`block w-full rounded-xl py-4 text-center font-semibold text-white transition-colors ${card.button}`}>
-              {t('onboarding.select')}
+            <span className="mt-6 text-[1.625rem] font-bold text-ink">{title}</span>
+            <span className="mt-1 text-[1rem] text-ink-2">{desc}</span>
+            <ul className="mt-5 space-y-2">
+              {points.map((p) => (
+                <li key={p} className="flex items-center gap-2 text-[1rem] text-ink">
+                  <Check className="h-4 w-4 text-ok" aria-hidden="true" />{p}
+                </li>
+              ))}
+            </ul>
+            <span className="mt-8 flex min-h-14 items-center justify-center rounded-2xl bg-ink text-lg font-semibold text-white group-hover:bg-brand">
+              이 화면으로 시작
             </span>
           </button>
         ))}
       </div>
-
-      <p className="mt-8 text-sm text-gray-400">{t('onboarding.footer')}</p>
     </main>
   )
 }

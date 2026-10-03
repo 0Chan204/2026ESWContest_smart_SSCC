@@ -1,95 +1,48 @@
-import type { TKey } from '@/i18n'
-import type { PowerState } from '@/types'
-
 export type VoiceIntent =
-  | { kind: 'navigate'; route: string; replyKey: TKey }
-  | {
-      kind: 'control'
-      applianceId: string
-      power: PowerState
-      confirmKey: TKey
-      replyKey: TKey
-    }
+  | { kind: 'navigate'; route: string; reply: 'home' | 'kitchen' | 'bathroom' | 'history' | 'settings' }
+  | { kind: 'control'; deviceId: string; on: boolean; confirm: string }
+  /** 지원하지 않는 조작 (인덕션 등) — 이유를 안내한다 */
+  | { kind: 'refuse'; reply: string }
 
-interface Rule {
-  test: (text: string) => boolean
-  intent: VoiceIntent
-}
+interface Rule { test: (t: string) => boolean; intent: VoiceIntent }
 
-const has = (text: string, ...words: string[]) => words.every((w) => text.includes(w))
-const hasAny = (text: string, ...words: string[]) => words.some((w) => text.includes(w))
+const has = (t: string, ...w: string[]) => w.every((x) => t.includes(x))
+const any = (t: string, ...w: string[]) => w.some((x) => t.includes(x))
+const ON = (t: string) => any(t, '켜')
+const OFF = (t: string) => any(t, '꺼', '끄')
 
 /**
- * 명령 규칙.
- *
- * 제어 명령을 먼저 검사한다. "주방 조명 꺼줘" 같은 문장이
- * 공간 이동 명령으로 잘못 매칭되는 것을 막기 위해서다.
- *
- * 여기에 없는 기능은 음성으로도 제공하지 않는다.
- * (지원되지 않는 가전 기능을 임의로 추가하지 않는다는 원칙)
+ * 명령 규칙. 제어 → 거절 → 이동 순서로 검사한다.
+ * ("주방 환풍기 꺼줘" 가 주방 화면 이동으로 잘못 잡히지 않도록 제어 규칙을 먼저 본다)
  */
 const RULES: Rule[] = [
-  {
-    test: (t) => hasAny(t, '조명', '불') && hasAny(t, '켜', '켣'),
-    intent: { kind: 'control', applianceId: 'light', power: 'ON', confirmKey: 'voice.confirmLight.on', replyKey: 'voice.reply.done' },
-  },
-  {
-    test: (t) => hasAny(t, '조명', '불') && hasAny(t, '꺼', '끄'),
-    intent: { kind: 'control', applianceId: 'light', power: 'OFF', confirmKey: 'voice.confirmLight.off', replyKey: 'voice.reply.done' },
-  },
-  {
-    test: (t) => has(t, '환풍기') && hasAny(t, '켜'),
-    intent: { kind: 'control', applianceId: 'fan', power: 'ON', confirmKey: 'voice.confirmFan.on', replyKey: 'voice.reply.done' },
-  },
-  {
-    test: (t) => has(t, '환풍기') && hasAny(t, '꺼', '끄'),
-    intent: { kind: 'control', applianceId: 'fan', power: 'OFF', confirmKey: 'voice.confirmFan.off', replyKey: 'voice.reply.done' },
-  },
-  {
-    test: (t) => hasAny(t, '이력', '기록'),
-    intent: { kind: 'navigate', route: '/history', replyKey: 'voice.reply.history' },
-  },
-  {
-    test: (t) => has(t, '주방'),
-    intent: { kind: 'navigate', route: '/kitchen', replyKey: 'voice.reply.kitchen' },
-  },
-  {
-    test: (t) => hasAny(t, '화장실', '욕실'),
-    intent: { kind: 'navigate', route: '/bathroom', replyKey: 'voice.reply.bathroom' },
-  },
-  {
-    test: (t) => hasAny(t, '집', '홈', '전체'),
-    intent: { kind: 'navigate', route: '/home', replyKey: 'voice.reply.home' },
-  },
+  { test: (t) => any(t, '인덕션', '화구', '불') && (ON(t) || OFF(t) || any(t, '올려', '낮춰', '세게', '약하게')),
+    intent: { kind: 'refuse', reply: '인덕션은 안전을 위해 음성이나 화면으로 조작할 수 없어요. 위험하면 자동으로 꺼드려요.' } },
+  { test: (t) => any(t, '조명', '전등') && ON(t), intent: { kind: 'control', deviceId: 'light-bath-01', on: true, confirm: '욕실 조명을 켤까요?' } },
+  { test: (t) => any(t, '조명', '전등') && OFF(t), intent: { kind: 'control', deviceId: 'light-bath-01', on: false, confirm: '욕실 조명을 끌까요?' } },
+  { test: (t) => any(t, '환풍기', '후드') && ON(t), intent: { kind: 'control', deviceId: 'fan-01', on: true, confirm: '주방 환풍기를 켤까요?' } },
+  { test: (t) => any(t, '환풍기', '후드') && OFF(t), intent: { kind: 'control', deviceId: 'fan-01', on: false, confirm: '주방 환풍기를 끌까요?' } },
+  { test: (t) => any(t, '정수기', '물') && any(t, '줘', '따라', '받'),
+    intent: { kind: 'refuse', reply: '정수기는 아침 자동 출수만 지원해요. 물은 정수기에서 직접 받아 주세요.' } },
+  { test: (t) => any(t, '기록', '이력'), intent: { kind: 'navigate', route: '/history', reply: 'history' } },
+  { test: (t) => any(t, '설정', '연락처', '보호자'), intent: { kind: 'navigate', route: '/settings', reply: 'settings' } },
+  { test: (t) => has(t, '주방') || any(t, '인덕션'), intent: { kind: 'navigate', route: '/kitchen', reply: 'kitchen' } },
+  { test: (t) => any(t, '욕실', '화장실'), intent: { kind: 'navigate', route: '/bathroom', reply: 'bathroom' } },
+  { test: (t) => any(t, '집', '홈', '전체'), intent: { kind: 'navigate', route: '/home', reply: 'home' } },
 ]
 
-export function matchCommand(rawText: string): VoiceIntent | null {
-  const text = rawText.replace(/\s+/g, '')
-  for (const rule of RULES) {
-    if (rule.test(text)) return rule.intent
-  }
-  return null
+export function matchCommand(raw: string): VoiceIntent | null {
+  const t = raw.replace(/\s+/g, '')
+  return RULES.find((r) => r.test(t))?.intent ?? null
 }
 
-/**
- * Web Speech API 를 쓸 수 없을 때(또는 음성 기능이 꺼져 있을 때) 사용하는 데모 문장.
- * 매번 무작위로 고르면 확인 단계 같은 흐름을 보여주기 어려워 순서대로 돌린다.
- */
-const DEMO_COMMANDS = [
-  '주방 보여줘',
-  '조명 꺼줘',
-  '화장실 상태 알려줘',
-  '이력 보여줘',
-  '우리 집 상태 알려줘',
-] as const
-
-let demoCursor = 0
-
+const DEMO = ['주방 상태 알려줘', '욕실 조명 켜줘', '인덕션 꺼줘', '기록 보여줘', '우리 집 상태 알려줘'] as const
+let cursor = 0
+/** 마이크를 쓰지 않을 때(설정 꺼짐·미지원) 순서대로 재생하는 예시 명령 */
 export function nextDemoCommand(): string {
-  const command = DEMO_COMMANDS[demoCursor % DEMO_COMMANDS.length] ?? DEMO_COMMANDS[0]
-  demoCursor += 1
-  return command
+  const c = DEMO[cursor % DEMO.length] ?? DEMO[0]
+  cursor += 1
+  return c
 }
 
-/** 패널 하단에 노출할 예시 명령어 */
-export const EXAMPLE_COMMANDS = ['주방 보여줘', '우리 집 상태 알려줘', '조명 꺼줘'] as const
+export const EXAMPLE_COMMANDS = ['주방 상태 알려줘', '욕실 조명 켜줘', '기록 보여줘'] as const
