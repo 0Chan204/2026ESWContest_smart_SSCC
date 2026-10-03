@@ -18,7 +18,7 @@
 - 명령 처리 확인: 별도 MQTT ack 토픽 추가 (팀 확정안, REST ack 아님)
 - "오프라인" 판정: 별도 heartbeat 메시지 없이 telemetry 미수신 시간(15초)으로 판단
 - 안전 이벤트, 조리 세션, 부재중 자동 제어 정책, WebSocket 실시간 스트림 신규 추가
-- Swagger 문서를 `/docs/device`(인덕션)와 `/docs/dashboard`(프론트+AI모델)로 분리
+- Swagger 문서는 `/docs` 하나로 통합하고 기능별 태그(회원 정보 / 낙상 사고 감지 / AI 재실 판단 / 인덕션 제어 / 대시보드 화면 / 안전 이벤트)로 섹션 구분
 
 ## MQTT
 
@@ -31,7 +31,7 @@
 
 ## API
 
-Swagger: `/docs/device`(인덕션), `/docs/dashboard`(프론트/AI모델). 실제 경로는 전부 `/api/v1` 하위.
+Swagger: `/docs` (기능별 섹션으로 구분). 실제 경로는 전부 `/api/v1` 하위.
 
 **인덕션(디바이스) — 서버가 캐시한 값 조회용 (가전 자체는 MQTT만 사용)**
 - `GET /api/v1/devices/{deviceId}/telemetry` — 마지막 수신 telemetry. 수신 이력 없으면 404
@@ -86,7 +86,7 @@ Swagger: `/docs/device`(인덕션), `/docs/dashboard`(프론트/AI모델). 실�
 - 화구 제어(REST) → MQTT 발행(모킹) → ack 반영 → 명령 상태 `pending → sent → acked` 전이 확인
 - 과열 telemetry 수신 시 `overheat_detected` 안전 이벤트 생성, 이후 `turn_on` 시도 시 409 + `command_blocked` 이벤트 확인
 - 재실 판단(presence) 낮은 신뢰도 → 조치 없음 / 장시간 이탈 → `auto_power_off` 자동 명령 + 이벤트 발생 확인
-- `/docs/device`, `/docs/dashboard` 분리된 Swagger 문서 및 필터링된 openapi.json 정상 생성 확인
+- `/docs` Swagger 문서 및 기능별 태그 구분 정상 생성 확인
 - 실제 Mosquitto 브로커 연동은 이 작업 환경에 mosquitto가 없어 재검증하지 못했음 — 로컬/GCP 환경에서
   `python tests/simulate_device.py` + uvicorn으로 최종 확인 필요
 

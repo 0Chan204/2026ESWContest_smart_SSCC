@@ -16,9 +16,9 @@ ESWC 개발계획서 기준: 백엔드는 **Python FastAPI**, 가전과의 통�
   - 대시보드 → FastAPI REST 호출(`POST /api/v1/appliances/{id}/burners/{burnerId}/commands`) → 우리 서버가 MQTT publish → 인덕션이 subscribe해서 실행
 
 > v0.2 업데이트: 프론트/임베디드 팀과 API 명세를 확정하면서 화구를 1개로 줄이고,
-> REST 경로는 `/api/v1` 하위로, Swagger 문서는 **인덕션(디바이스)**용(`/docs/device`)과
-> **프론트 대시보드**용(`/docs/dashboard`) 두 개로 분리했습니다. 자세한 엔드포인트 목록은
-> `docs/dev-note.md`를 참고하세요.
+> REST 경로는 `/api/v1` 하위로 정리했습니다. Swagger 문서는 `/docs` 하나이고, 그 안에서
+> 기능별 섹션(회원 정보 / 낙상 사고 감지 / AI 재실 판단 / 인덕션 제어 / 대시보드 화면 /
+> 안전 이벤트)으로 나뉩니다. 자세한 엔드포인트 목록은 `docs/dev-note.md`를 참고하세요.
 
 즉 우리 FastAPI 서버는 **REST와 MQTT를 동시에 다루는 다리(hub) 역할**을 합니다.
 
@@ -113,9 +113,8 @@ mosquitto -c mosquitto/mosquitto.conf
 uvicorn app.main:app --reload
 ```
 
-Swagger 문서는 두 개로 나뉘어 있습니다:
-- `http://127.0.0.1:8000/docs/device` — 인덕션(디바이스) 관련 (서버가 캐시한 telemetry 조회 등)
-- `http://127.0.0.1:8000/docs/dashboard` — 프론트 대시보드 / AI 모델이 호출하는 API 전체
+Swagger 문서는 `http://127.0.0.1:8000/docs` 하나이고, 기능별 섹션으로 나뉘어 있습니다:
+회원 정보 / 낙상 사고 감지 / AI 재실 판단 / 인덕션 제어 / 대시보드 화면 / 안전 이벤트
 
 여기서 바로 API를 테스트해볼 수 있습니다.
 
