@@ -53,9 +53,18 @@ def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_swagger_has_device_and_dashboard_tags(client):
-    tags = [t["name"] for t in client.get("/openapi.json").json()["tags"]]
-    assert tags == ["device", "dashboard"]
+def test_swagger_is_grouped_by_feature(client):
+    spec = client.get("/openapi.json").json()
+    tags = [t["name"] for t in spec["tags"]]
+    assert tags == ["회원 정보", "낙상 사고 감지", "AI 재실 판단", "인덕션 제어", "대시보드 화면", "안전 이벤트"]
+
+    # 모든 엔드포인트가 위 섹션 중 정확히 하나에 속해야 한다 (/health 제외)
+    for path, methods in spec["paths"].items():
+        if path == "/health":
+            continue
+        for method, operation in methods.items():
+            assert len(operation["tags"]) == 1, f"{method} {path}"
+            assert operation["tags"][0] in tags, f"{method} {path}"
 
 
 def test_snapshot_before_any_telemetry(client):

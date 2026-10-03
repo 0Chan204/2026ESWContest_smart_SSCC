@@ -2,10 +2,10 @@
 FastAPI 애플리케이션의 진입점입니다.
 실행 명령: uvicorn app.main:app --reload
 
-v0.2: 하나의 Swagger 문서(/docs) 안에서 태그 기준으로 "device"(인덕션)와
-"dashboard"(프론트+AI모델) 두 개의 큰 섹션으로 묶어서 보여줍니다.
-(별도 URL로 쪼개지 않고, FastAPI/Swagger UI가 태그별로 자동으로 접었다 펼 수
- 있는 섹션을 만들어주는 기본 기능을 그대로 사용합니다.)
+하나의 Swagger 문서(/docs) 안에서 기능별 태그로 섹션을 나눠서 보여줍니다.
+(회원 정보 / 낙상 사고 감지 / AI 재실 판단 / 인덕션 제어 / 대시보드 화면 / 안전 이벤트)
+별도 URL로 쪼개지 않고, Swagger UI가 태그별로 접었다 펼 수 있는 섹션을 만들어주는
+기본 기능을 그대로 사용합니다.
 """
 
 import asyncio
@@ -23,15 +23,33 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 API_VERSION = "0.2.0"
 
 # 태그 순서/설명: Swagger UI에서 이 순서 그대로 큰 섹션 헤더로 표시됩니다.
+# 각 엔드포인트의 태그는 app/routers/*.py 의 데코레이터(tags=[...])에서 지정합니다.
 TAGS_METADATA = [
     {
-        "name": "device",
-        "description": "인덕션(디바이스) 관련 API. 가전 <-> 서버 통신은 MQTT로 이루어지며, "
-        "여기 있는 REST는 서버가 캐시해둔 값을 조회하는 디버그/운영용입니다.",
+        "name": "회원 정보",
+        "description": "보호자 연락처 등록·조회. 낙상 사고 발생 시 이 번호로 문자가 발송됩니다.",
     },
     {
-        "name": "dashboard",
-        "description": "프론트 대시보드 및 AI 재실 판단 모델이 호출하는 API입니다.",
+        "name": "낙상 사고 감지",
+        "description": "낙상 감지 AI 모델의 보고 접수, 보호자의 해결/신고 처리, 자동 신고 정책.",
+    },
+    {
+        "name": "AI 재실 판단",
+        "description": "AI 재실 판단 모델의 보고 접수와 부재중 자동 제어(화력 저감/전원 차단) 정책.",
+    },
+    {
+        "name": "인덕션 제어",
+        "description": "화구 제어 명령과 인덕션 상태 조회. 가전 <-> 서버 통신 자체는 MQTT로 이루어지며, "
+        "상태 조회는 서버가 받아둔 최신 값을 돌려줍니다.",
+    },
+    {
+        "name": "대시보드 화면",
+        "description": "대시보드 초기 로딩용 전체 상태와 조리 세션 조회. "
+        "실시간 갱신은 WebSocket /api/v1/stream 을 사용합니다 (Swagger에는 표시되지 않음).",
+    },
+    {
+        "name": "안전 이벤트",
+        "description": "과열·부재중·낙상 등 안전 이벤트 이력 조회와 피드백.",
     },
 ]
 
@@ -48,7 +66,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="HomeVIS",
-    description="ESWC 스마트가전 프로젝트 - 인덕션 담당 백엔드 (FastAPI + MQTT)",
+    description="ESWC 스마트가전 프로젝트 HomeVIS 백엔드 (FastAPI + MQTT)",
     version=API_VERSION,
     lifespan=lifespan,
     openapi_tags=TAGS_METADATA,
