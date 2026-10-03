@@ -21,6 +21,7 @@ from app.schemas import (
     KitchenAbsencePolicy,
     PresenceReport,
     GuardianContact,
+    UserContact,
     FallIncident,
     FallPolicy,
 )
@@ -53,6 +54,9 @@ _policy = KitchenAbsencePolicy(**settings.DEFAULT_POLICY)
 
 # --- 보호자 연락처 (GET/PUT /guardian, 현재는 1명만 지원) ---
 _guardian: Optional[GuardianContact] = None
+
+# --- 사용자(거주자 본인) 연락처 (GET/PUT /user) ---
+_user: Optional[UserContact] = None
 
 # --- 낙상 사건 (incidentId -> FallIncident / 확인용 토큰) ---
 _fall_incidents: dict[str, FallIncident] = {}
@@ -250,6 +254,17 @@ def set_guardian(contact: GuardianContact) -> None:
     global _guardian
     with _lock:
         _guardian = contact
+
+
+def get_user() -> Optional[UserContact]:
+    with _lock:
+        return _user
+
+
+def set_user(contact: UserContact) -> None:
+    global _user
+    with _lock:
+        _user = contact
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,8 @@ from app.schemas import (
     SafetyEventListResponse,
     SessionRecord,
     SnapshotResponse,
+    UserContact,
+    UserContactUpdateResult,
 )
 
 logger = logging.getLogger("induction.dashboard")
@@ -202,6 +204,23 @@ def update_policy(policy: KitchenAbsencePolicy) -> KitchenAbsencePolicy:
 # ---------------------------------------------------------------------------
 # 낙상 사고 안전 기능
 # ---------------------------------------------------------------------------
+
+@router.put("/user", response_model=UserContactUpdateResult, tags=["회원 정보"], summary="사용자 연락처 등록·변경")
+def update_user(contact: UserContact) -> UserContactUpdateResult:
+    """
+    사용자(거주자 본인) 연락처를 등록/변경합니다. 저장과 동시에 그 번호로 확인 문자를 발송합니다.
+    낙상 사고 문자는 보호자에게만 발송되며, 사용자 이름은 그 문자 문구에 포함됩니다.
+    """
+    return fall_service.update_user(contact)
+
+
+@router.get("/user", response_model=UserContact, tags=["회원 정보"], summary="사용자 연락처 조회")
+def read_user() -> UserContact:
+    user = fall_service.get_user()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자 연락처가 아직 등록되지 않았습니다.")
+    return user
+
 
 @router.put("/guardian", response_model=GuardianContactUpdateResult, tags=["회원 정보"], summary="보호자 연락처 등록·변경")
 def update_guardian(contact: GuardianContact) -> GuardianContactUpdateResult:
