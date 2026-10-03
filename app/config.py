@@ -9,7 +9,7 @@ v0.2 변경사항 (프론트/임베디드 팀과 API 명세 확정 반영):
   일정 시간(HEARTBEAT_TIMEOUT_SEC) 이상 안 오면 offline으로 봄 (팀 결정)
 
 v0.2.1 추가 (낙상 사고 안전 기능):
-- 보호자 SMS 발송: 네이버 클라우드 플랫폼 SENS 사용 (팀 결정)
+- 보호자 SMS 발송: 솔라피(SOLAPI) 사용 (네이버 SENS는 사업자 계정 전용이라 변경)
 - 낙상 감지는 재실 판단 모델과 같은 패턴으로, 별도 AI 모델이 서버로 이벤트를 보냄
 - SMS 링크로 들어가는 "해결/신고" 확인 페이지는 프론트가 만들고, 백엔드는 API만 제공
 """
@@ -74,13 +74,12 @@ class Settings:
         "autoReportSec": 60,
     }
 
-    # --- 보호자 SMS 발송 (네이버 클라우드 플랫폼 SENS) ---
-    # NCP 콘솔에서 발급받기 전까지는 비워둬도 서버는 정상 동작하고,
-    # 실제 발송 대신 로그만 남깁니다 (app/sms_service.py 참고).
-    NAVER_SENS_SERVICE_ID: str = os.getenv("NAVER_SENS_SERVICE_ID", "")
-    NAVER_SENS_ACCESS_KEY: str = os.getenv("NAVER_SENS_ACCESS_KEY", "")
-    NAVER_SENS_SECRET_KEY: str = os.getenv("NAVER_SENS_SECRET_KEY", "")
-    NAVER_SENS_SENDER_PHONE: str = os.getenv("NAVER_SENS_SENDER_PHONE", "")
+    # --- 문자 발송 (솔라피 SOLAPI) ---
+    # 네이버 SENS는 사업자 계정 전용이라 개인도 쓸 수 있는 솔라피로 변경했습니다.
+    # 값이 비어 있어도 서버는 정상 동작하고, 실제 발송 대신 로그만 남깁니다 (app/sms_service.py 참고).
+    SOLAPI_API_KEY: str = os.getenv("SOLAPI_API_KEY", "")
+    SOLAPI_API_SECRET: str = os.getenv("SOLAPI_API_SECRET", "")
+    SOLAPI_SENDER_PHONE: str = os.getenv("SOLAPI_SENDER_PHONE", "")
 
     # --- SMS에 담을 확인 링크의 기준 URL (프론트가 만드는 모바일 확인 페이지) ---
     FRONTEND_BASE_URL: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")

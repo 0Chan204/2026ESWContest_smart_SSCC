@@ -214,7 +214,7 @@ def update_guardian(contact: GuardianContact) -> GuardianContactUpdateResult:
     message = (
         "연락처를 저장하고 확인 문자를 발송했습니다."
         if sent
-        else "연락처는 저장했지만 확인 문자 발송에 실패했습니다. SMS 설정(.env의 NAVER_SENS_*)을 확인해주세요."
+        else "연락처는 저장했지만 확인 문자 발송에 실패했습니다. SMS 설정(.env의 SOLAPI_*)을 확인해주세요."
     )
     return GuardianContactUpdateResult(guardian=contact, verificationSent=sent, message=message)
 
@@ -241,7 +241,7 @@ def update_user(contact: UserContact) -> UserContactUpdateResult:
     message = (
         "연락처를 저장하고 확인 문자를 발송했습니다."
         if sent
-        else "연락처는 저장했지만 확인 문자 발송에 실패했습니다. SMS 설정(.env의 NAVER_SENS_*)을 확인해주세요."
+        else "연락처는 저장했지만 확인 문자 발송에 실패했습니다. SMS 설정(.env의 SOLAPI_*)을 확인해주세요."
     )
     return UserContactUpdateResult(user=contact, verificationSent=sent, message=message)
 
