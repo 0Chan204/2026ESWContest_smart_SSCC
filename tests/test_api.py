@@ -147,7 +147,7 @@ def test_guardian_register_and_read(client):
 
     res = client.put(f"{PREFIX}/guardian", json={"name": "보호자", "phone": "01000000000"})
     assert res.status_code == 200
-    # CI에는 NAVER_SENS_* 키가 없으므로 실제 발송은 되지 않는 것이 정상
+    # CI에는 SOLAPI_* 키가 없으므로 실제 발송은 되지 않는 것이 정상
     assert res.json()["verificationSent"] is False
     assert client.get(f"{PREFIX}/guardian").json()["phone"] == "01000000000"
 
@@ -182,6 +182,56 @@ def test_fall_sms_goes_only_to_guardian(client, monkeypatch):
     assert [to for to, _ in sent] == ["01033334444"]
     assert "김사용님 댁" in sent[0][1]
     assert confirm_url in sent[0][1]
+
+
+def test_sms_request_format(monkeypatch):
+    """솔라피로 나가는 요청의 주소, 인증 헤더, 본문 형식을 확인한다 (실제 발송은 하지 않음)."""
+    import hashlib
+    import hmac
+    import re
+
+    from app import sms_service
+
+    monkeypatch.setattr(settings, "SOLAPI_API_KEY", "test-key", raising=False)
+    monkeypatch.setattr(settings, "SOLAPI_API_SECRET", "test-secret", raising=False)
+    monkeypatch.setattr(settings, "SOLAPI_SENDER_PHONE", "010-9999-8888", raising=False)
+
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = "{}"
+
+    def fake_post(url, headers, json, timeout):
+        captured.update(url=url, headers=headers, json=json)
+        return FakeResponse()
+
+    monkeypatch.setattr(sms_service.requests, "post", fake_post)
+
+    assert sms_service.send_sms("010-1234-5678", "테스트") is True
+    assert captured["url"] == "https://api.solapi.com/messages/v4/send"
+    assert captured["json"] == {"message": {"to": "01012345678", "from": "01099998888", "text": "테스트"}}
+
+    auth = captured["headers"]["Authorization"]
+    m = re.fullmatch(r"HMAC-SHA256 apiKey=test-key, date=(\S+), salt=(\w+), signature=(\w+)", auth)
+    assert m, auth
+    date, salt, signature = m.groups()
+    assert signature == hmac.new(b"test-secret", (date + salt).encode(), hashlib.sha256).hexdigest()
+
+
+def test_sms_failure_returns_false(monkeypatch):
+    from app import sms_service
+
+    monkeypatch.setattr(settings, "SOLAPI_API_KEY", "k", raising=False)
+    monkeypatch.setattr(settings, "SOLAPI_API_SECRET", "s", raising=False)
+    monkeypatch.setattr(settings, "SOLAPI_SENDER_PHONE", "01099998888", raising=False)
+
+    class FakeResponse:
+        status_code = 403
+        text = '{"errorCode":"Forbidden"}'
+
+    monkeypatch.setattr(sms_service.requests, "post", lambda *a, **k: FakeResponse())
+    assert sms_service.send_sms("01012345678", "테스트") is False
 
 
 def test_fall_turns_off_burner_and_can_be_resolved(client, published):

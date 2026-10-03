@@ -230,8 +230,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 | POST | `/api/v1/fall-incidents/{id}/report?token=` | "신고" 처리 |
 | GET/PUT | `/api/v1/policies/fall-safety` | `autoReportSec` 조회/수정 |
 
-**SMS 연동**: 네이버 클라우드 플랫폼 SENS (`app/sms_service.py`). NCP 콘솔에서 서비스 ID/Access
-Key/Secret Key/발신번호를 발급받아 `.env`의 `NAVER_SENS_*`에 채워 넣으면 됩니다. **비워둬도 서버는
+**SMS 연동**: 솔라피(SOLAPI) (`app/sms_service.py`). 네이버 SENS는 사업자 계정 전용이라 변경했습니다.
+솔라피 콘솔에서 발신번호를 등록하고 API Key를 만들어(허용 IP에 서버 외부 IP 입력) `.env`의
+`SOLAPI_API_KEY` / `SOLAPI_API_SECRET` / `SOLAPI_SENDER_PHONE`에 채워 넣으면 됩니다. **비워둬도 서버는
 정상 동작**하고, 그럴 땐 실제 발송 대신 로그만 남깁니다 — 키 발급 전에도 나머지 흐름은 테스트 가능.
 
 **테스트 방법**: `python tests/simulate_fall.py` 로 가짜 낙상 이벤트를 하나 보내고,
