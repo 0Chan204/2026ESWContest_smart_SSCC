@@ -220,6 +220,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 
 | 메서드 | 경로 | 설명 |
 | --- | --- | --- |
+| PUT | `/api/v1/user` | 사용자(거주자 본인) 연락처 등록/변경. 저장과 동시에 확인 문자 발송 |
+| GET | `/api/v1/user` | 사용자 연락처 조회 |
 | PUT | `/api/v1/guardian` | 보호자 연락처 등록/변경 (1명). 저장과 동시에 확인 문자 발송 |
 | GET | `/api/v1/guardian` | 보호자 연락처 조회 |
 | POST | `/api/v1/safety/fall-events` | 낙상 감지 AI 모델 -> 서버 |

@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
 import time
 
 import requests
@@ -75,9 +76,9 @@ def send_sms(to_phone: str, content: str) -> bool:
         "type": "LMS" if len(content.encode("utf-8")) > _SMS_BYTE_LIMIT else "SMS",
         "contentType": "COMM",
         "countryCode": "82",
-        "from": settings.NAVER_SENS_SENDER_PHONE,
+        "from": re.sub(r"\D", "", settings.NAVER_SENS_SENDER_PHONE),
         "content": content,
-        "messages": [{"to": to_phone}],
+        "messages": [{"to": re.sub(r"\D", "", to_phone)}],
     }
 
     try:

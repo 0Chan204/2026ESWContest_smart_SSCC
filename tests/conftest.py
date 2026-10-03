@@ -47,6 +47,7 @@ def reset_state():
         getattr(state_store, name).clear()
     state_store._safety_event_order.clear()
     state_store._guardian = None
+    state_store._user = None
     state_store.set_policy(KitchenAbsencePolicy(**settings.DEFAULT_POLICY))
     state_store.set_fall_policy(FallPolicy(**settings.DEFAULT_FALL_POLICY))
     yield

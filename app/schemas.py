@@ -15,8 +15,10 @@ v0.2.1 추가 (낙상 사고 안전 기능):
   fall_auto_reported 4종 추가
 """
 
+import re
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, Field, field_validator
 
 DeviceState = Literal["off", "on", "overheated", "cooling"]
 
@@ -255,11 +257,39 @@ class StreamEnvelope(BaseModel):
 # 일정 시간(policy.autoReportSec) 안에 아무 응답이 없으면 서버가 자동으로 "신고" 처리합니다.
 # ---------------------------------------------------------------------------
 
-class GuardianContact(BaseModel):
-    """대시보드에서 등록/수정하는 보호자 연락처 (현재는 1명만 지원하기로 팀 결정)."""
+def _normalize_phone(value: str) -> str:
+    """'010-1234-5678', '010 1234 5678' 처럼 들어와도 숫자만 남겨 저장합니다.
+    (문자 발송 API가 숫자만 있는 번호를 요구하기 때문)"""
+    digits = re.sub(r"\D", "", value)
+    if not (9 <= len(digits) <= 11) or not digits.startswith("0"):
+        raise ValueError("전화번호 형식이 올바르지 않습니다. 예: 01012345678 또는 010-1234-5678")
+    return digits
 
-    name: str
-    phone: str = Field(..., description="010-xxxx-xxxx 형식 권장")
+
+class UserContact(BaseModel):
+    """대시보드에서 등록/수정하는 사용자(거주자 본인) 연락처.
+    낙상 문자는 보호자에게만 가고(팀 결정), 사용자 번호는 등록 확인 문자와 정보 표시용입니다."""
+
+    name: str = Field(..., min_length=1)
+    phone: str = Field(..., description="하이픈 유무 상관없음. 저장 시 숫자만 남깁니다.")
+
+    _phone = field_validator("phone")(_normalize_phone)
+
+
+class UserContactUpdateResult(BaseModel):
+    user: UserContact
+    verificationSent: bool = Field(..., description="연락처 저장 후 확인 문자 발송 성공 여부")
+    message: str
+
+
+class GuardianContact(BaseModel):
+    """대시보드에서 등록/수정하는 보호자 연락처 (현재는 1명만 지원하기로 팀 결정).
+    낙상 사고 발생 시 이 번호로 확인 링크가 담긴 문자가 발송됩니다."""
+
+    name: str = Field(..., min_length=1)
+    phone: str = Field(..., description="하이픈 유무 상관없음. 저장 시 숫자만 남깁니다.")
+
+    _phone = field_validator("phone")(_normalize_phone)
 
 
 class GuardianContactUpdateResult(BaseModel):

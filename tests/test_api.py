@@ -152,6 +152,38 @@ def test_guardian_register_and_read(client):
     assert client.get(f"{PREFIX}/guardian").json()["phone"] == "01000000000"
 
 
+def test_user_register_and_read(client):
+    assert client.get(f"{PREFIX}/user").status_code == 404
+
+    res = client.put(f"{PREFIX}/user", json={"name": "사용자", "phone": "010-1111-2222"})
+    assert res.status_code == 200
+    assert res.json()["verificationSent"] is False
+    # 하이픈이 있어도 숫자만 남겨 저장한다
+    assert client.get(f"{PREFIX}/user").json() == {"name": "사용자", "phone": "01011112222"}
+
+
+def test_invalid_phone_is_rejected(client):
+    assert client.put(f"{PREFIX}/user", json={"name": "사용자", "phone": "abc"}).status_code == 422
+    assert client.put(f"{PREFIX}/guardian", json={"name": "보호자", "phone": "1234"}).status_code == 422
+
+
+def test_fall_sms_goes_only_to_guardian(client, monkeypatch):
+    from app import sms_service
+
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: sent.append((to, content)) or True)
+
+    client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    sent.clear()  # 등록 확인 문자 2건은 제외
+
+    confirm_url = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["confirmUrl"]
+
+    assert [to for to, _ in sent] == ["01033334444"]
+    assert "김사용님 댁" in sent[0][1]
+    assert confirm_url in sent[0][1]
+
+
 def test_fall_turns_off_burner_and_can_be_resolved(client, published):
     accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT)
     assert accepted.status_code == 202

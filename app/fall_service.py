@@ -30,6 +30,8 @@ from app.schemas import (
     FallIncident,
     GuardianContact,
     GuardianContactUpdateResult,
+    UserContact,
+    UserContactUpdateResult,
 )
 
 logger = logging.getLogger("induction.fall")
@@ -105,8 +107,10 @@ def report_fall(report: FallDetectedReport) -> FallIncident:
     # (c) 보호자 SMS 발송
     guardian = state_store.get_guardian()
     if guardian is not None:
+        user = state_store.get_user()
+        who = f"{user.name}님 댁 " if user is not None else ""
         message = (
-            f"[HomeVIS] {report.room}에서 낙상이 감지되었습니다. "
+            f"[HomeVIS] {who}{report.room}에서 낙상이 감지되었습니다. "
             f"인덕션은 안전을 위해 자동으로 꺼졌습니다. 아래 링크에서 상황을 확인해주세요: {confirm_url}"
         )
         sms_service.send_sms(guardian.phone, message)
@@ -217,3 +221,30 @@ def update_guardian(contact: GuardianContact) -> GuardianContactUpdateResult:
 
 def get_guardian() -> Optional[GuardianContact]:
     return state_store.get_guardian()
+
+
+# ---------------------------------------------------------------------------
+# 사용자(거주자 본인) 연락처 등록/변경
+# ---------------------------------------------------------------------------
+
+def update_user(contact: UserContact) -> UserContactUpdateResult:
+    """사용자 연락처를 저장하고, 보호자와 마찬가지로 확인 문자를 보내 번호를 검증합니다.
+    낙상 발생 시 문자는 보호자에게만 가며(팀 결정), 사용자 이름은 그 문자 문구에 들어갑니다."""
+    state_store.set_user(contact)
+
+    verification_text = (
+        f"[HomeVIS] {contact.name}님, 이 번호가 HomeVIS 사용자 연락처로 등록되었습니다. "
+        "이 문자가 보인다면 정상적으로 연결된 것입니다."
+    )
+    sent = sms_service.send_sms(contact.phone, verification_text)
+
+    message = (
+        "연락처를 저장하고 확인 문자를 발송했습니다."
+        if sent
+        else "연락처는 저장했지만 확인 문자 발송에 실패했습니다. SMS 설정(.env의 NAVER_SENS_*)을 확인해주세요."
+    )
+    return UserContactUpdateResult(user=contact, verificationSent=sent, message=message)
+
+
+def get_user() -> Optional[UserContact]:
+    return state_store.get_user()
