@@ -81,6 +81,13 @@ class Settings:
     SOLAPI_API_SECRET: str = os.getenv("SOLAPI_API_SECRET", "")
     SOLAPI_SENDER_PHONE: str = os.getenv("SOLAPI_SENDER_PHONE", "")
 
+    # --- 데이터베이스 (MongoDB Atlas) ---
+    # MONGODB_URI가 비어 있으면 DB 없이 메모리로만 동작합니다 (app/db.py 참고).
+    MONGODB_URI: str = os.getenv("MONGODB_URI", "")
+    MONGODB_DB: str = os.getenv("MONGODB_DB", "homevis")
+    # 인덕션 상태 로그(3초마다 쌓임) 보관 기간. 지나면 MongoDB가 자동으로 지웁니다.
+    TELEMETRY_LOG_TTL_DAYS: int = int(os.getenv("TELEMETRY_LOG_TTL_DAYS", "7"))
+
     # --- SMS에 담을 확인 링크의 기준 URL (프론트가 만드는 모바일 확인 페이지) ---
     FRONTEND_BASE_URL: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
 

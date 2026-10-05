@@ -8,7 +8,7 @@
 - MQTT 브로커: Mosquitto 2.1.2, 로컬 1883 포트
 - MQTT 클라이언트: paho-mqtt 1.6.1
 - 서버 주소: 127.0.0.1:8000, REST 기본 경로: `/api/v1`
-- DB: 미연동. 상태값은 서버 메모리에만 보관하며 재시작 시 소실됨 (DB 제품 미확정)
+- DB: MongoDB Atlas (무료 등급). 읽기는 메모리, 쓰기는 메모리+DB. 시작 시 DB에서 불러옴. 구조는 `docs/DB.md`
 
 ## v0.2 변경 요약
 
@@ -69,15 +69,11 @@ Swagger: `/docs` (기능별 섹션으로 구분). 실제 경로는 전부 `/api/
 - `turn_off` 수신 시 아직 실온+5℃ 초과로 뜨거우면 `cooling`을 거쳐 `off`로 전환
 - 명령 처리 후 ack 토픽으로 `applied`/`rejected` 결과를 발행
 
-## ERD
+## DB
 
-- 범위: 인덕션 파트. 논리 모델 수준(DB 제품 미확정), 단일 사용자 기준. **v0.1(화구 2개) 기준으로 작성됨 —
-  화구 1개 축소 및 v0.2 스키마(안전 이벤트/세션/정책) 반영은 아직 미반영, 별도 작업 필요**
-- 테이블 9개 / 컬럼 60개 / FK 15개
-- `induction_device`, `induction_element`, `state_report`, `element_state`, `control_command`, `control_command_element`, `safety_event`, `control_feedback`, `notification_log`
-- 상태는 스냅샷 이력으로 적재함. 상태 보고 1건 = `state_report` 1행 + 화구 수만큼의 `element_state` 행
-- 화구는 별도 테이블로 분리함 (컬럼이 아니라 행으로 관리 — 화구 1개로 줄어도 구조는 그대로 재사용 가능)
-- `state_report.last_control_command_id`는 FK가 아님 (`control_command`와의 순환 참조를 피하기 위함)
+- 관계형 ERD(테이블 9개)는 폐기하고 MongoDB 컬렉션 설계로 대체함. 상세는 `docs/DB.md`
+- 컬렉션 10개: `contacts`, `policies`, `telemetry_latest`, `telemetry_logs`, `commands`, `safety_events`, `sessions`, `presence`, `fall_incidents`, `runtime_state`
+- 인덕션 상태 로그(`telemetry_logs`)는 7일 후 자동 삭제
 
 ## 동작 확인된 범위 (Cowork 세션 내 TestClient 기반 스모크 테스트)
 

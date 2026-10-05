@@ -136,12 +136,30 @@ async def _auto_report_watchdog(incident_id: str, delay_sec: int) -> None:
         "fall_auto_reported",
         "danger",
         updated.room,
-        trigger=f"확인 링크 미응답 {delay_sec}초 경과",
+        trigger="확인 링크 미응답으로 자동 신고 대기 시간 경과",
         action="자동 신고 처리 (실제 119/응급 연동은 추후 구현 예정)",
         reasoning="보호자가 확인 페이지에서 응답하지 않아 정책에 따라 자동으로 신고 처리됨",
     )
     ws_hub.broadcast_threadsafe("fall.incident", updated.model_dump())
     logger.warning("낙상 사건 자동 신고 처리 (incidentId=%s)", incident_id)
+
+
+def resume_pending_incidents() -> int:
+    """서버 시작 시 호출: 재시작 전에 접수되어 아직 응답을 기다리던 낙상 사건의
+    자동 신고 타이머를 다시 겁니다. 이미 기한이 지난 사건은 곧바로 자동 신고 처리됩니다.
+    (타이머는 메모리에만 있어서 재시작하면 사라지기 때문에 필요합니다)"""
+    pending = state_store.list_pending_fall_incidents()
+    now = datetime.now(timezone.utc)
+    for incident in pending:
+        try:
+            deadline = datetime.fromisoformat(incident.autoReportAt)
+            remaining = max(0, int((deadline - now).total_seconds()))
+        except ValueError:
+            remaining = 0
+        ws_hub.run_coroutine_threadsafe(_auto_report_watchdog(incident.incidentId, remaining))
+    if pending:
+        logger.info("응답 대기 중이던 낙상 사건 %d건의 자동 신고 타이머를 다시 걸었습니다.", len(pending))
+    return len(pending)
 
 
 # ---------------------------------------------------------------------------
