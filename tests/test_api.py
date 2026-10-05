@@ -50,7 +50,7 @@ def _token_of(confirm_url: str) -> str:
 # ---------------------------------------------------------------------------
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json() == {"status": "ok", "storage": "memory"}
 
 
 def test_swagger_is_grouped_by_feature(client):

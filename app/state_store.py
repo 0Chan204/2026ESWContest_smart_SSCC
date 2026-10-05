@@ -1,17 +1,24 @@
 """
-서버가 메모리에 들고 있는 모든 상태를 모아둔 저장소입니다.
+서버의 모든 데이터를 읽고 쓰는 저장소입니다. (리포지토리 패턴)
 
-DB(MariaDB/MongoDB) 연동 전이라 전부 파이썬 dict/list로 시작합니다.
-나중에 DB를 붙일 때는 이 파일의 함수 "내부 구현"만 바꾸면 되고,
-호출하는 쪽(routers, services)은 그대로 둬도 됩니다. (리포지토리 패턴)
+호출하는 쪽(routers, services)은 여기 있는 함수만 사용하고, 데이터가 실제로
+어디에 저장되는지는 몰라도 됩니다.
 
-v0.2.1 추가: 보호자 연락처(1명), 낙상 사건(FallIncident) + 확인 토큰, 낙상 안전 정책.
+저장 방식:
+- 읽기: 항상 서버 메모리(아래 dict들)에서 읽습니다.
+- 쓰기: 메모리에 반영한 뒤, 같은 내용을 MongoDB에도 저장합니다 (app/db.py의 큐 사용).
+- 시작: load_from_db()가 MongoDB의 내용을 메모리로 불러옵니다. -> 재시작해도 데이터 유지
+
+MongoDB가 연결되지 않은 경우(MONGODB_URI 없음, 접속 실패)에는 메모리로만 동작합니다.
+컬렉션 구조는 docs/DB.md 에 정리되어 있습니다.
 """
 
+import logging
 import threading
 from datetime import datetime, timezone
 from typing import Optional
 
+from app import db
 from app.config import settings
 from app.schemas import (
     TelemetryReport,
@@ -26,7 +33,15 @@ from app.schemas import (
     FallPolicy,
 )
 
+logger = logging.getLogger("induction.store")
+
 _lock = threading.Lock()
+
+# 서버 시작 시 DB에서 메모리로 불러오는 최대 개수 (오래된 것은 DB에만 남습니다)
+_LOAD_LIMIT_EVENTS = 1000
+_LOAD_LIMIT_COMMANDS = 500
+_LOAD_LIMIT_SESSIONS = 200
+_LOAD_LIMIT_FALL_INCIDENTS = 200
 
 # --- 가전 텔레메트리 ---
 _latest_telemetry: dict[str, TelemetryReport] = {}
@@ -34,11 +49,12 @@ _last_seen_at: dict[str, datetime] = {}
 
 # --- 제어 명령 ---
 _commands: dict[str, CommandRecord] = {}
-_device_command_ids: dict[str, list[str]] = {}
 
-# --- 안전 이벤트 (발생 순서 유지를 위해 리스트도 같이 관리) ---
+# --- 안전 이벤트 (발생 순서 유지를 위해 리스트와 순번도 같이 관리) ---
 _safety_events: dict[str, SafetyEvent] = {}
 _safety_event_order: list[str] = []
+_safety_event_seq: dict[str, int] = {}
+_next_event_seq = 1
 
 # --- 조리 세션 ---
 _sessions: dict[str, SessionRecord] = {}
@@ -65,15 +81,161 @@ _fall_tokens: dict[str, str] = {}
 # --- 낙상 안전 정책 (GET/PUT /policies/fall-safety) ---
 _fall_policy = FallPolicy(**settings.DEFAULT_FALL_POLICY)
 
+_POLICY_KITCHEN_ABSENCE = "kitchen-absence"
+_POLICY_FALL_SAFETY = "fall-safety"
+_CONTACT_USER = "user"
+_CONTACT_GUARDIAN = "guardian"
+_STATE_ACTIVE_SESSIONS = "active_sessions"
+_STATE_ABSENCE_STAGES = "absence_stages"
+
+
+# ---------------------------------------------------------------------------
+# 시작 / 초기화
+# ---------------------------------------------------------------------------
+
+def reset_memory() -> None:
+    """메모리의 모든 데이터를 초기 상태로 되돌립니다. (DB는 건드리지 않음. 시작 시, 테스트에서 사용)"""
+    global _policy, _fall_policy, _guardian, _user, _next_event_seq
+    with _lock:
+        for store in (
+            _latest_telemetry,
+            _last_seen_at,
+            _commands,
+            _safety_events,
+            _safety_event_seq,
+            _sessions,
+            _active_session_by_device,
+            _presence_by_room,
+            _absence_stage_by_room,
+            _fall_incidents,
+            _fall_tokens,
+        ):
+            store.clear()
+        _safety_event_order.clear()
+        _next_event_seq = 1
+        _policy = KitchenAbsencePolicy(**settings.DEFAULT_POLICY)
+        _fall_policy = FallPolicy(**settings.DEFAULT_FALL_POLICY)
+        _guardian = None
+        _user = None
+
+
+def _without_id(document: dict, *extra_keys: str) -> dict:
+    return {k: v for k, v in document.items() if k != "_id" and k not in extra_keys}
+
+
+def _as_utc(value: datetime) -> datetime:
+    # MongoDB에서 읽은 날짜는 시간대 정보가 빠져 있으므로 UTC로 표시해 줍니다.
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def load_from_db() -> None:
+    """서버 시작 시 1번 호출: MongoDB에 저장된 내용을 메모리로 불러옵니다."""
+    global _policy, _fall_policy, _guardian, _user, _next_event_seq
+
+    if not db.is_enabled():
+        return
+
+    reset_memory()
+
+    def load(name: str, loader) -> None:
+        # 한 종류를 불러오다 실패해도 나머지는 계속 불러옵니다.
+        try:
+            loader()
+        except Exception:
+            logger.exception("DB에서 '%s' 불러오기 실패 (해당 데이터만 빈 상태로 시작)", name)
+
+    def load_telemetry() -> None:
+        for doc in db.find_all(db.TELEMETRY_LATEST):
+            device_id = doc["_id"]
+            _latest_telemetry[device_id] = TelemetryReport.model_validate(doc["report"])
+            _last_seen_at[device_id] = _as_utc(doc["lastSeenAt"])
+
+    def load_commands() -> None:
+        for doc in db.find_all(db.COMMANDS, sort_field="issuedAt", newest_limit=_LOAD_LIMIT_COMMANDS):
+            record = CommandRecord.model_validate(_without_id(doc))
+            _commands[record.commandId] = record
+
+    def load_events() -> None:
+        global _next_event_seq
+        for doc in db.find_all(db.SAFETY_EVENTS, sort_field="seq", newest_limit=_LOAD_LIMIT_EVENTS):
+            event = SafetyEvent.model_validate(_without_id(doc, "seq"))
+            _safety_events[event.eventId] = event
+            _safety_event_order.append(event.eventId)
+            _safety_event_seq[event.eventId] = doc["seq"]
+            _next_event_seq = max(_next_event_seq, doc["seq"] + 1)
+
+    def load_sessions() -> None:
+        for doc in db.find_all(db.SESSIONS, sort_field="startedAt", newest_limit=_LOAD_LIMIT_SESSIONS):
+            record = SessionRecord.model_validate(_without_id(doc))
+            _sessions[record.sessionId] = record
+
+    def load_presence() -> None:
+        for doc in db.find_all(db.PRESENCE):
+            report = PresenceReport.model_validate(_without_id(doc))
+            _presence_by_room[report.room] = report
+
+    def load_policies() -> None:
+        global _policy, _fall_policy
+        for doc in db.find_all(db.POLICIES):
+            if doc["_id"] == _POLICY_KITCHEN_ABSENCE:
+                _policy = KitchenAbsencePolicy.model_validate(_without_id(doc))
+            elif doc["_id"] == _POLICY_FALL_SAFETY:
+                _fall_policy = FallPolicy.model_validate(_without_id(doc))
+
+    def load_contacts() -> None:
+        global _guardian, _user
+        for doc in db.find_all(db.CONTACTS):
+            if doc["_id"] == _CONTACT_GUARDIAN:
+                _guardian = GuardianContact.model_validate(_without_id(doc))
+            elif doc["_id"] == _CONTACT_USER:
+                _user = UserContact.model_validate(_without_id(doc))
+
+    def load_fall_incidents() -> None:
+        for doc in db.find_all(db.FALL_INCIDENTS, sort_field="detectedAt", newest_limit=_LOAD_LIMIT_FALL_INCIDENTS):
+            incident = FallIncident.model_validate(_without_id(doc, "token"))
+            _fall_incidents[incident.incidentId] = incident
+            _fall_tokens[incident.incidentId] = doc.get("token", "")
+
+    def load_runtime_state() -> None:
+        for doc in db.find_all(db.RUNTIME_STATE):
+            if doc["_id"] == _STATE_ACTIVE_SESSIONS:
+                _active_session_by_device.update(doc.get("values", {}))
+            elif doc["_id"] == _STATE_ABSENCE_STAGES:
+                _absence_stage_by_room.update(doc.get("values", {}))
+
+    with _lock:
+        load("인덕션 상태", load_telemetry)
+        load("제어 명령", load_commands)
+        load("안전 이벤트", load_events)
+        load("조리 세션", load_sessions)
+        load("재실 판단", load_presence)
+        load("정책", load_policies)
+        load("연락처", load_contacts)
+        load("낙상 사건", load_fall_incidents)
+        load("진행 상태", load_runtime_state)
+
+    logger.info(
+        "DB에서 불러옴: 안전 이벤트 %d건, 제어 명령 %d건, 조리 세션 %d건, 낙상 사건 %d건",
+        len(_safety_events),
+        len(_commands),
+        len(_sessions),
+        len(_fall_incidents),
+    )
+
 
 # ---------------------------------------------------------------------------
 # 텔레메트리
 # ---------------------------------------------------------------------------
 
 def save_telemetry(device_id: str, report: TelemetryReport) -> None:
+    now = datetime.now(timezone.utc)
     with _lock:
         _latest_telemetry[device_id] = report
-        _last_seen_at[device_id] = datetime.now(timezone.utc)
+        _last_seen_at[device_id] = now
+    body = report.model_dump()
+    # 최신 값 1건(재시작 후 바로 조회용) + 시간순 로그(일정 기간 후 자동 삭제)
+    db.upsert(db.TELEMETRY_LATEST, device_id, {"report": body, "lastSeenAt": now})
+    db.insert(db.TELEMETRY_LOGS, {"deviceId": device_id, "receivedAt": now, **body})
 
 
 def get_telemetry(device_id: str) -> Optional[TelemetryReport]:
@@ -108,7 +270,7 @@ def all_known_device_ids() -> list[str]:
 def save_command(record: CommandRecord) -> None:
     with _lock:
         _commands[record.commandId] = record
-        _device_command_ids.setdefault(record.commandId, [])
+    db.upsert(db.COMMANDS, record.commandId, record.model_dump())
 
 
 def get_command(command_id: str) -> Optional[CommandRecord]:
@@ -123,7 +285,8 @@ def update_command(command_id: str, **changes) -> Optional[CommandRecord]:
             return None
         updated = record.model_copy(update=changes)
         _commands[command_id] = updated
-        return updated
+    db.upsert(db.COMMANDS, command_id, updated.model_dump())
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +294,14 @@ def update_command(command_id: str, **changes) -> Optional[CommandRecord]:
 # ---------------------------------------------------------------------------
 
 def save_safety_event(event: SafetyEvent) -> None:
+    global _next_event_seq
     with _lock:
+        seq = _next_event_seq
+        _next_event_seq += 1
         _safety_events[event.eventId] = event
         _safety_event_order.append(event.eventId)
+        _safety_event_seq[event.eventId] = seq
+    db.upsert(db.SAFETY_EVENTS, event.eventId, {"seq": seq, **event.model_dump()})
 
 
 def get_safety_event(event_id: str) -> Optional[SafetyEvent]:
@@ -172,7 +340,9 @@ def update_safety_event(event_id: str, **changes) -> Optional[SafetyEvent]:
             return None
         updated = event.model_copy(update=changes)
         _safety_events[event_id] = updated
-        return updated
+        seq = _safety_event_seq.get(event_id, 0)
+    db.upsert(db.SAFETY_EVENTS, event_id, {"seq": seq, **updated.model_dump()})
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +352,7 @@ def update_safety_event(event_id: str, **changes) -> Optional[SafetyEvent]:
 def save_session(record: SessionRecord) -> None:
     with _lock:
         _sessions[record.sessionId] = record
+    db.upsert(db.SESSIONS, record.sessionId, record.model_dump())
 
 
 def get_session(session_id: str) -> Optional[SessionRecord]:
@@ -200,6 +371,8 @@ def set_active_session_id(device_id: str, session_id: Optional[str]) -> None:
             _active_session_by_device.pop(device_id, None)
         else:
             _active_session_by_device[device_id] = session_id
+        snapshot = dict(_active_session_by_device)
+    db.upsert(db.RUNTIME_STATE, _STATE_ACTIVE_SESSIONS, {"values": snapshot})
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +382,7 @@ def set_active_session_id(device_id: str, session_id: Optional[str]) -> None:
 def save_presence(report: PresenceReport) -> None:
     with _lock:
         _presence_by_room[report.room] = report
+    db.upsert(db.PRESENCE, report.room, report.model_dump())
 
 
 def get_presence(room: str) -> Optional[PresenceReport]:
@@ -224,6 +398,8 @@ def get_absence_stage(room: str) -> Optional[str]:
 def set_absence_stage(room: str, stage: Optional[str]) -> None:
     with _lock:
         _absence_stage_by_room[room] = stage
+        snapshot = dict(_absence_stage_by_room)
+    db.upsert(db.RUNTIME_STATE, _STATE_ABSENCE_STAGES, {"values": snapshot})
 
 
 # ---------------------------------------------------------------------------
@@ -239,10 +415,11 @@ def set_policy(policy: KitchenAbsencePolicy) -> None:
     global _policy
     with _lock:
         _policy = policy
+    db.upsert(db.POLICIES, _POLICY_KITCHEN_ABSENCE, policy.model_dump())
 
 
 # ---------------------------------------------------------------------------
-# 보호자 연락처 (낙상 사고 안전 기능)
+# 사용자 / 보호자 연락처
 # ---------------------------------------------------------------------------
 
 def get_guardian() -> Optional[GuardianContact]:
@@ -254,6 +431,7 @@ def set_guardian(contact: GuardianContact) -> None:
     global _guardian
     with _lock:
         _guardian = contact
+    db.upsert(db.CONTACTS, _CONTACT_GUARDIAN, contact.model_dump())
 
 
 def get_user() -> Optional[UserContact]:
@@ -265,21 +443,29 @@ def set_user(contact: UserContact) -> None:
     global _user
     with _lock:
         _user = contact
+    db.upsert(db.CONTACTS, _CONTACT_USER, contact.model_dump())
 
 
 # ---------------------------------------------------------------------------
-# 낙상 사건 (낙상 사고 안전 기능)
+# 낙상 사건
 # ---------------------------------------------------------------------------
 
 def save_fall_incident(incident: FallIncident, token: str) -> None:
     with _lock:
         _fall_incidents[incident.incidentId] = incident
         _fall_tokens[incident.incidentId] = token
+    db.upsert(db.FALL_INCIDENTS, incident.incidentId, {"token": token, **incident.model_dump()})
 
 
 def get_fall_incident(incident_id: str) -> Optional[FallIncident]:
     with _lock:
         return _fall_incidents.get(incident_id)
+
+
+def list_pending_fall_incidents() -> list[FallIncident]:
+    """아직 보호자 응답을 기다리는 낙상 사건 목록. (재시작 후 자동 신고 타이머를 다시 걸 때 사용)"""
+    with _lock:
+        return [i for i in _fall_incidents.values() if i.status == "pending"]
 
 
 def update_fall_incident(incident_id: str, **changes) -> Optional[FallIncident]:
@@ -289,7 +475,9 @@ def update_fall_incident(incident_id: str, **changes) -> Optional[FallIncident]:
             return None
         updated = incident.model_copy(update=changes)
         _fall_incidents[incident_id] = updated
-        return updated
+        token = _fall_tokens.get(incident_id, "")
+    db.upsert(db.FALL_INCIDENTS, incident_id, {"token": token, **updated.model_dump()})
+    return updated
 
 
 def get_fall_token(incident_id: str) -> Optional[str]:
@@ -307,3 +495,4 @@ def set_fall_policy(policy: FallPolicy) -> None:
     global _fall_policy
     with _lock:
         _fall_policy = policy
+    db.upsert(db.POLICIES, _POLICY_FALL_SAFETY, policy.model_dump())

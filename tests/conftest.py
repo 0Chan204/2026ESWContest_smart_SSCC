@@ -9,9 +9,8 @@ CI 환경(GitHub Actions)에는 MQTT 브로커(Mosquitto)가 없으므로, 서�
 import pytest
 from fastapi.testclient import TestClient
 
-from app import mqtt_client, state_store
+from app import db, mqtt_client, state_store
 from app.config import settings
-from app.schemas import FallPolicy, KitchenAbsencePolicy
 
 
 @pytest.fixture()
@@ -29,28 +28,25 @@ def published(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def reset_state():
-    """state_store는 모듈 전역 메모리라서, 테스트끼리 영향을 주지 않도록 매번 비웁니다."""
-    for name in (
-        "_latest_telemetry",
-        "_last_seen_at",
-        "_commands",
-        "_device_command_ids",
-        "_safety_events",
-        "_sessions",
-        "_active_session_by_device",
-        "_presence_by_room",
-        "_absence_stage_by_room",
-        "_fall_incidents",
-        "_fall_tokens",
-    ):
-        getattr(state_store, name).clear()
-    state_store._safety_event_order.clear()
-    state_store._guardian = None
-    state_store._user = None
-    state_store.set_policy(KitchenAbsencePolicy(**settings.DEFAULT_POLICY))
-    state_store.set_fall_policy(FallPolicy(**settings.DEFAULT_FALL_POLICY))
+def reset_state(monkeypatch):
+    """테스트끼리 영향을 주지 않도록 매번 메모리를 비우고, 실제 DB에는 절대 접속하지 않게 합니다.
+    (개발자 PC의 .env에 MONGODB_URI가 있어도 테스트가 실제 DB를 건드리지 않도록)"""
+    monkeypatch.setattr(settings, "MONGODB_URI", "", raising=False)
+    db.use_database(None)
+    state_store.reset_memory()
     yield
+    db.flush()
+    db.use_database(None)
+
+
+@pytest.fixture()
+def mongo():
+    """실제 MongoDB 대신 메모리에서 동작하는 가짜 DB(mongomock)를 연결합니다."""
+    import mongomock
+
+    database = mongomock.MongoClient()["homevis_test"]
+    db.use_database(database)
+    return database
 
 
 @pytest.fixture()

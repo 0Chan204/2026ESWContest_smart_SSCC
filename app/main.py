@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app import mqtt_client, ws_hub
+from app import db, fall_service, mqtt_client, state_store, ws_hub
 from app.config import settings
 from app.routers import dashboard, device, stream
 
@@ -59,10 +59,14 @@ TAGS_METADATA = [
 async def lifespan(app: FastAPI):
     # --- 서버가 시작될 때 ---
     ws_hub.bind_loop(asyncio.get_running_loop())
+    db.connect()                             # MongoDB 연결 (실패하거나 설정이 없으면 메모리로 동작)
+    state_store.load_from_db()               # 저장돼 있던 데이터를 메모리로 불러오기
+    fall_service.resume_pending_incidents()  # 응답 대기 중이던 낙상 사건의 타이머 다시 걸기
     mqtt_client.start()
     yield
     # --- 서버가 종료될 때 ---
     mqtt_client.stop()
+    db.disconnect()                          # 아직 저장 안 된 쓰기를 마저 저장하고 연결 종료
 
 
 app = FastAPI(
@@ -80,5 +84,6 @@ app.include_router(stream.router, prefix=settings.API_PREFIX)
 
 @app.get("/health")
 def health_check():
-    """서버가 살아있는지 확인하는 가장 기본적인 엔드포인트."""
-    return {"status": "ok"}
+    """서버가 살아있는지 확인하는 가장 기본적인 엔드포인트.
+    storage: "mongodb"면 DB에 저장 중, "memory"면 DB 없이 동작 중(재시작 시 데이터 소실)."""
+    return {"status": "ok", "storage": db.storage_name()}
