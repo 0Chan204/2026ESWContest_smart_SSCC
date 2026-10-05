@@ -264,9 +264,19 @@ def report_fall_event(report: FallDetectedReport) -> FallIncidentAccepted:
     낙상 감지 AI 모델 -> 서버. 재실 판단 모델(POST /presence)과 같은 패턴으로,
     모델은 '감지 사실'만 보고합니다. 접수 즉시 서버가 인덕션 비상 전원 차단(0단계),
     대시보드 알림, 보호자 SMS 발송을 모두 수행합니다.
+
+    연락처 등록 여부와 무관하게 인덕션 차단을 가장 먼저 수행하며, 각 단계는 독립적이라
+    하나가 실패해도 나머지는 진행됩니다. 실제 수행 결과는 응답의 shutoffSent(차단 명령 전송 여부),
+    guardianNotified(보호자 문자 발송 여부)로 확인할 수 있습니다.
     """
     incident = fall_service.report_fall(report)
-    return FallIncidentAccepted(incidentId=incident.incidentId, status=incident.status, confirmUrl=incident.confirmUrl)
+    return FallIncidentAccepted(
+        incidentId=incident.incidentId,
+        status=incident.status,
+        confirmUrl=incident.confirmUrl,
+        shutoffSent=incident.shutoffSent,
+        guardianNotified=incident.guardianNotified,
+    )
 
 
 @router.get("/fall-incidents/{incident_id}", response_model=FallIncident, tags=["낙상 사고 감지"], summary="낙상 사건 상태 조회")

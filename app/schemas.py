@@ -349,6 +349,14 @@ class FallIncident(BaseModel):
     confidence: float
     confirmUrl: str = Field(..., description="SMS로 발송되는, 프론트의 모바일 확인 페이지 링크")
     autoReportAt: str = Field(..., description="이 시각까지 응답이 없으면 자동으로 신고 처리됨")
+    shutoffSent: bool = Field(
+        default=False,
+        description="인덕션 차단 명령을 전송했는지 여부. 전송 성공이며, 실제로 꺼졌는지는 인덕션 상태로 확인",
+    )
+    guardianNotified: bool = Field(
+        default=False,
+        description="보호자에게 문자를 발송했는지 여부. 보호자 미등록이거나 발송 실패면 false",
+    )
     eventId: Optional[str] = None
     resolvedAt: Optional[str] = None
     reportedAt: Optional[str] = None
@@ -358,6 +366,8 @@ class FallIncidentAccepted(BaseModel):
     incidentId: str
     status: FallIncidentStatus
     confirmUrl: str
+    shutoffSent: bool
+    guardianNotified: bool
 
 
 class FallActionResult(BaseModel):
