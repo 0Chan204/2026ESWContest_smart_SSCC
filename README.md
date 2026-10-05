@@ -224,6 +224,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 | GET | `/api/v1/user` | 사용자 연락처 조회 |
 | PUT | `/api/v1/guardian` | 보호자 연락처 등록/변경 (1명). 저장과 동시에 확인 문자 발송 |
 | GET | `/api/v1/guardian` | 보호자 연락처 조회 |
+| GET | `/api/v1/sms-logs` | 문자 발송 이력 조회 (본문은 저장하지 않음) |
 | POST | `/api/v1/safety/fall-events` | 낙상 감지 AI 모델 -> 서버 |
 | GET | `/api/v1/fall-incidents/{id}` | 낙상 사건 상태 조회 (프론트 모바일 페이지가 폴링용으로 사용 가능) |
 | POST | `/api/v1/fall-incidents/{id}/resolve?token=` | "해결" 처리 |

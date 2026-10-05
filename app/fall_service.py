@@ -30,6 +30,7 @@ from app.schemas import (
     FallIncident,
     GuardianContact,
     GuardianContactUpdateResult,
+    SmsLog,
     UserContact,
     UserContactUpdateResult,
 )
@@ -52,6 +53,22 @@ def _now_iso() -> str:
 
 def _new_incident_id() -> str:
     return f"fall-{uuid.uuid4().hex[:10]}"
+
+
+def _send_sms(to_phone: str, content: str, purpose: str, incident_id: Optional[str] = None) -> bool:
+    """문자를 보내고, 성공/실패와 관계없이 발송 이력을 남깁니다."""
+    success = sms_service.send_sms(to_phone, content)
+    state_store.save_sms_log(
+        SmsLog(
+            logId=f"sms-{uuid.uuid4().hex[:12]}",
+            to=to_phone,
+            purpose=purpose,
+            success=success,
+            sentAt=_now_iso(),
+            incidentId=incident_id,
+        )
+    )
+    return success
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +130,7 @@ def report_fall(report: FallDetectedReport) -> FallIncident:
             f"[HomeVIS] {who}{report.room}에서 낙상이 감지되었습니다. "
             f"인덕션은 안전을 위해 자동으로 꺼졌습니다. 아래 링크에서 상황을 확인해주세요: {confirm_url}"
         )
-        sms_service.send_sms(guardian.phone, message)
+        _send_sms(guardian.phone, message, "fall_alert", incident_id)
     else:
         logger.warning("보호자 연락처가 등록되지 않아 SMS를 보내지 못했습니다 (incidentId=%s)", incident_id)
 
@@ -227,7 +244,7 @@ def update_guardian(contact: GuardianContact) -> GuardianContactUpdateResult:
         f"[HomeVIS] {contact.name}님, 이 번호가 HomeVIS 보호자 연락처로 등록되었습니다. "
         "이 문자가 보인다면 정상적으로 연결된 것입니다."
     )
-    sent = sms_service.send_sms(contact.phone, verification_text)
+    sent = _send_sms(contact.phone, verification_text, "guardian_verification")
 
     message = (
         "연락처를 저장하고 확인 문자를 발송했습니다."
@@ -254,7 +271,7 @@ def update_user(contact: UserContact) -> UserContactUpdateResult:
         f"[HomeVIS] {contact.name}님, 이 번호가 HomeVIS 사용자 연락처로 등록되었습니다. "
         "이 문자가 보인다면 정상적으로 연결된 것입니다."
     )
-    sent = sms_service.send_sms(contact.phone, verification_text)
+    sent = _send_sms(contact.phone, verification_text, "user_verification")
 
     message = (
         "연락처를 저장하고 확인 문자를 발송했습니다."

@@ -72,7 +72,7 @@ Swagger: `/docs` (기능별 섹션으로 구분). 실제 경로는 전부 `/api/
 ## DB
 
 - 관계형 ERD(테이블 9개)는 폐기하고 MongoDB 컬렉션 설계로 대체함. 상세는 `docs/DB.md`
-- 컬렉션 10개: `contacts`, `policies`, `telemetry_latest`, `telemetry_logs`, `commands`, `safety_events`, `sessions`, `presence`, `fall_incidents`, `runtime_state`
+- 컬렉션 11개: `contacts`, `policies`, `telemetry_latest`, `telemetry_logs`, `commands`, `safety_events`, `sessions`, `presence`, `fall_incidents`, `sms_logs`, `runtime_state`
 - 인덕션 상태 로그(`telemetry_logs`)는 7일 후 자동 삭제
 
 ## 동작 확인된 범위 (Cowork 세션 내 TestClient 기반 스모크 테스트)

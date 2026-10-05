@@ -65,11 +65,12 @@ def send_sms(to_phone: str, content: str) -> bool:
             "text": content,
         }
     }
-    headers = {"Authorization": _auth_header(), "Content-Type": "application/json; charset=utf-8"}
-
     try:
+        headers = {"Authorization": _auth_header(), "Content-Type": "application/json; charset=utf-8"}
         response = requests.post(SOLAPI_SEND_URL, headers=headers, json=body, timeout=5)
-    except requests.RequestException:
+    except Exception:
+        # 네트워크 오류뿐 아니라 설정값이 잘못된 경우(예: 키에 한글이 섞임)도 여기서 잡습니다.
+        # 문자 한 건이 실패했다고 연락처 등록이나 낙상 처리 전체가 오류로 끝나면 안 되기 때문입니다.
         logger.exception("문자 발송 요청 실패 (to=%s)", to_phone)
         return False
 

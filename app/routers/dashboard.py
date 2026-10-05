@@ -37,7 +37,9 @@ from app.schemas import (
     SafetyEventFeedback,
     SafetyEventFeedbackResult,
     SafetyEventListResponse,
+    SafetyEventFeedbackRecord,
     SessionRecord,
+    SmsLogListResponse,
     SnapshotResponse,
     UserContact,
     UserContactUpdateResult,
@@ -163,13 +165,20 @@ def read_safety_event(event_id: str) -> SafetyEvent:
 
 @router.post("/safety-events/{event_id}/feedback", response_model=SafetyEventFeedbackResult, status_code=201, tags=["안전 이벤트"], summary="안전 이벤트 피드백 제출")
 def submit_safety_event_feedback(event_id: str, feedback: SafetyEventFeedback) -> SafetyEventFeedbackResult:
-    """즉시 정책을 바꾸지 않습니다. 학습 데이터로만 축적합니다 (거부 한 번에 안전 임계값을 풀면 위험)."""
-    event = state_store.get_safety_event(event_id)
-    if event is None:
+    """즉시 정책을 바꾸지 않습니다. 학습 데이터로만 축적합니다 (거부 한 번에 안전 임계값을 풀면 위험).
+    제출한 의견은 해당 이벤트에 함께 저장되어 이벤트 조회 시 feedback 항목으로 확인할 수 있습니다.
+    같은 이벤트에 다시 제출하면 가장 최근 의견으로 바뀝니다."""
+    if state_store.get_safety_event(event_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 eventId를 찾을 수 없습니다.")
 
     submitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    logger.info("안전 이벤트 피드백 수신 (eventId=%s, verdict=%s)", event_id, feedback.verdict)
+    state_store.update_safety_event(
+        event_id,
+        feedback=SafetyEventFeedbackRecord(
+            verdict=feedback.verdict, comment=feedback.comment, submittedAt=submitted_at
+        ),
+    )
+    logger.info("안전 이벤트 피드백 저장 (eventId=%s, verdict=%s)", event_id, feedback.verdict)
     return SafetyEventFeedbackResult(eventId=event_id, verdict=feedback.verdict, submittedAt=submitted_at)
 
 
@@ -239,6 +248,14 @@ def read_guardian() -> GuardianContact:
     if guardian is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="보호자 연락처가 아직 등록되지 않았습니다.")
     return guardian
+
+
+@router.get("/sms-logs", response_model=SmsLogListResponse, tags=["회원 정보"], summary="문자 발송 이력 조회")
+def list_sms_logs(limit: int = 50) -> SmsLogListResponse:
+    """최근 발송한 문자의 기록을 최신순으로 돌려줍니다. 문자 본문은 저장하지 않습니다."""
+    logs = state_store.list_sms_logs()
+    newest_first = list(reversed(logs))[: max(limit, 0)]
+    return SmsLogListResponse(items=newest_first, total=len(logs))
 
 
 @router.post("/safety/fall-events", response_model=FallIncidentAccepted, status_code=status.HTTP_202_ACCEPTED, tags=["낙상 사고 감지"], summary="낙상 감지 보고 (AI 모델 → 서버)")

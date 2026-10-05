@@ -147,6 +147,14 @@ SafetyEventType = Literal[
 SafetyEventSeverity = Literal["info", "warning", "danger"]
 
 
+class SafetyEventFeedbackRecord(BaseModel):
+    """안전 이벤트에 대해 사용자가 남긴 의견. 이벤트 문서 안에 함께 저장됩니다 (가장 최근 1건)."""
+
+    verdict: Literal["approved", "rejected"]
+    comment: Optional[str] = None
+    submittedAt: str
+
+
 class SafetyEvent(BaseModel):
     eventId: str
     type: SafetyEventType
@@ -158,6 +166,7 @@ class SafetyEvent(BaseModel):
     trigger: Optional[str] = None
     action: Optional[str] = None
     reasoning: Optional[str] = None
+    feedback: Optional[SafetyEventFeedbackRecord] = None
 
 
 class SafetyEventListResponse(BaseModel):
@@ -296,6 +305,25 @@ class GuardianContactUpdateResult(BaseModel):
     guardian: GuardianContact
     verificationSent: bool = Field(..., description="연락처 저장 후 확인 문자 발송 성공 여부")
     message: str
+
+
+SmsPurpose = Literal["user_verification", "guardian_verification", "fall_alert"]
+
+
+class SmsLog(BaseModel):
+    """문자 발송 1건의 기록. 본문은 저장하지 않습니다 (낙상 문자에는 확인 링크의 토큰이 들어 있기 때문)."""
+
+    logId: str
+    to: str
+    purpose: SmsPurpose
+    success: bool
+    sentAt: str
+    incidentId: Optional[str] = Field(default=None, description="낙상 알림 문자인 경우 해당 사건 ID")
+
+
+class SmsLogListResponse(BaseModel):
+    items: list[SmsLog]
+    total: int
 
 
 class FallDetectedReport(BaseModel):

@@ -32,6 +32,7 @@ POLICIES = "policies"
 CONTACTS = "contacts"
 FALL_INCIDENTS = "fall_incidents"
 RUNTIME_STATE = "runtime_state"
+SMS_LOGS = "sms_logs"
 
 _client = None  # 이 모듈이 직접 만든 MongoClient (테스트에서 주입한 DB에는 없음)
 _database = None
@@ -102,6 +103,7 @@ def _ensure_indexes() -> None:
         _database[COMMANDS].create_index("issuedAt")
         _database[SESSIONS].create_index("startedAt")
         _database[FALL_INCIDENTS].create_index("detectedAt")
+        _database[SMS_LOGS].create_index("seq")
     except Exception:
         logger.exception("인덱스 생성 실패 (동작에는 지장 없음)")
 

@@ -282,3 +282,62 @@ def test_fall_is_auto_reported_when_nobody_answers(client):
 def test_unknown_fall_incident_is_404(client):
     assert client.get(f"{PREFIX}/fall-incidents/nope").status_code == 404
     assert client.post(f"{PREFIX}/fall-incidents/nope/resolve", params={"token": "x"}).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 안전 이벤트 피드백 / 문자 발송 이력
+# ---------------------------------------------------------------------------
+
+def test_feedback_is_stored_on_event(client):
+    client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT)
+    event_id = client.get(f"{PREFIX}/safety-events").json()["items"][0]["eventId"]
+    assert client.get(f"{PREFIX}/safety-events/{event_id}").json()["feedback"] is None
+
+    res = client.post(f"{PREFIX}/safety-events/{event_id}/feedback", json={"verdict": "rejected", "comment": "오탐"})
+    assert res.status_code == 201
+
+    feedback = client.get(f"{PREFIX}/safety-events/{event_id}").json()["feedback"]
+    assert feedback["verdict"] == "rejected"
+    assert feedback["comment"] == "오탐"
+    assert feedback["submittedAt"] == res.json()["submittedAt"]
+
+    # 다시 제출하면 최근 의견으로 바뀐다
+    client.post(f"{PREFIX}/safety-events/{event_id}/feedback", json={"verdict": "approved"})
+    assert client.get(f"{PREFIX}/safety-events/{event_id}").json()["feedback"]["verdict"] == "approved"
+
+    assert client.post(f"{PREFIX}/safety-events/nope/feedback", json={"verdict": "approved"}).status_code == 404
+
+
+def test_sms_logs_record_every_send(client, monkeypatch):
+    from app import sms_service
+
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: to != "01011112222")
+
+    client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})      # 실패하도록 설정
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})  # 성공
+    incident_id = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["incidentId"]
+
+    body = client.get(f"{PREFIX}/sms-logs").json()
+    assert body["total"] == 3
+    newest, middle, oldest = body["items"]  # 최신순
+
+    assert (newest["purpose"], newest["to"], newest["success"]) == ("fall_alert", "01033334444", True)
+    assert newest["incidentId"] == incident_id
+    assert (middle["purpose"], middle["success"]) == ("guardian_verification", True)
+    assert (oldest["purpose"], oldest["to"], oldest["success"]) == ("user_verification", "01011112222", False)
+
+    # 본문(확인 링크의 토큰 포함)은 기록에 남기지 않는다
+    assert all("content" not in item and "text" not in item for item in body["items"])
+    assert len(client.get(f"{PREFIX}/sms-logs", params={"limit": 1}).json()["items"]) == 1
+
+
+def test_bad_sms_setting_does_not_break_registration(client, monkeypatch):
+    """문자 설정값이 잘못돼 요청을 만들 수 없어도, 연락처 등록은 정상 응답해야 한다."""
+    monkeypatch.setattr(settings, "SOLAPI_API_KEY", "한글이섞인키", raising=False)
+    monkeypatch.setattr(settings, "SOLAPI_API_SECRET", "secret", raising=False)
+    monkeypatch.setattr(settings, "SOLAPI_SENDER_PHONE", "01099998888", raising=False)
+
+    res = client.put(f"{PREFIX}/guardian", json={"name": "보호자", "phone": "01000000000"})
+    assert res.status_code == 200
+    assert res.json()["verificationSent"] is False
+    assert client.get(f"{PREFIX}/sms-logs").json()["items"][0]["success"] is False

@@ -75,7 +75,12 @@ def test_everything_survives_restart(mongo, published):
         accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
         incident_id = accepted["incidentId"]
         token = accepted["confirmUrl"].split("token=")[1]
+
+        first_event_id = client.get(f"{PREFIX}/safety-events").json()["items"][0]["eventId"]
+        client.post(f"{PREFIX}/safety-events/{first_event_id}/feedback", json={"verdict": "rejected", "comment": "오탐"})
+
         events_before = client.get(f"{PREFIX}/safety-events").json()["items"]
+        sms_logs_before = client.get(f"{PREFIX}/sms-logs").json()
 
     with _restart_server() as client:
         assert client.get(f"{PREFIX}/user").json() == {"name": "김사용", "phone": "01011112222"}
@@ -89,6 +94,11 @@ def test_everything_survives_restart(mongo, published):
         # 안전 이벤트는 내용과 순서가 모두 그대로여야 한다
         assert client.get(f"{PREFIX}/safety-events").json()["items"] == events_before
         assert [e["type"] for e in events_before] == ["auto_power_reduced", "fall_detected"]
+        assert events_before[0]["feedback"]["comment"] == "오탐"
+
+        # 문자 발송 이력도 유지 (사용자 확인, 보호자 확인, 낙상 알림)
+        assert client.get(f"{PREFIX}/sms-logs").json() == sms_logs_before
+        assert sms_logs_before["total"] == 3
 
         # 부재중 단계도 유지: 같은 보고를 다시 받아도 중복 조치하지 않는다
         assert client.post(f"{PREFIX}/presence", json=presence).json()["triggeredEventId"] is None
