@@ -31,6 +31,7 @@ from app.schemas import (
     UserContact,
     FallIncident,
     FallPolicy,
+    SmsLog,
 )
 
 logger = logging.getLogger("induction.store")
@@ -42,6 +43,7 @@ _LOAD_LIMIT_EVENTS = 1000
 _LOAD_LIMIT_COMMANDS = 500
 _LOAD_LIMIT_SESSIONS = 200
 _LOAD_LIMIT_FALL_INCIDENTS = 200
+_LOAD_LIMIT_SMS_LOGS = 200
 
 # --- 가전 텔레메트리 ---
 _latest_telemetry: dict[str, TelemetryReport] = {}
@@ -81,6 +83,10 @@ _fall_tokens: dict[str, str] = {}
 # --- 낙상 안전 정책 (GET/PUT /policies/fall-safety) ---
 _fall_policy = FallPolicy(**settings.DEFAULT_FALL_POLICY)
 
+# --- 문자 발송 이력 (오래된 순서대로) ---
+_sms_logs: list[SmsLog] = []
+_next_sms_seq = 1
+
 _POLICY_KITCHEN_ABSENCE = "kitchen-absence"
 _POLICY_FALL_SAFETY = "fall-safety"
 _CONTACT_USER = "user"
@@ -95,7 +101,7 @@ _STATE_ABSENCE_STAGES = "absence_stages"
 
 def reset_memory() -> None:
     """메모리의 모든 데이터를 초기 상태로 되돌립니다. (DB는 건드리지 않음. 시작 시, 테스트에서 사용)"""
-    global _policy, _fall_policy, _guardian, _user, _next_event_seq
+    global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq
     with _lock:
         for store in (
             _latest_telemetry,
@@ -112,7 +118,9 @@ def reset_memory() -> None:
         ):
             store.clear()
         _safety_event_order.clear()
+        _sms_logs.clear()
         _next_event_seq = 1
+        _next_sms_seq = 1
         _policy = KitchenAbsencePolicy(**settings.DEFAULT_POLICY)
         _fall_policy = FallPolicy(**settings.DEFAULT_FALL_POLICY)
         _guardian = None
@@ -196,6 +204,13 @@ def load_from_db() -> None:
             _fall_incidents[incident.incidentId] = incident
             _fall_tokens[incident.incidentId] = doc.get("token", "")
 
+    def load_sms_logs() -> None:
+        # 같은 초에 여러 건이 발송될 수 있어서, 시각이 아니라 일련번호(seq)로 순서를 보장합니다.
+        global _next_sms_seq
+        for doc in db.find_all(db.SMS_LOGS, sort_field="seq", newest_limit=_LOAD_LIMIT_SMS_LOGS):
+            _sms_logs.append(SmsLog.model_validate(_without_id(doc, "seq")))
+            _next_sms_seq = max(_next_sms_seq, doc["seq"] + 1)
+
     def load_runtime_state() -> None:
         for doc in db.find_all(db.RUNTIME_STATE):
             if doc["_id"] == _STATE_ACTIVE_SESSIONS:
@@ -212,6 +227,7 @@ def load_from_db() -> None:
         load("정책", load_policies)
         load("연락처", load_contacts)
         load("낙상 사건", load_fall_incidents)
+        load("문자 발송 이력", load_sms_logs)
         load("진행 상태", load_runtime_state)
 
     logger.info(
@@ -496,3 +512,22 @@ def set_fall_policy(policy: FallPolicy) -> None:
     with _lock:
         _fall_policy = policy
     db.upsert(db.POLICIES, _POLICY_FALL_SAFETY, policy.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# 문자 발송 이력
+# ---------------------------------------------------------------------------
+
+def save_sms_log(log: SmsLog) -> None:
+    global _next_sms_seq
+    with _lock:
+        seq = _next_sms_seq
+        _next_sms_seq += 1
+        _sms_logs.append(log)
+    db.upsert(db.SMS_LOGS, log.logId, {"seq": seq, **log.model_dump()})
+
+
+def list_sms_logs() -> list[SmsLog]:
+    """오래된 것부터 순서대로 돌려줍니다."""
+    with _lock:
+        return list(_sms_logs)

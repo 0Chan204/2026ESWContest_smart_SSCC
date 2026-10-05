@@ -32,6 +32,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `sessions` | 세션 ID | 조리 세션과 타임라인 | 대시보드 화면 |
 | `presence` | 방 이름 | 방별 최신 재실 판단 결과 | AI 재실 판단 |
 | `fall_incidents` | 사건 ID | 낙상 사건과 확인 토큰 | 낙상 사고 감지 |
+| `sms_logs` | 발송 기록 ID | 문자 발송 이력 | 회원 정보 |
 | `runtime_state` | 고정 키 | 진행 중인 세션, 부재 단계 | 내부용 |
 
 ## 문서 예시
@@ -131,6 +132,12 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 
 `seq`는 발생 순서를 보장하기 위한 일련번호입니다. `type` 13종은 `app/schemas.py`의 `SafetyEventType` 참고.
 
+사용자가 피드백을 제출하면 같은 문서 안에 `feedback`으로 저장됩니다. 다시 제출하면 최근 의견으로 바뀝니다.
+
+```json
+"feedback": { "verdict": "rejected", "comment": "오탐", "submittedAt": "2026-10-05T03:05:00+00:00" }
+```
+
 ### sessions
 
 ```json
@@ -173,6 +180,24 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 `status`: `pending` → `resolved` / `reported` / `auto_reported`. `token`은 API 응답에는 포함되지 않습니다.
 서버가 재시작되면 `pending` 상태인 사건의 자동 신고 타이머를 `autoReportAt` 기준으로 다시 겁니다.
 
+### sms_logs
+
+```json
+{
+  "_id": "sms-54d382c8b9b3",
+  "seq": 3,
+  "logId": "sms-54d382c8b9b3",
+  "to": "01033334444",
+  "purpose": "fall_alert",
+  "success": true,
+  "sentAt": "2026-10-05T03:00:00+00:00",
+  "incidentId": "fall-71c6610bdb"
+}
+```
+
+`purpose`: `user_verification`(사용자 등록 확인) / `guardian_verification`(보호자 등록 확인) / `fall_alert`(낙상 알림).
+발송에 실패한 경우도 `success: false`로 남깁니다. 문자 본문은 저장하지 않습니다 (낙상 문자에는 확인 링크의 토큰이 들어 있기 때문).
+
 ### runtime_state
 
 ```json
@@ -192,6 +217,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `commands` | `issuedAt` | 최근 명령 불러오기 |
 | `sessions` | `startedAt` | 최근 세션 불러오기 |
 | `fall_incidents` | `detectedAt` | 최근 사건 불러오기 |
+| `sms_logs` | `seq` | 발송 순서대로 불러오기 |
 
 인덱스는 서버가 DB에 연결될 때 자동으로 만들어집니다.
 
@@ -205,6 +231,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | 제어 명령 | 최근 500건 |
 | 조리 세션 | 최근 200건 |
 | 낙상 사건 | 최근 200건 |
+| 문자 발송 이력 | 최근 200건 |
 
 ## 용량
 
