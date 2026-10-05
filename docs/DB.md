@@ -125,7 +125,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
   "occurredAt": "2026-10-05T03:00:00+00:00",
   "room": "kitchen", "sessionId": null, "temperature": null,
   "trigger": "낙상 감지 모델 confidence=0.95",
-  "action": "인덕션 비상 전원 차단 + 보호자 SMS 발송",
+  "action": "인덕션 비상 전원 차단 명령 전송 + 보호자 문자 발송",
   "reasoning": "modelVersion=fall-detector-0.1"
 }
 ```
@@ -173,11 +173,13 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
   "detectedAt": "2026-10-05T03:00:00+00:00", "confidence": 0.95,
   "confirmUrl": "https://(프론트 주소)/fall/fall-71c6610bdb?token=...",
   "autoReportAt": "2026-10-05T03:01:00+00:00",
+  "shutoffSent": true, "guardianNotified": true,
   "eventId": "evt-033aac118458", "resolvedAt": null, "reportedAt": null
 }
 ```
 
 `status`: `pending` → `resolved` / `reported` / `auto_reported`. `token`은 API 응답에는 포함되지 않습니다.
+`shutoffSent`는 인덕션 차단 명령을 전송했는지, `guardianNotified`는 보호자에게 문자를 발송했는지를 나타냅니다.
 서버가 재시작되면 `pending` 상태인 사건의 자동 신고 타이머를 `autoReportAt` 기준으로 다시 겁니다.
 
 ### sms_logs

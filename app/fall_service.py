@@ -76,6 +76,12 @@ def _send_sms(to_phone: str, content: str, purpose: str, incident_id: Optional[s
 # ---------------------------------------------------------------------------
 
 def report_fall(report: FallDetectedReport) -> FallIncident:
+    """낙상 감지를 접수하고 비상 조치를 수행합니다.
+
+    비상 상황이므로 각 단계는 서로 독립적입니다. 한 단계가 실패해도(인덕션 통신 끊김,
+    보호자 미등록, 문자 발송 실패 등) 나머지 단계는 반드시 계속 진행합니다.
+    실제로 수행된 조치는 사건의 shutoffSent / guardianNotified 에 기록됩니다.
+    """
     device_id = settings.INDUCTION_DEVICE_ID
     burner_id = settings.BURNER_ID
     policy = state_store.get_fall_policy()
@@ -96,9 +102,10 @@ def report_fall(report: FallDetectedReport) -> FallIncident:
     )
     state_store.save_fall_incident(incident, token)
 
-    # (a) 인덕션 비상 전원 차단: 재실 기반 정책(watch/reduce/off)과 달리 단계를 거치지 않고
-    #     바로 turn_off(0단계). rules.py상 turn_off는 overheated 상태에서도 항상 허용되므로
-    #     이 호출이 거부되는 일은 없어야 정상입니다(혹시 거부되면 이례적인 상황으로 로그만 남김).
+    # (a) 인덕션 비상 전원 차단: 연락처 등록 여부와 무관하게 가장 먼저 수행합니다.
+    #     재실 기반 정책(watch/reduce/off)과 달리 단계를 거치지 않고 바로 turn_off.
+    #     rules.py상 turn_off는 overheated 상태에서도 항상 허용됩니다.
+    shutoff_sent = False
     try:
         commands_service.dispatch_command(
             device_id,
@@ -107,38 +114,77 @@ def report_fall(report: FallDetectedReport) -> FallIncident:
             actor="system",
             reason="fall_detected emergency shutoff",
         )
+        shutoff_sent = True
     except commands_service.CommandRejected as exc:
         logger.error("낙상 비상 차단 명령이 거부됨(이례적인 상황): %s", exc.reasons)
+    except Exception:
+        logger.exception("낙상 비상 차단 명령 전송 실패 (인덕션 통신 상태 확인 필요). 알림은 계속 진행합니다.")
+    shutoff_text = "인덕션 비상 전원 차단 명령 전송" if shutoff_sent else "인덕션 차단 명령 전송 실패"
 
-    # (b) 안전 이벤트 생성 + 대시보드 실시간 알림
-    event = safety_service.emit_event(
-        "fall_detected",
-        "danger",
-        report.room,
-        trigger=f"낙상 감지 모델 confidence={report.confidence:.2f}",
-        action="인덕션 비상 전원 차단 + 보호자 SMS 발송",
-        reasoning=f"modelVersion={report.modelVersion}",
-    )
-    incident = state_store.update_fall_incident(incident_id, eventId=event.eventId) or incident
-
-    # (c) 보호자 SMS 발송
-    guardian = state_store.get_guardian()
-    if guardian is not None:
-        user = state_store.get_user()
-        who = f"{user.name}님 댁 " if user is not None else ""
-        message = (
-            f"[HomeVIS] {who}{report.room}에서 낙상이 감지되었습니다. "
-            f"인덕션은 안전을 위해 자동으로 꺼졌습니다. 아래 링크에서 상황을 확인해주세요: {confirm_url}"
+    # (b) 안전 이벤트 생성 + 대시보드 실시간 알림 (문자 발송을 기다리지 않고 먼저 알립니다)
+    event_id: Optional[str] = None
+    try:
+        event = safety_service.emit_event(
+            "fall_detected",
+            "danger",
+            report.room,
+            trigger=f"낙상 감지 모델 confidence={report.confidence:.2f}",
+            action=shutoff_text,
+            reasoning=f"modelVersion={report.modelVersion}",
         )
-        _send_sms(guardian.phone, message, "fall_alert", incident_id)
-    else:
-        logger.warning("보호자 연락처가 등록되지 않아 SMS를 보내지 못했습니다 (incidentId=%s)", incident_id)
+        event_id = event.eventId
+    except Exception:
+        logger.exception("낙상 안전 이벤트 생성 실패 (incidentId=%s)", incident_id)
+
+    # (c) 보호자 문자 발송
+    guardian_notified = False
+    notify_text = "보호자 미등록으로 문자 미발송"
+    try:
+        guardian = state_store.get_guardian()
+        if guardian is None:
+            logger.warning("보호자 연락처가 등록되지 않아 문자를 보내지 못했습니다 (incidentId=%s)", incident_id)
+        else:
+            user = state_store.get_user()
+            who = f"{user.name}님 댁 " if user is not None else ""
+            induction_text = (
+                "인덕션에는 자동 차단 명령을 보냈습니다."
+                if shutoff_sent
+                else "인덕션 차단 명령을 보내지 못했으니 인덕션 상태를 꼭 확인해주세요."
+            )
+            message = (
+                f"[HomeVIS] {who}{report.room}에서 낙상이 감지되었습니다. "
+                f"{induction_text} 아래 링크에서 상황을 확인해주세요: {confirm_url}"
+            )
+            guardian_notified = _send_sms(guardian.phone, message, "fall_alert", incident_id)
+            notify_text = "보호자 문자 발송" if guardian_notified else "보호자 문자 발송 실패"
+    except Exception:
+        notify_text = "보호자 문자 발송 실패"
+        logger.exception("보호자 문자 발송 중 오류 (incidentId=%s)", incident_id)
+
+    # 실제로 수행된 조치를 사건과 이벤트 기록에 반영
+    incident = (
+        state_store.update_fall_incident(
+            incident_id, eventId=event_id, shutoffSent=shutoff_sent, guardianNotified=guardian_notified
+        )
+        or incident
+    )
+    if event_id is not None:
+        state_store.update_safety_event(event_id, action=f"{shutoff_text} + {notify_text}")
 
     # (d) 미응답 시 자동 신고 타이머 예약
-    ws_hub.run_coroutine_threadsafe(_auto_report_watchdog(incident_id, policy.autoReportSec))
+    try:
+        ws_hub.run_coroutine_threadsafe(_auto_report_watchdog(incident_id, policy.autoReportSec))
+    except Exception:
+        logger.exception("자동 신고 타이머 예약 실패 (incidentId=%s)", incident_id)
 
     ws_hub.broadcast_threadsafe("fall.incident", incident.model_dump())
-    logger.info("낙상 사건 접수 (incidentId=%s, room=%s)", incident_id, report.room)
+    logger.info(
+        "낙상 사건 접수 (incidentId=%s, room=%s, shutoffSent=%s, guardianNotified=%s)",
+        incident_id,
+        report.room,
+        shutoff_sent,
+        guardian_notified,
+    )
     return incident
 
 

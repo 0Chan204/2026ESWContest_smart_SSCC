@@ -341,3 +341,95 @@ def test_bad_sms_setting_does_not_break_registration(client, monkeypatch):
     assert res.status_code == 200
     assert res.json()["verificationSent"] is False
     assert client.get(f"{PREFIX}/sms-logs").json()["items"][0]["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# 낙상 처리: 각 단계는 독립적으로 수행되어야 한다
+# ---------------------------------------------------------------------------
+
+def test_fall_without_any_contact_still_shuts_off(client, published):
+    """사용자·보호자 연락처가 하나도 없어도 인덕션 차단과 알림은 그대로 진행된다."""
+    res = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT)
+    assert res.status_code == 202
+    assert res.json()["shutoffSent"] is True
+    assert res.json()["guardianNotified"] is False
+    assert published[-1]["type"] == "turn_off"
+
+    event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
+    assert event["type"] == "fall_detected"
+    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 보호자 미등록으로 문자 미발송"
+    assert client.get(f"{PREFIX}/sms-logs").json()["total"] == 0
+
+
+def test_fall_records_what_was_actually_done(client, published, monkeypatch):
+    from app import sms_service
+
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: True)
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    assert (accepted["shutoffSent"], accepted["guardianNotified"]) == (True, True)
+
+    incident = client.get(f"{PREFIX}/fall-incidents/{accepted['incidentId']}").json()
+    assert (incident["shutoffSent"], incident["guardianNotified"]) == (True, True)
+    event = client.get(f"{PREFIX}/safety-events/{incident['eventId']}").json()
+    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 보호자 문자 발송"
+
+
+def test_fall_still_notifies_when_induction_is_unreachable(client, monkeypatch):
+    """인덕션 통신이 끊겨 차단 명령을 못 보내도, 대시보드 알림과 보호자 문자는 나가야 한다."""
+    from app import mqtt_client, sms_service
+
+    def broken_publish(device_id, payload):
+        raise RuntimeError("Message publish failed: The client is not currently connected.")
+
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(mqtt_client, "publish_command", broken_publish)
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: sent.append((to, content)) or True)
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    sent.clear()
+
+    res = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT)
+    assert res.status_code == 202
+    assert res.json()["shutoffSent"] is False
+    assert res.json()["guardianNotified"] is True
+
+    # 문자에는 인덕션이 꺼졌다고 쓰지 않고, 직접 확인해 달라고 안내한다
+    assert [to for to, _ in sent] == ["01033334444"]
+    assert "차단 명령을 보내지 못했으니" in sent[0][1]
+    assert "자동 차단 명령을 보냈습니다" not in sent[0][1]
+
+    event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
+    assert event["action"] == "인덕션 차단 명령 전송 실패 + 보호자 문자 발송"
+
+    # 보호자는 여전히 링크로 사건을 처리할 수 있다
+    token = _token_of(res.json()["confirmUrl"])
+    resolved = client.post(f"{PREFIX}/fall-incidents/{res.json()['incidentId']}/resolve", params={"token": token})
+    assert resolved.json()["status"] == "resolved"
+
+
+def test_fall_reports_sms_failure(client, published, monkeypatch):
+    from app import sms_service
+
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: False)
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    assert (accepted["shutoffSent"], accepted["guardianNotified"]) == (True, False)
+    event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
+    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 보호자 문자 발송 실패"
+
+
+def test_failed_publish_marks_command_failed(client, monkeypatch):
+    from app import mqtt_client
+
+    def broken_publish(device_id, payload):
+        raise RuntimeError("not connected")
+
+    monkeypatch.setattr(mqtt_client, "publish_command", broken_publish)
+    client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT)
+
+    from app import state_store as store
+
+    records = list(store._commands.values())
+    assert len(records) == 1 and records[0].status == "failed"

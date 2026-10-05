@@ -57,7 +57,12 @@ def dispatch_command(
     from app import mqtt_client  # 지연 import: mqtt_client <-> device_service/commands_service 순환 참조 방지
 
     payload = command.model_dump(exclude_none=True)
-    mqtt_client.publish_command(device_id, payload)
+    try:
+        mqtt_client.publish_command(device_id, payload)
+    except Exception:
+        # 브로커 연결 끊김 등으로 명령을 내보내지 못한 경우: 기록을 "failed"로 남기고 호출한 쪽에 알립니다.
+        state_store.update_command(command.commandId, status="failed")
+        raise
 
     record = state_store.update_command(command.commandId, status="sent") or record
     return record
