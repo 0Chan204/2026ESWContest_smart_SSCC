@@ -47,6 +47,15 @@ MORNING_WATER_SYSTEM_PROMPT = (
     "TTS로 읽기 좋은 한 문장으로 답하세요."
 )
 
+FEEDBACK_INTERPRETATION_SYSTEM_PROMPT = """당신은 HomeVIS 자동화 피드백 분류기입니다.
+사용자의 자연어를 제공된 자동화 action context에 대해서만 해석하세요.
+새 action이나 weight를 만들거나 기존 confidence를 재계산하지 마세요.
+feedback은 반드시 positive, unnecessary, too_sensitive, too_late, cancel,
+user_override, unknown 중 하나여야 합니다.
+confidence는 자연어 해석에 대한 확신이며 0.0~1.0 숫자입니다.
+설명이나 Markdown 없이 다음 키를 가진 JSON 객체 하나만 출력하세요.
+{"feedback":"...","reason":"...","confidence":0.0}"""
+
 
 def get_system_prompt(version: str = "v1", scenario: str | None = None) -> str:
     if scenario == "morning_water":
@@ -92,5 +101,29 @@ def build_device_command_user_prompt(command: "DeviceCommand") -> str:
     return (
         "다음은 중앙 제어 시스템이 이미 결정한 장치 제어 명령입니다.\n"
         "이 명령을 재판단하지 말고, 실제 동작 완료를 단정하지 않는 사용자 안내 문장만 생성하세요.\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def build_feedback_interpretation_prompt(
+    action_context: dict,
+    user_text: str,
+) -> str:
+    payload = {
+        "action_context": action_context,
+        "user_feedback": user_text,
+        "allowed_feedback": [
+            "positive", "unnecessary", "too_sensitive", "too_late",
+            "cancel", "user_override", "unknown",
+        ],
+        "output_schema": {
+            "feedback": "allowed_feedback 중 하나",
+            "reason": "짧은 snake_case 이유",
+            "confidence": "0.0~1.0 숫자",
+        },
+    }
+    return (
+        "다음 자동화와 사용자 발화의 관계를 분류하세요. "
+        "자동화와 관련성이 불명확하면 unknown을 선택하세요.\n\n"
         + json.dumps(payload, ensure_ascii=False, indent=2)
     )

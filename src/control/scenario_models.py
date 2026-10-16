@@ -1,5 +1,7 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
+from math import isfinite
+from typing import Any
 
 from src.models import RiskDecision, RiskLevel
 
@@ -21,9 +23,51 @@ class DeviceCommand:
     command_type: str = "DISPENSE_WATER"
     device: str = "water_dispenser"
     water_temperature: str = "room_temp"
+    event: str = "water_dispensed"
+    request_weather_info: bool = True
 
     def to_dict(self):
         return asdict(self)
+
+
+class BedtimeLightState(str, Enum):
+    AWAKE = "AWAKE"
+    LYING = "LYING"
+    BEDTIME_CONFIRMED = "BEDTIME_CONFIRMED"
+    LIGHT_OFF_REQUESTED = "LIGHT_OFF_REQUESTED"
+
+
+@dataclass(frozen=True)
+class ScenarioAction:
+    """A rule-based request for the backend or a connected device."""
+
+    timestamp: float
+    scenario: str
+    event: str
+    action: str
+    target: str
+    reason: str
+    details: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        if data["details"] is None:
+            data.pop("details")
+        return data
+
+
+@dataclass(frozen=True)
+class FallBackendSignal:
+    timestamp: float
+    allow_emergency_report: bool = True
+
+    def __post_init__(self) -> None:
+        if (isinstance(self.timestamp, bool)
+                or not isinstance(self.timestamp, (int, float))
+                or not isfinite(self.timestamp)):
+            raise ValueError("timestamp must be a finite number")
+        if type(self.allow_emergency_report) is not bool:
+            raise ValueError("allow_emergency_report must be boolean")
 
 
 class BathroomFallState(str, Enum):

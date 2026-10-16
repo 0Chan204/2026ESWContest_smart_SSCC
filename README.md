@@ -1,5 +1,31 @@
 # HomeVIS 주방 중앙 제어 및 안전 알림 모듈
 
+## Confidence 기반 자동 제어
+
+기존 실시간 위험 판단과 LLM/TTS 경로를 유지하면서 주방 화력 감소·복구 및 전등 제어에
+feature 가중치 기반 confidence 판단을 추가했습니다. 사용자 피드백은 사용자별·시나리오별
+weight에 소폭 반영되며 판단 근거와 루틴은 JSON/JSONL로 저장됩니다. 기존 Qwen/Gemini
+adapter를 재사용하는 자연어 피드백 입력도 같은 `FeedbackManager` 학습 경로로 연결됩니다.
+
+```powershell
+python -m unittest discover -s tests -v
+python tests/manual_all_test.py
+```
+
+입출력 구조, 초기 weight, threshold, feedback 및 저장 위치는
+[Confidence 기반 자동 제어 설계](docs/confidence_control.md)를 참고하세요.
+
+## 생활·안전 시나리오
+
+- 침실에서 `lying` 상태가 설정 시간 이상 유지되면 조명 소등 요청
+- 낙상 무응답 시간에 따른 사용자/보호자 알림 및 백엔드 승인 후 자동 신고 요청
+- 낙상 시 최신 ON 상태의 인덕션 OFF와 욕실 조명 깜빡임 요청
+- 최근 기상→주방 이동 기록으로 자동 갱신되는 아침 출수 시간대
+- 출수 이벤트의 `request_weather_info=true` 백엔드 신호(날씨 조회는 수행하지 않음)
+
+모든 시간 기준은 `ScenarioConfig`에 있으며, 출력 모델과 연동 예시는
+[추가 시나리오 설계](docs/scenarios.md)를 참고하세요.
+
 ## 실시간 상태 추적 추가
 
 기존 단건 `CentralController.evaluate()`와 LLM/TTS 기능을 유지하면서,

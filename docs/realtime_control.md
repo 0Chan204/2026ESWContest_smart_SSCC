@@ -1,5 +1,8 @@
 # 실시간 중앙 판단 설계 및 적용 내역
 
+> 이 문서의 `action`은 기존 알림/위험 상태 출력이다. 화력·전등 자동 제어 명령은
+> [Confidence 기반 자동 제어](confidence_control.md)의 점수·threshold 경로에서 별도로 생성한다.
+
 ## 기존 코드와 변경 범위
 
 기존 `CentralController.evaluate(SensingState, DeviceState)`와 `RuleBasedDecisionEngine`은 단건 판단 API로 그대로 유지한다. 기존 `KITCHEN → LOW` 규칙도 바꾸지 않는다. 새 실시간 API에서는 요구사항에 따라 확인된 `kitchen → NORMAL`을 적용한다. 두 API의 상태는 독립적이므로 실시간 시스템은 `update_sensing`, `update_appliance`, `tick`을 사용한다.

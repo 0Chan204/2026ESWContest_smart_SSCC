@@ -1,4 +1,9 @@
 """Stateful event-time evaluator. Call tick even when no sensor event arrives."""
+from collections import deque
+
+from src.control.confidence.config import DEFAULT_USER_ID
+from src.control.confidence.decision_service import ConfidenceDecisionService
+from src.control.confidence.feature_extractor import FeatureExtractor
 from src.control.realtime_config import RealtimeConfig, STATE_OUTPUT
 from src.control.realtime_models import (
     ApplianceUpdate, RealtimeDecision, RealtimeState, SensingUpdate, finite,
@@ -6,8 +11,18 @@ from src.control.realtime_models import (
 
 
 class RealtimeDecisionEngine:
-    def __init__(self, config=None):
+    def __init__(
+        self,
+        config=None,
+        *,
+        confidence_service: ConfidenceDecisionService | None = None,
+        feature_extractor: FeatureExtractor | None = None,
+        user_id: str = DEFAULT_USER_ID,
+    ):
         self.config = config or RealtimeConfig()
+        self.confidence_service = confidence_service
+        self.feature_extractor = feature_extractor
+        self.user_id = user_id
         self.current_state = RealtimeState.NORMAL
         self.previous_state = RealtimeState.NORMAL
         self.last_user_location = "unknown"
@@ -27,6 +42,11 @@ class RealtimeDecisionEngine:
         self._now = None
         self._power_rate = None
         self._temperature_rate = None
+        history_size = 5 if feature_extractor is None else feature_extractor.config.SENSOR_HISTORY_SIZE
+        self._sensor_history = deque(maxlen=history_size)
+        self._homevis_reduced = False
+        self._user_override = False
+        self.last_confidence_decision = None
 
     def _validate_time(self, timestamp, last=None):
         finite("timestamp", timestamp)
@@ -42,6 +62,7 @@ class RealtimeDecisionEngine:
             self._candidate = None
             self.outside_start_time = None
         self._sensing = sample
+        self._sensor_history.append((sample.location, sample.confidence, sample.detected))
         self.last_sensor_update = sample.timestamp
         uncertain = not sample.detected or sample.confidence < c.MIN_CONFIDENCE or sample.location == "unknown"
         if uncertain:
@@ -89,6 +110,17 @@ class RealtimeDecisionEngine:
         else:
             self._operating_since = None
         self._appliance = sample
+        if sample.control_state == "HOMEVIS_REDUCED":
+            self._homevis_reduced = True
+            self._user_override = False
+        elif sample.control_state == "USER_OVERRIDE":
+            self._user_override = True
+        elif sample.control_state == "NONE":
+            self._homevis_reduced = False
+            self._user_override = False
+        if not sample.active:
+            self._homevis_reduced = False
+            self._user_override = False
         self.last_appliance_update = sample.timestamp
         return self.tick(sample.timestamp)
 
@@ -130,13 +162,83 @@ class RealtimeDecisionEngine:
         self.previous_state = self.current_state
         self.current_state = RealtimeState(state)
         score, action, _ = STATE_OUTPUT[state]
+        confidence_decision = self._evaluate_automation(
+            timestamp, sensor_uncertain=sensor_uncertain, appliance_stale=stale
+        )
         return RealtimeDecision(
             self.current_state, self.previous_state, reason, self.last_user_location,
             self.current_absence_duration, None if a is None else a.active,
             score, action, timestamp, sensor_uncertain, stale,
             None if a is None else a.power_watts, None if a is None else a.temperature_c,
             None if stale else self._power_rate, None if stale else self._temperature_rate,
+            None if confidence_decision is None else confidence_decision.to_dict(),
         )
+
+    def _evaluate_automation(self, timestamp, *, sensor_uncertain, appliance_stale):
+        service, extractor, sensing, appliance = (
+            self.confidence_service, self.feature_extractor, self._sensing, self._appliance
+        )
+        if service is None or extractor is None or sensing is None or appliance is None:
+            self.last_confidence_decision = None
+            return None
+        if self.last_user_location == "kitchen" and self._homevis_reduced:
+            scenario = "kitchen_return_restore"
+            consistency = extractor.sensor_consistency(self._sensor_history, "kitchen")
+            return_duration = 0.0 if self._location_since is None else timestamp - self._location_since
+            features = extractor.kitchen_return(
+                location_confidence=0.0 if sensor_uncertain else sensing.confidence,
+                return_duration=return_duration,
+                sensor_consistency=consistency,
+                stove_on=appliance.active,
+                homevis_reduced=self._homevis_reduced,
+                feedback_score=service.feedback_score(self.user_id, scenario),
+            )
+            guard = None
+            if not appliance.active:
+                guard = "stove_off"
+            elif self._user_override or appliance.control_state == "USER_OVERRIDE":
+                guard = "user_override"
+            decision = service.score(
+                scenario=scenario, features=features, timestamp=timestamp,
+                device="stove", action_name="restore_power", user_id=self.user_id,
+                guard_reason=guard,
+            )
+            if decision.action is not None:
+                self._homevis_reduced = False
+            self.last_confidence_decision = decision
+            return decision
+        if self.last_user_location in {"unknown", "kitchen"}:
+            self.last_confidence_decision = None
+            return None
+        scenario = "kitchen_leave_reduce_power"
+        consistency = extractor.sensor_consistency(self._sensor_history, self.last_user_location)
+        features = extractor.kitchen_leave(
+            location_confidence=0.0 if sensor_uncertain else sensing.confidence,
+            activity_confidence=(sensing.confidence if sensing.activity_confidence is None
+                                 else sensing.activity_confidence),
+            leave_duration=self.current_absence_duration,
+            current_stove_power=appliance.power_watts,
+            outside_home=self.last_user_location == "outside",
+            sensor_consistency=consistency,
+            previous_homevis_action=self._homevis_reduced,
+            feedback_score=service.feedback_score(self.user_id, scenario),
+        )
+        guard = None
+        if not appliance.active:
+            guard = "stove_off"
+        elif appliance_stale:
+            guard = "appliance_stale"
+        elif self._homevis_reduced:
+            guard = "already_reduced"
+        decision = service.score(
+            scenario=scenario, features=features, timestamp=timestamp,
+            device="stove", action_name="reduce_power", user_id=self.user_id,
+            guard_reason=guard,
+        )
+        if decision.action is not None:
+            self._homevis_reduced = True
+        self.last_confidence_decision = decision
+        return decision
 
     def _classify(self, uncertain, stale, high, rising, emergency):
         a, c = self._appliance, self.config

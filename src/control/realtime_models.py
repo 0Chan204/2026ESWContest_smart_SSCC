@@ -30,6 +30,7 @@ class SensingUpdate:
     detected: bool = True
     motion_state: str | None = None
     fall_detected: bool | None = None
+    activity_confidence: float | None = None
 
     def __post_init__(self):
         if self.location not in {"kitchen", "bathroom", "living_room", "bedroom", "entrance", "outside", "unknown"}:
@@ -38,6 +39,10 @@ class SensingUpdate:
         finite("confidence", self.confidence)
         if not 0 <= self.confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
+        if self.activity_confidence is not None:
+            finite("activity_confidence", self.activity_confidence)
+            if not 0 <= self.activity_confidence <= 1:
+                raise ValueError("activity_confidence must be between 0 and 1")
         if type(self.detected) is not bool:
             raise ValueError("detected must be boolean")
         if self.motion_state not in {None, "moving", "still", "unknown"}:
@@ -56,6 +61,7 @@ class ApplianceUpdate:
     smoke: bool = False
     fire: bool = False
     abnormal: bool = False
+    control_state: str | None = None
 
     def __post_init__(self):
         finite("timestamp", self.timestamp)
@@ -64,6 +70,8 @@ class ApplianceUpdate:
                 raise ValueError(f"{name} must be boolean")
         if self.operating is not None and type(self.operating) is not bool:
             raise ValueError("operating must be boolean or None")
+        if self.control_state not in {None, "NONE", "HOMEVIS_REDUCED", "USER_OVERRIDE"}:
+            raise ValueError("Unsupported control_state")
         for name in ("power_watts", "temperature_c"):
             value = getattr(self, name)
             if value is not None:
@@ -93,6 +101,7 @@ class RealtimeDecision:
     temperature_c: float | None
     power_rise_per_second: float | None
     temperature_rise_per_second: float | None
+    confidence_decision: dict | None = None
 
     def to_dict(self):
         data = asdict(self)
