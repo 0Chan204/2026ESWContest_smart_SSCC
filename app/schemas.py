@@ -537,7 +537,7 @@ class AiDecisionRequest(BaseModel):
     timestamp: str
     room: Optional[str] = None
     actions: list[AiAction] = Field(default_factory=list)
-    weatherBriefing: bool = Field(default=False, description="물 출수 시 날씨 안내 요청 (날씨 안내 기능은 추후 연결)")
+    weatherBriefing: bool = Field(default=False, description="true면 서버가 날씨 안내를 만들어 대시보드에 보내고 응답(weather)에 담음")
 
 
 class AiActionResult(BaseModel):
@@ -562,6 +562,7 @@ class AiDecisionRecord(BaseModel):
     eventId: Optional[str] = None
     fallIncidentId: Optional[str] = None
     feedback: Optional[SafetyEventFeedbackRecord] = None
+    weather: Optional["WeatherBriefing"] = Field(default=None, description="weatherBriefing=true일 때 만든 날씨 안내")
 
 
 class AiDecisionAccepted(AiDecisionRecord):
@@ -571,3 +572,41 @@ class AiDecisionAccepted(AiDecisionRecord):
 class AiDecisionListResponse(BaseModel):
     items: list[AiDecisionRecord]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# 10. 날씨 안내 (v0.3.2)
+#
+# 서버가 Open-Meteo에서 날씨를 주기적으로 받아 캐시해 두고, AI 판단(weatherBriefing=true)이나
+# 대시보드 요청(GET /weather)이 오면 캐시한 값으로 안내 문장을 만듭니다.
+# ---------------------------------------------------------------------------
+
+class WeatherSnapshot(BaseModel):
+    """Open-Meteo에서 받아 저장해 둔 날씨 1건"""
+
+    location: str
+    latitude: float
+    longitude: float
+    observedAt: str = Field(..., description="날씨 제공처의 관측 시각 (현지 시각)")
+    fetchedAt: str = Field(..., description="서버가 받아온 시각 (UTC)")
+    temperature: float
+    apparentTemperature: Optional[float] = None
+    humidity: Optional[float] = None
+    weatherCode: int
+    condition: str = Field(..., description="날씨 상태 한국어 (맑음, 흐림, 비 등)")
+    tempMax: Optional[float] = None
+    tempMin: Optional[float] = None
+    precipitationProbability: Optional[float] = Field(default=None, description="오늘 최대 강수 확률(%)")
+
+
+class WeatherBriefing(BaseModel):
+    available: bool = Field(..., description="저장된 날씨가 있으면 true")
+    text: str = Field(..., description="대시보드에 그대로 보여줄 안내 문장")
+    stale: bool = Field(default=False, description="WEATHER_STALE_SEC보다 오래된 날씨로 만든 안내면 true")
+    basedOn: Optional[str] = Field(default=None, description="안내에 쓴 날씨를 받아온 시각 (UTC)")
+    weather: Optional[WeatherSnapshot] = None
+
+
+AiDecisionRecord.model_rebuild()
+AiDecisionAccepted.model_rebuild()
+AiDecisionListResponse.model_rebuild()

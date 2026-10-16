@@ -14,13 +14,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app import db, fall_service, mqtt_client, state_store, ws_hub
+from app import db, fall_service, mqtt_client, state_store, weather_service, ws_hub
 from app.config import settings
-from app.routers import ai, dashboard, device, home_devices, stream
+from app.routers import ai, dashboard, device, home_devices, stream, weather
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-API_VERSION = "0.3.0"
+API_VERSION = "0.3.2"
 
 # 태그 순서/설명: Swagger UI에서 이 순서 그대로 큰 섹션 헤더로 표시됩니다.
 # 각 엔드포인트의 태그는 app/routers/*.py 의 데코레이터(tags=[...])에서 지정합니다.
@@ -55,7 +55,7 @@ TAGS_METADATA = [
     },
     {
         "name": "대시보드 화면",
-        "description": "대시보드 초기 로딩용 전체 상태와 조리 세션 조회. "
+        "description": "대시보드 초기 로딩용 전체 상태, 조리 세션, 날씨 안내 조회. "
         "실시간 갱신은 WebSocket /api/v1/stream 을 사용합니다 (Swagger에는 표시되지 않음).",
     },
     {
@@ -73,8 +73,13 @@ async def lifespan(app: FastAPI):
     state_store.load_from_db()               # 저장돼 있던 데이터를 메모리로 불러오기
     fall_service.resume_pending_incidents()  # 응답 대기 중이던 낙상 사건의 타이머 다시 걸기
     mqtt_client.start()
+    weather_task = None
+    if settings.WEATHER_ENABLED:             # 날씨를 주기적으로 미리 받아 캐시 (인터넷 불안정 대비)
+        weather_task = asyncio.create_task(weather_service.run_refresh_loop())
     yield
     # --- 서버가 종료될 때 ---
+    if weather_task is not None:
+        weather_task.cancel()
     mqtt_client.stop()
     db.disconnect()                          # 아직 저장 안 된 쓰기를 마저 저장하고 연결 종료
 
@@ -91,6 +96,7 @@ app.include_router(device.router, prefix=settings.API_PREFIX)
 app.include_router(dashboard.router, prefix=settings.API_PREFIX)
 app.include_router(home_devices.router, prefix=settings.API_PREFIX)
 app.include_router(ai.router, prefix=settings.API_PREFIX)
+app.include_router(weather.router, prefix=settings.API_PREFIX)
 app.include_router(stream.router, prefix=settings.API_PREFIX)
 
 

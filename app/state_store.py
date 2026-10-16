@@ -33,6 +33,7 @@ from app.schemas import (
     FallPolicy,
     SmsLog,
     AiDecisionRecord,
+    WeatherSnapshot,
 )
 
 logger = logging.getLogger("induction.store")
@@ -96,6 +97,9 @@ _device_last_seen: dict[str, datetime] = {}
 # --- v0.3: HomeVIS가 끄거나 낮추기 직전의 인덕션 화력 (deviceId -> level, restore_power용) ---
 _restore_levels: dict[str, int] = {}
 
+# --- v0.3.2: 마지막으로 받아 둔 날씨 (인터넷이 끊겨도 안내할 수 있도록 DB에도 저장) ---
+_weather: Optional[WeatherSnapshot] = None
+
 # --- v0.3: AI 판단 기록 ---
 _ai_decisions: dict[str, AiDecisionRecord] = {}
 _ai_decision_order: list[str] = []
@@ -109,6 +113,7 @@ _CONTACT_GUARDIAN = "guardian"
 _STATE_ACTIVE_SESSIONS = "active_sessions"
 _STATE_ABSENCE_STAGES = "absence_stages"
 _STATE_RESTORE_LEVELS = "restore_levels"
+_STATE_WEATHER = "weather"
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +122,9 @@ _STATE_RESTORE_LEVELS = "restore_levels"
 
 def reset_memory() -> None:
     """메모리의 모든 데이터를 초기 상태로 되돌립니다. (DB는 건드리지 않음. 시작 시, 테스트에서 사용)"""
-    global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq, _next_ai_seq
+    global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq, _next_ai_seq, _weather
     with _lock:
+        _weather = None
         for store in (
             _latest_telemetry,
             _last_seen_at,
@@ -235,6 +241,7 @@ def load_from_db() -> None:
             _next_sms_seq = max(_next_sms_seq, doc["seq"] + 1)
 
     def load_runtime_state() -> None:
+        global _weather
         for doc in db.find_all(db.RUNTIME_STATE):
             if doc["_id"] == _STATE_ACTIVE_SESSIONS:
                 _active_session_by_device.update(doc.get("values", {}))
@@ -242,6 +249,8 @@ def load_from_db() -> None:
                 _absence_stage_by_room.update(doc.get("values", {}))
             elif doc["_id"] == _STATE_RESTORE_LEVELS:
                 _restore_levels.update(doc.get("values", {}))
+            elif doc["_id"] == _STATE_WEATHER and doc.get("value"):
+                _weather = WeatherSnapshot.model_validate(doc["value"])
 
     def load_device_states() -> None:
         for doc in db.find_all(db.DEVICE_STATES):
@@ -628,6 +637,22 @@ def set_restore_level(device_id: str, level: Optional[int]) -> None:
             _restore_levels[device_id] = level
         snapshot = dict(_restore_levels)
     db.upsert(db.RUNTIME_STATE, _STATE_RESTORE_LEVELS, {"values": snapshot})
+
+
+# ---------------------------------------------------------------------------
+# v0.3.2: 날씨 캐시
+# ---------------------------------------------------------------------------
+
+def get_weather() -> Optional[WeatherSnapshot]:
+    with _lock:
+        return _weather
+
+
+def set_weather(snapshot: WeatherSnapshot) -> None:
+    global _weather
+    with _lock:
+        _weather = snapshot
+    db.upsert(db.RUNTIME_STATE, _STATE_WEATHER, {"value": snapshot.model_dump()})
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,20 @@ class Settings:
     # 인덕션 상태 로그(3초마다 쌓임) 보관 기간. 지나면 MongoDB가 자동으로 지웁니다.
     TELEMETRY_LOG_TTL_DAYS: int = int(os.getenv("TELEMETRY_LOG_TTL_DAYS", "7"))
 
+    # --- 날씨 안내 (v0.3.2, Open-Meteo: API 키 불필요) ---
+    # 대회장 인터넷이 불안정하므로 요청이 올 때 받지 않고, WEATHER_REFRESH_SEC마다 미리 받아 캐시합니다.
+    # WEATHER_ENABLED=false면 날씨를 받으러 나가지 않습니다 (마지막으로 저장된 값만 사용).
+    WEATHER_ENABLED: bool = os.getenv("WEATHER_ENABLED", "true").lower() in ("1", "true", "yes")
+    WEATHER_LOCATION_NAME: str = os.getenv("WEATHER_LOCATION_NAME", "서울")
+    WEATHER_LAT: float = float(os.getenv("WEATHER_LAT", "37.5665"))
+    WEATHER_LON: float = float(os.getenv("WEATHER_LON", "126.9780"))
+    WEATHER_REFRESH_SEC: int = int(os.getenv("WEATHER_REFRESH_SEC", "1800"))
+    # 가져오기에 실패했을 때 다시 시도하는 간격(초)
+    WEATHER_RETRY_SEC: int = int(os.getenv("WEATHER_RETRY_SEC", "300"))
+    # 이 시간(초)보다 오래된 날씨로 안내할 때는 "몇 시 기준"을 문장에 붙입니다.
+    WEATHER_STALE_SEC: int = int(os.getenv("WEATHER_STALE_SEC", "3600"))
+    WEATHER_TIMEOUT_SEC: float = float(os.getenv("WEATHER_TIMEOUT_SEC", "5"))
+
     # --- SMS에 담을 확인 링크의 기준 URL (프론트가 만드는 모바일 확인 페이지) ---
     FRONTEND_BASE_URL: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
 
