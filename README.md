@@ -43,6 +43,7 @@ induction-backend/
 │   ├── device_service.py           # telemetry/ack 처리, 조리 세션 관리
 │   ├── commands_service.py         # 화구 제어 명령 발행/ack 반영
 │   ├── safety_service.py           # 안전 이벤트, 부재중 자동 제어 정책
+│   ├── weather_service.py          # 날씨 받아오기(Open-Meteo, 30분 캐시) + 안내 문장 (v0.3.2)
 │   ├── ws_hub.py                   # WebSocket(/stream) 연결 관리 + 브로드캐스트
 │   └── routers/
 │       ├── device.py                # 인덕션(디바이스) 조회용 REST (tag=device)
@@ -250,7 +251,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 - 모바일 확인 페이지(해결/신고 버튼 UI)는 프론트 팀 작업 — 백엔드는 API만 제공
 - "신고" 처리는 지금 안전 이벤트/로그만 남깁니다. 실제 119·응급 연동은 아직 없음 (범위 밖)
 - 보호자는 현재 1명만 지원 (팀 결정)
-- 날씨 API 연동은 일단 스킵 (프론트에서 바로 가능하면 프론트에서 처리, 우선순위 낮음)
+- 날씨 안내는 v0.3.2에서 백엔드에 추가 (9-2 참고)
 
 ---
 
@@ -282,6 +283,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 모든 제어 판단은 AI 중앙 판정 엔진이 하고, 백엔드는 판단 결과(`POST /api/v1/ai/decisions`)를 받아
 인덕션·전등·정수기를 제어하고 기록합니다. 판정 엔진용 API와 전등·정수기 MQTT 메시지 형식은
 `docs/AI-INTEGRATION.md`에 정리되어 있습니다. (v0.3부터 `POST /presence`는 저장·전달만 하고 직접 제어하지 않습니다.)
+
+## 9-2. 날씨 안내 (v0.3.2)
+
+- 판단 결과에 `weatherBriefing: true`가 오면(물 출수 시나리오) 날씨 안내 문장을 만들어 대시보드(WebSocket
+  `weather.briefing`)로 보내고 판단 기록에도 남깁니다. 대시보드는 `GET /api/v1/weather`로도 조회할 수 있습니다.
+- 날씨는 Open-Meteo(API 키 불필요)에서 30분마다 미리 받아 메모리와 DB에 저장합니다. 대회장 인터넷이 끊겨도
+  마지막으로 받은 날씨로 안내하고, 오래된 값이면 "몇 시 기준"을 붙입니다.
+- 위치는 `.env`의 `WEATHER_LOCATION_NAME` / `WEATHER_LAT` / `WEATHER_LON` (기본 서울). 로직은 `app/weather_service.py`.
 
 ---
 

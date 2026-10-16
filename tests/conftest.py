@@ -38,6 +38,8 @@ def reset_state(monkeypatch):
     """테스트끼리 영향을 주지 않도록 매번 메모리를 비우고, 실제 DB에는 절대 접속하지 않게 합니다.
     (개발자 PC의 .env에 MONGODB_URI가 있어도 테스트가 실제 DB를 건드리지 않도록)"""
     monkeypatch.setattr(settings, "MONGODB_URI", "", raising=False)
+    # 테스트 중에는 실제 날씨 서버에 접속하지 않습니다 (필요한 테스트에서만 가짜 응답으로 켬)
+    monkeypatch.setattr(settings, "WEATHER_ENABLED", False, raising=False)
     db.use_database(None)
     state_store.reset_memory()
     yield

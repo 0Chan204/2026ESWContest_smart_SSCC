@@ -47,7 +47,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 | `scenario` | 시나리오 이름 (아래 표) |
 | `room` | 판단 대상 구역. `deviceId`를 생략하면 이 구역의 기기를 우선 사용 |
 | `actions` | 실행할 제어 목록. 순서대로 실행하며, 하나가 실패해도 나머지는 실행 |
-| `weatherBriefing` | 물 출수 시 날씨 안내 요청 (날씨 안내 기능은 추후 연결, 지금은 기록만) |
+| `weatherBriefing` | `true`면 서버가 날씨 안내 문장을 만들어 대시보드에 보내고 응답의 `weather`에 담습니다 (아래 "날씨 안내") |
 
 `actions[]` 항목
 
@@ -65,7 +65,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 | --- | --- |
 | `bedtime_light_off` | `actions` 실행 (예: 전등 off) |
 | `stove_absence` | `actions` 실행. 인덕션을 끄거나 낮추면 직전 화력을 저장하고, `restore_power`로 그 화력으로 다시 켭니다 |
-| `water_dispense` | `actions` 실행 (예: 정수기 dispense 250ml) |
+| `water_dispense` | `actions` 실행 (예: 정수기 dispense 250ml). `weatherBriefing: true`면 날씨 안내도 함께 |
 | `fall_detected` | 낙상 단계별 대응 실행 (아래 표). 인덕션 `turn_off`와 전등 `blink`는 서버가 직접 하므로 `actions`는 비워도 됩니다 |
 | 그 외 | `actions` 실행 |
 
@@ -85,6 +85,25 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 - 판단 응답의 `actions`에 인덕션 `turn_off`, 전등 `blink` 결과가 들어 있고, 단계 진행 상황은
   `GET /api/v1/fall-incidents/{fallIncidentId}`의 `stage`(user/guardian), `status`로 확인합니다.
 
+날씨 안내 (`weatherBriefing: true`)
+
+- 서버가 30분마다 Open-Meteo에서 날씨를 미리 받아 저장해 두고, 판단이 오면 그 값으로 바로 안내합니다.
+  그래서 대회장 인터넷이 끊겨 있어도 응답이 늦어지지 않고, 마지막으로 받은 날씨로 안내합니다.
+- 1시간보다 오래된 날씨면 문장 앞에 "(오후 3시 05분 기준)"처럼 기준 시각을 붙이고 `stale: true`입니다.
+- 한 번도 받지 못했으면 `available: false`, 문장은 "날씨 정보를 아직 가져오지 못했어요."입니다. 출수는 그대로 실행됩니다.
+- 대시보드에는 WebSocket 이벤트 `weather.briefing`으로 보내고, `GET /api/v1/weather`로도 조회할 수 있습니다.
+
+```json
+"weather": {
+  "available": true,
+  "text": "현재 서울은 맑음, 기온 18도예요. 오늘 최고 22도, 최저 12도이고 비 올 확률은 10%예요.",
+  "stale": false,
+  "basedOn": "2026-10-16T12:45:00+00:00",
+  "weather": { "location": "서울", "temperature": 18.3, "humidity": 60, "condition": "맑음",
+               "tempMax": 22.4, "tempMin": 11.6, "precipitationProbability": 10, "...": "..." }
+}
+```
+
 `restore_power`가 거부되는 경우: 저장된 화력이 없을 때(HomeVIS가 끄거나 낮춘 적이 없거나, 그 사이 사용자가 직접 조작함), 화구가 과열 상태일 때.
 
 응답 (202, 중복이면 200)
@@ -98,6 +117,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
   "eventId": "evt-0a1b2c3d4e5f",
   "fallIncidentId": null,
   "feedback": null,
+  "weather": null,
   "duplicate": false
 }
 ```

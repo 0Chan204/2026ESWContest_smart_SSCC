@@ -14,6 +14,7 @@ AI 중앙 판정 엔진과 연동하는 서비스입니다. (v0.3)
 - fall_detected  : 낙상 처리 흐름(인덕션 비상 차단 + 전등 깜빡임 -> 사용자 -> 보호자 -> 자동 신고)을 실행
 - 그 외          : actions에 적힌 제어를 순서대로 실행 (bedtime_light_off, stove_absence, water_dispense 등)
 - restore_power  : HomeVIS가 인덕션을 끄거나 낮추기 직전 화력으로 다시 켭니다.
+- weatherBriefing: true면 미리 받아 둔 날씨로 안내를 만들어 대시보드(weather.briefing)와 응답(weather)에 담습니다.
 """
 
 import logging
@@ -22,7 +23,16 @@ from typing import Optional
 
 from pydantic import ValidationError
 
-from app import commands_service, device_registry, fall_service, home_device_service, safety_service, state_store, ws_hub
+from app import (
+    commands_service,
+    device_registry,
+    fall_service,
+    home_device_service,
+    safety_service,
+    state_store,
+    weather_service,
+    ws_hub,
+)
 from app.config import settings
 from app.schemas import (
     AiAction,
@@ -183,7 +193,12 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
         record = record.model_copy(update={"eventId": incident.eventId})
 
     if request.weatherBriefing:
-        logger.info("날씨 안내 요청 수신 (decisionId=%s) - 날씨 안내 기능은 추후 연결 예정", request.decisionId)
+        # 인터넷이 끊겨 있어도 응답이 늦어지지 않도록, 미리 받아 둔 날씨로만 안내합니다.
+        briefing = weather_service.build_briefing()
+        record = record.model_copy(update={"weather": briefing})
+        ws_hub.broadcast_threadsafe(
+            "weather.briefing", {"decisionId": request.decisionId, "room": request.room, **briefing.model_dump()}
+        )
 
     state_store.save_ai_decision(record)
     ws_hub.broadcast_threadsafe("ai.decision", record.model_dump())
