@@ -34,7 +34,7 @@ def run_demo(data_dir: Path, *, with_mock_behavior=False):
     backend = MockBackend(clock, allow_null_confidence=with_mock_behavior)
     client = BackendClient(config, backend)
     controller = CentralController(confidence_data_dir=config.outbox_path.parent / "controller",
-                                   scenario_config=ScenarioConfig(MORNING_WATER_AMOUNT_ML=180))
+                                   scenario_config=ScenarioConfig())
     runtime = IntegrationRuntime(config, client, controller=controller, clock=clock)
     assert create_llm("none") is None
     try:

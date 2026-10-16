@@ -68,6 +68,32 @@ class ConfidenceControlTest(unittest.TestCase):
         self.assertLess(unstable, long_high_power)
         self.assertGreater(outside, long_high_power)
 
+    def test_kitchen_duration_feature_saturates_at_sixty_seconds(self):
+        self.assertEqual(ConfidenceConfig().KITCHEN_LEAVE_FULL_SECONDS, 60.0)
+        self.assertEqual(ConfidenceConfig().SCENARIO_THRESHOLDS["kitchen_leave_reduce_power"], 0.82)
+        for seconds, expected in ((0, 0), (20, 1 / 3), (40, 2 / 3), (60, 1), (90, 1)):
+            with self.subTest(seconds=seconds):
+                self.assertAlmostEqual(self.kitchen_features(leave_duration=seconds)["duration"], expected)
+
+    def test_sixty_seconds_without_power_or_behavior_does_not_force_reduce(self):
+        c = self.controller
+        for timestamp in range(0, 71, 5):
+            c.update_appliance(ApplianceUpdate(True, timestamp))
+            result = c.update_sensing(SensingUpdate(
+                "kitchen" if timestamp < 10 else "living_room", timestamp,
+                observation_valid=True, activity_observed=False,
+            ))
+        self.assertEqual(result.kitchen_absence_seconds, 60)
+        self.assertEqual(result.state, "DANGER")
+        score = result.confidence_decision
+        self.assertEqual(score["features"]["duration"], 1)
+        self.assertEqual(score["features"]["stove_power"], 0)
+        self.assertEqual(score["features"]["activity"], 0)
+        self.assertEqual(score["threshold"], 0.82)
+        self.assertLess(score["confidence"], score["threshold"])
+        self.assertIsNone(score["action"])
+        self.assertEqual(c.drain_automation_actions(), [])
+
     def test_reduce_action_has_explainable_history(self):
         action = self.create_reduce_action()
         self.assertEqual(action.device, "stove")

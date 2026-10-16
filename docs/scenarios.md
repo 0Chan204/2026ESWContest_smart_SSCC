@@ -31,6 +31,13 @@ Draining the command queue removes delivered commands from memory.
 
 ## Morning water
 
+The default `ScenarioConfig.MORNING_WATER_AMOUNT_ML` is 120mL. The representative
+backend demo also uses this default without an amount override. Custom amounts remain
+supported: the configured value becomes `DeviceCommand.amount_ml`, then
+`actions[].amountMl` in the backend request, with `weatherBriefing=true`.
+Changing the default affects new commands only; stored pending/sending requests keep
+their original amount, body and decision ID. Past `lastDispensedMl` is not rewritten.
+
 ScenarioConfig owns wake-pattern sampling, confirmation times, daily limit, amount,
 and UTC offset (default +9). Use Unix timestamps; date/window calculations do not
 depend on the machine timezone. A bedroom wake followed by confirmed kitchen entry
@@ -51,10 +58,12 @@ slot and sets morning_water_dispensed, preventing repeat requests even if the
 queue is drained. WATER_DISPENSE_REQUEST means a request was generated; hardware
 dispensing/completion is not claimed. Its serialized payload always includes
 `"event": "water_dispensed"` and `"request_weather_info": true`; this is only a
-backend signal and this module does not fetch or generate weather data. Daily counters are in memory and reset on
-the next input/tick with a different local date. Production integration needs a
-durable daily ledger across process restarts, device readiness, command delivery
-and completion acknowledgements; no physical API is called here.
+backend signal and this module does not fetch or generate weather data. Direct-call daily counters
+are in memory and reset on the next input/tick with a different local date.
+`IntegrationRuntime` adds a durable outbox reservation before command generation and
+restores it after restart; see [backend integration](backend_integration.md).
+Device readiness and completion acknowledgements still need an external contract;
+no physical API is called by the scenario itself.
 
 ## Bedtime light off
 

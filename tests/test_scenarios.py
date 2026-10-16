@@ -34,11 +34,15 @@ class ScenarioTest(unittest.TestCase):
         return self.sample(10, motion_state="still")
 
     def test_morning_dispense(self):
+        self.assertEqual(ScenarioConfig().MORNING_WATER_AMOUNT_ML, 120)
         self.dispense()
         commands = self.c.drain_device_commands()
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0].command_type, "DISPENSE_WATER")
-        self.assertEqual(commands[0].amount_ml, 250)
+        self.assertEqual(commands[0].amount_ml, 120)
+        self.assertTrue(commands[0].request_weather_info)
+        self.assertEqual(LLMMessageGenerator().generate_device_command(commands[0]).message,
+                         "물 120밀리리터를 준비하도록 요청했습니다.")
         self.assertEqual(commands[0].timestamp, self.base + 13)
         self.assertEqual(self.c.drain_device_commands(), [])
 
@@ -229,13 +233,13 @@ class ScenarioTest(unittest.TestCase):
                 self.assertIn("완료되었다고 단정하지 마세요", system_prompt)
                 self.assertIn('"scenario": "morning_water"', user_prompt)
                 self.assertIn('"command_type": "DISPENSE_WATER"', user_prompt)
-                self.assertIn('"amount_ml": 250', user_prompt)
-                return "아침에 드실 물 250밀리리터를 준비하고 있습니다."
+                self.assertIn('"amount_ml": 120', user_prompt)
+                return "아침에 드실 물 120밀리리터를 준비하고 있습니다."
 
         self.dispense()
         command = self.c.drain_device_commands()[0]
         result = LLMMessageGenerator(RecordingLLM()).generate_device_command(command)
-        self.assertEqual(result.message, "아침에 드실 물 250밀리리터를 준비하고 있습니다.")
+        self.assertEqual(result.message, "아침에 드실 물 120밀리리터를 준비하고 있습니다.")
         self.assertEqual(result.llm_name, "qwen3-8b")
         self.assertFalse(result.fallback_used)
 

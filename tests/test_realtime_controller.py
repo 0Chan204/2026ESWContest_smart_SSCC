@@ -34,14 +34,16 @@ class RealtimeControllerTest(unittest.TestCase):
         self.assertEqual(self.sample(5).state, "NORMAL")
 
     def test_absence_boundaries(self):
-        for end, expected in [(15, "TEMPORARY_ABSENCE"), (39, "TEMPORARY_ABSENCE"),
-                              (40, "CAUTION"), (129, "CAUTION"), (130, "WARNING"),
-                              (309, "WARNING"), (310, "DANGER")]:
+        for end, expected in [(15, "TEMPORARY_ABSENCE"), (29, "TEMPORARY_ABSENCE"),
+                              (30, "CAUTION"), (49, "CAUTION"), (50, "WARNING"),
+                              (69, "WARNING"), (70, "DANGER")]:
             with self.subTest(end=end):
                 self.c = CentralController()
                 result = self.away(end)
                 self.assertEqual(result.state, expected)
                 self.assertEqual(result.kitchen_absence_seconds, end - 10)
+                self.assertFalse(result.sensor_uncertain)
+                self.assertFalse(result.appliance_stale)
 
     def test_outside_requires_continuous_confirmation(self):
         self.start()
@@ -65,16 +67,16 @@ class RealtimeControllerTest(unittest.TestCase):
         self.assertEqual(self.sample(30, "entrance").state, "WARNING")
 
     def test_return_recovered_then_normal(self):
-        self.away(130)
-        self.assertEqual(self.c.update_sensing(SensingUpdate("kitchen", 131)).state, "WARNING")
-        self.assertEqual(self.c.update_sensing(SensingUpdate("kitchen", 136)).state, "RECOVERED")
-        self.assertEqual(self.c.tick(137).state, "NORMAL")
+        self.away(50)
+        self.assertEqual(self.c.update_sensing(SensingUpdate("kitchen", 51)).state, "WARNING")
+        self.assertEqual(self.c.update_sensing(SensingUpdate("kitchen", 56)).state, "RECOVERED")
+        self.assertEqual(self.c.tick(57).state, "NORMAL")
         self.assertEqual(self.c.realtime_engine.current_absence_duration, 0)
 
     def test_off_recovers(self):
-        self.away(130)
-        self.assertEqual(self.c.update_appliance(ApplianceUpdate(False, 131)).state, "RECOVERED")
-        self.assertEqual(self.c.tick(132).state, "NORMAL")
+        self.away(50)
+        self.assertEqual(self.c.update_appliance(ApplianceUpdate(False, 51)).state, "RECOVERED")
+        self.assertEqual(self.c.tick(52).state, "NORMAL")
 
     def test_unknown_grace_and_timeout(self):
         self.start()
@@ -130,8 +132,8 @@ class RealtimeControllerTest(unittest.TestCase):
         self.assertEqual(self.sample(5, temperature_c=100).state, "DANGER")
 
     def test_high_and_rising_escalates(self):
-        self.away(125, power_watts=2000, temperature_c=100)
-        result = self.sample(130, "living_room", power_watts=2000, temperature_c=110)
+        self.away(45, power_watts=2000, temperature_c=100)
+        result = self.sample(50, "living_room", power_watts=2000, temperature_c=110)
         self.assertEqual(result.state, "DANGER")
 
     def test_danger_retained_on_missing_data(self):
@@ -158,7 +160,7 @@ class RealtimeControllerTest(unittest.TestCase):
         self.assertEqual(c.update_sensing(SensingUpdate("kitchen", 1)).state, "NORMAL")
 
     def test_existing_alert_pipeline_and_serialization(self):
-        decision = self.away(130)
+        decision = self.away(50)
         risk = decision.to_risk_decision()
         self.assertEqual(RiskDecision.from_dict(risk.to_dict()), risk)
         self.assertEqual(risk.decision_context["state"], "WARNING")

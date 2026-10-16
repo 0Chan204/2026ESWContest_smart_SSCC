@@ -20,16 +20,16 @@ AI가 `GET /api/v1/ai/device-states`를 조회하고, 기존 중앙 판단 출�
 | `mock_backend.py` | 중복 접수·응답 유실 등을 재현하는 메모리 백엔드 |
 | `examples/backend_integration_demo.py` | 위치만 입력하는 기본 데모 및 별도 가상 행동 데모 |
 
-저장소 루트(현재 작업 폴더 안쪽의 `HomeVIS_alert_module`)에서 실행한다.
+`README.md`, `src/`, `tests/`가 있는 저장소 루트에서 실행한다.
 추가 런타임 의존성은 없다. 통합 테스트에는 pytest가 필요하다.
 
-Windows PowerShell, 이 작업에서 확인한 Python:
+Windows PowerShell:
 
 ```powershell
-& 'C:\Users\chaeeun\anaconda3\python.exe' -m pytest -q
-& 'C:\Users\chaeeun\anaconda3\python.exe' -m examples.backend_integration_demo
-& 'C:\Users\chaeeun\anaconda3\python.exe' -m examples.backend_integration_demo --with-mock-behavior
-& 'C:\Users\chaeeun\anaconda3\python.exe' -m src.integration --duration 3
+python -m pytest -q
+python -m examples.backend_integration_demo
+python -m examples.backend_integration_demo --with-mock-behavior
+python -m src.integration --duration 3
 ```
 
 Linux 또는 pytest가 설치된 일반 Python 환경:
@@ -48,11 +48,20 @@ Linux 명령은 실행 안내이며 이 작업 환경에서 직접 실행하지 
 기본 데모는 **위치만** 공급한다. 행동이 없으므로 출수·취침·낙상 기능을 실행하지 않는다.
 `--with-mock-behavior`는 별도 `BehaviorObservation` 가상 측정을 명시적으로 공급한다.
 이 데모에서만 `room=bedroom`, `idle=출수 준비`, 규칙 confidence의 `null` 표현을
-가정한 Mock 계약을 사용한다. 5회 상태 조회 후 기존 기상→주방 판단으로 180mL 요청을
+가정한 Mock 계약을 사용한다. 5회 상태 조회 후 기존 기상→주방 판단으로 120mL 요청을
 1회 접수한다. `202/accepted`, `actions[].status=sent`는 실제 출수 완료가 아니다.
 낙상 입력(motion/fall)은 이 데모에도 없으며, 누락으로 보고한다.
 기본 데모 데이터는 임시 디렉터리에 보관하고 종료 시 정리한다.
 `--data-dir output/demo`로 지정하면 재시작 후 outbox와 일일 출수 예약을 확인할 수 있다.
+
+출수량은 `ScenarioConfig.MORNING_WATER_AMOUNT_ML=120` → `DeviceCommand.amount_ml` →
+POST의 `actions[].amountMl`로 전달한다. 대표 데모도 같은 기본값을 사용하고,
+`weatherBriefing=true`를 유지한다. 별도 출수량 설정도 가능하며 기존 pending/sending 요청의
+수량·본문·`decisionId`와 과거 `lastDispensedMl`은 새 기본값으로 덮어쓰지 않는다.
+
+주방 이탈 위험 단계는 엔진이 계산한 이탈 시간 기준 20/40/60초다. 이탈 시간 feature의
+최대 기준도 60초지만, 실제 화력 감소는 기존 confidence threshold 0.82 및 실행 조건을 따른다.
+자세한 기준은 [실시간 판단](realtime_control.md)과 [Confidence 제어](confidence_control.md)에 있다.
 
 실제 연결은 `--mode live --base-url <확인한 URL>`로 명시적으로 선택한다.
 CLI는 장비 polling/tick 호스트이며 센싱 통신은 붙이지 않았다.
@@ -367,7 +376,10 @@ MongoDB/MQTT/LG SDK 코드를 추가하지 않았다. 다음 계약이 필요하
 설정 변경만으로 Mock 명령을 live에서 읽지 않는다. `.env.example`은 예시이고
 실제 인증 정보는 `IntegrationConfig.headers`에 외부에서 주입한다.
 
-### 3726303 기준 런타임 회귀 수정 검증
+### 과거 검증 기록: 3726303 기준 런타임 회귀 수정
+
+아래 두 절은 당시 실행 기록이다. 테스트 개수·소요 시간·180mL 데모 결과는 당시 설정에 대한
+기록이며 현재 기본값이나 최신 실행 결과를 뜻하지 않는다. 현재 대표 데모의 기본 출수량은 120mL다.
 
 수정 전 전체 기준은 `168 passed`였다. 먼저 실제 `IntegrationRuntime`을 사용하는 핵심 회귀 테스트
 3개를 추가했으며 모두 예상대로 실패했다. 취침은 `user_returned_to_light_room`으로 차단됐고,
@@ -406,7 +418,7 @@ level↔W 대응, 자동 복구 제어 이력, 낙상 시작/확인/종료 API, 
 여전히 합의/구현이 필요하다. yes/no 피드백 연동은 이번 범위가 아니며 기존 FeedbackManager,
 WeightManager와 자연어 피드백 경로는 그대로다. Mock의 접수/sent는 실제 가전 실행 완료가 아니다.
 
-### 92f7030 이후: 공백 뒤 위치·행동 시각차 회귀 검증
+### 과거 검증 기록: 92f7030 이후 공백 뒤 위치·행동 시각차 회귀
 
 README 커밋 5ab1f42가 포함된 깨끗한 로컬 main에서 작업을 시작했다.
 변경 전 전체 pytest를 다시 실행하여 `221 passed`(78.47초)를 확인했다.

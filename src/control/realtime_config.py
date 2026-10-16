@@ -6,9 +6,9 @@ from math import isfinite
 @dataclass(frozen=True)
 class RealtimeConfig:
     SENSING_CONFIRM_TIME: float = 5
-    KITCHEN_SHORT_ABSENCE: float = 30
-    KITCHEN_WARNING_TIME: float = 120
-    KITCHEN_DANGER_TIME: float = 300
+    KITCHEN_SHORT_ABSENCE: float = 20
+    KITCHEN_WARNING_TIME: float = 40
+    KITCHEN_DANGER_TIME: float = 60
     ENTRANCE_CONFIRM_TIME: float = 10
     OUTSIDE_CONFIRM_TIME: float = 10
     RETURN_CONFIRM_TIME: float = 5

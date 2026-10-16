@@ -497,7 +497,94 @@ def test_mock_demos_distinguish_location_only_from_synthetic_behavior(tmp_path):
     water = next(d for d in paired["decisions"] if d["payload"] and d["payload"]["scenario"] == "water_dispense")
     assert water["status"] == "accepted"
     assert water["payload"]["confidence"] is None
-    assert water["payload"]["actions"][0]["amountMl"] == 180
+    assert water["payload"]["actions"][0]["amountMl"] == 120
+    assert water["payload"]["weatherBriefing"] is True
+    assert water["diagnostic"] == "execution_ack_not_provided"
+
+
+@pytest.mark.parametrize("absence,expected", [
+    (19.999, "TEMPORARY_ABSENCE"), (20, "CAUTION"),
+    (39.999, "CAUTION"), (40, "WARNING"),
+    (59.999, "WARNING"), (60, "DANGER"),
+])
+def test_kitchen_thresholds_use_event_time_with_default_reordering(tmp_path, absence, expected):
+    clock = FakeClock(BASE)
+    config = IntegrationConfig(data_dir=tmp_path)
+    runtime = IntegrationRuntime(config, BackendClient(config, MockBackend(clock)), clock=clock)
+    try:
+        # Confirm kitchen first, then leave at T+10. Keep both streams fresh;
+        # arrival/processing trails measurement by the default two-second delay.
+        end = 10 + absence
+        for offset in [*range(0, int(end), 5), end]:
+            measured_at = BASE + offset
+            clock.now = measured_at + config.allowed_lateness
+            runtime.ingest_device_states(sample_devices(measured_at), fetched_at=clock.now)
+            runtime.ingest_location(loc(measured_at, "kitchen" if offset < 10 else "toilet"))
+            result = runtime.advance()
+        engine = runtime.controller.realtime_engine
+        assert config.allowed_lateness == 2
+        assert engine.config.UNKNOWN_TIMEOUT == engine.config.APPLIANCE_TIMEOUT == 20
+        assert engine.kitchen_exit_time == BASE + 10
+        assert result.timestamp == BASE + end
+        assert result.kitchen_absence_seconds == pytest.approx(absence, abs=1e-6)
+        assert result.state == expected
+        assert result.observation_valid and not result.sensor_uncertain and not result.appliance_stale
+    finally:
+        runtime.close()
+
+
+@pytest.mark.parametrize("legacy_amount", [180, 250])
+@pytest.mark.parametrize("saved_status", ["pending", "sending"])
+def test_new_default_preserves_old_water_request_on_restart(tmp_path, legacy_amount, saved_status):
+    config = IntegrationConfig(data_dir=tmp_path, allowed_lateness=0, room_is_bedroom=True,
+                               water_ready_states=("idle",), rule_confidence_policy="null")
+    clock = FakeClock(BASE)
+    backend = MockBackend(clock, allow_null_confidence=True)
+    client = BackendClient(config, backend)
+    controller = CentralController(
+        confidence_data_dir=config.outbox_path.parent / "controller",
+        scenario_config=ScenarioConfig(MORNING_WATER_AMOUNT_ML=legacy_amount),
+    )
+    runtime = IntegrationRuntime(config, client, controller=controller, clock=clock)
+    try:
+        for offset, room, activity in ((0, "room", "lying"), (1, "room", "standing"),
+                                       (6, "room", "standing"), (7, "kitchen", "walking"),
+                                       (12, "kitchen", "walking")):
+            at = BASE + offset
+            behavior = BehaviorObservation(at, at + 10, "bedroom" if room == "room" else room,
+                                           confidence=.95, activity=activity)
+            observe(runtime, backend, clock, offset, room, behavior)
+        original = runtime.outbox.rows()[-1]
+        assert original["source"]["amount_ml"] == legacy_amount
+        assert original["payload"]["actions"][0]["amountMl"] == legacy_amount
+        assert original["payload"]["weatherBriefing"] is True
+        backend.fail_after_accept = True
+        runtime.dispatch_mock_once()
+        assert runtime.outbox.rows()[-1]["status"] == "pending"
+        # Also exercise recovery of a process interrupted during its first send.
+        runtime.outbox.update(original["source_id"], status=saved_status)
+    finally:
+        runtime.close()
+
+    runtime = IntegrationRuntime(config, client, clock=clock)
+    try:
+        assert runtime.controller.morning_water.config.MORNING_WATER_AMOUNT_ML == 120
+        assert runtime.outbox.rows()[-1]["status"] == "pending"
+        observe(runtime, backend, clock, 14)
+        observe(runtime, backend, clock, 19)
+        runtime.dispatch_mock_once()
+        saved = runtime.outbox.rows()[-1]
+        posts = [body for method, _, body in backend.requests if method == "POST"]
+        assert len(posts) == 2 and posts[0] == posts[1]
+        assert saved["payload"] == original["payload"]
+        assert saved["source_id"] == original["source_id"]
+        assert saved["status"] == "accepted" and saved["response"]["duplicate"]
+        assert saved["attempts"] == 2 and len(backend.accepted) == 1
+        assert runtime.controller.morning_water.dispense_count == 1
+        assert runtime.controller.morning_water.morning_water_dispensed
+        assert runtime.devices["water_purifier"].raw["current_state"]["lastDispensedMl"] == 250
+    finally:
+        runtime.close()
 
 
 def test_repeated_invalid_messages_are_not_message_silence(setup_runtime):

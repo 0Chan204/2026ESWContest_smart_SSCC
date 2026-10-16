@@ -84,11 +84,15 @@ CHECK_SENSOR도 기존 WARNING 음성 정책을 사용한다. 실제 기기 제�
 | KITCHEN_WARNING_TIME 이상, KITCHEN_DANGER_TIME 미만 | WARNING |
 | KITCHEN_DANGER_TIME 이상 | DANGER |
 
-기본값은 각각 30, 120, 300초이다. 새 위치는 SENSING_CONFIRM_TIME(5초) 이상 관측되어야 인정한다. 확인 후 이탈 시작은 해당 후보를 처음 관측한 시각으로 기록하여 확인 대기 시간을 빠뜨리지 않는다. 다른 방끼리 이동해도 주방 이탈 타이머는 초기화하지 않는다. 기기 OFF 중에도 실제 위치 이탈 시간은 유지하지만 위험 상태는 해제한다.
+기본값은 각각 20, 40, 60초이다. 프로그램 시작 시각이 아니라 엔진이 추적하는 주방 이탈 경과시간을 기준으로 한다. 새 위치는 SENSING_CONFIRM_TIME(5초) 이상 관측되어야 인정한다. 확인 후 이탈 시작은 해당 후보를 처음 관측한 시각으로 기록하여 확인 대기 시간을 빠뜨리지 않는다. 다른 방끼리 이동해도 주방 이탈 타이머는 초기화하지 않는다. 기기 OFF 중에도 실제 위치 이탈 시간은 유지하지만 위험 상태는 해제한다.
+
+이 시간은 위험 상태 기준이며 화력 감소의 강제 실행 시간이 아니다. 이탈 시간 feature는 별도의
+`KITCHEN_LEAVE_FULL_SECONDS=60.0`에서 최대가 되고, 실제 `reduce_power`는 기존 confidence
+threshold 0.82와 센싱·기기 유효성 및 중복 방지 조건으로 결정한다.
 
 ## 6. 집 밖 이탈
 
-신뢰 가능한 outside 또는 detected=False 관측이 max(SENSING_CONFIRM_TIME, OUTSIDE_CONFIRM_TIME) 이상 이어져야 확정한다. 기본 10초이다. 신뢰도 낮음, unknown, 다른 위치가 끼면 후보 확인을 다시 시작한다. 현관은 max(SENSING_CONFIRM_TIME, ENTRANCE_CONFIRM_TIME) 이상 이어지면 WARNING이며, 현관만으로 외출 확정하지 않는다.
+신뢰 가능한 outside 관측이 max(SENSING_CONFIRM_TIME, OUTSIDE_CONFIRM_TIME) 이상 이어져야 확정한다. 기본 10초이다. detected=False, 신뢰도 낮음, unknown, 다른 위치가 끼면 후보 확인을 다시 시작한다. 미감지만으로 외출을 확정하지 않는다. 현관은 max(SENSING_CONFIRM_TIME, ENTRANCE_CONFIRM_TIME) 이상 이어지면 WARNING이며, 현관만으로 외출 확정하지 않는다.
 
 tick만으로 단일 outside 관측을 확정하지 않는다. 센서 업데이트 간격이 UNKNOWN_TIMEOUT 이상이면 새 후보로 다시 시작한다. 외출 확인 후 데이터가 끊겨도 외출 확정 상태를 임의로 해제하지 않는다.
 
@@ -133,25 +137,25 @@ RAPID_TEMPERATURE_C_PER_SECOND=10 이상이면 즉시 DANGER이다. 누락된 �
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | kitchen | kitchen | ON | 800 / 90 | 0 | NORMAL | 정상 조리 | NONE |
 | kitchen | living_room | ON | 800 / 90 | 5 | TEMPORARY_ABSENCE | 짧은 이탈 | NONE |
-| kitchen | bedroom | ON | 800 / 90 | 29 | TEMPORARY_ABSENCE | 30초 미만 | NONE |
-| living_room | living_room | ON | 800 / 90 | 30 | CAUTION | 주의 기준 도달 | VOICE_WARNING |
-| living_room | bedroom | ON | 800 / 90 | 119 | CAUTION | 다른 방 이동도 누적 | VOICE_WARNING |
-| bedroom | bedroom | ON | 800 / 90 | 120 | WARNING | 경고 기준 도달 | VOICE_WARNING |
-| bedroom | bedroom | ON | 800 / 90 | 300 | DANGER | 위험 기준 도달 | EMERGENCY_WARNING |
+| kitchen | bedroom | ON | 800 / 90 | 19 | TEMPORARY_ABSENCE | 20초 미만 | NONE |
+| living_room | living_room | ON | 800 / 90 | 20 | CAUTION | 주의 기준 도달 | VOICE_WARNING |
+| living_room | bedroom | ON | 800 / 90 | 39 | CAUTION | 다른 방 이동도 누적 | VOICE_WARNING |
+| bedroom | bedroom | ON | 800 / 90 | 40 | WARNING | 경고 기준 도달 | VOICE_WARNING |
+| bedroom | bedroom | ON | 800 / 90 | 60 | DANGER | 위험 기준 도달 | EMERGENCY_WARNING |
 | living_room | entrance | ON | 800 / 90 | 20 | WARNING | 현관 후보 10초 지속 | VOICE_WARNING |
 | kitchen | outside | ON | 800 / 90 | 10 | DANGER | 외출 후보 10초 지속 | EMERGENCY_WARNING |
 | kitchen | outside 후보 | ON | 800 / 90 | 0 | NORMAL | outside 2초 후 kitchen, 튐 무시 | NONE |
 | outside | kitchen | ON | 800 / 90 | 0 | RECOVERED | DANGER 후 복귀 5초 확인 | NONE |
 | kitchen | kitchen | ON | 800 / 90 | 0 | NORMAL | RECOVERED 다음 평가 | NONE |
-| bedroom | bedroom | OFF | 0 / 70 | 135 | RECOVERED | WARNING 중 기기 종료 | NONE |
+| bedroom | bedroom | OFF | 0 / 70 | 45 | RECOVERED | WARNING 중 기기 종료 | NONE |
 | kitchen | unknown | ON | 800 / 90 | 0 | NORMAL | unknown 19초, 기존 주방 유지 | NONE |
 | kitchen | unknown | ON | 800 / 90 | 0 | SENSOR_UNCERTAIN | unknown 20초 지속 | CHECK_SENSOR |
 | kitchen | unknown | ON | 2000 / 210 | 0 | WARNING | 센싱 불확실과 고출력 | VOICE_WARNING |
-| bedroom | bedroom | ON | 2000 / 150, +2°C/s | 120 | DANGER | 경고 시간과 높은 출력·상승 | EMERGENCY_WARNING |
-| living_room | living_room | ON | 2000 / 150, +2°C/s | 30 | WARNING | 주의 시간과 높은 출력·상승 | VOICE_WARNING |
+| bedroom | bedroom | ON | 2000 / 150, +2°C/s | 40 | DANGER | 경고 시간과 높은 출력·상승 | EMERGENCY_WARNING |
+| living_room | living_room | ON | 2000 / 150, +2°C/s | 20 | WARNING | 주의 시간과 높은 출력·상승 | VOICE_WARNING |
 | kitchen | kitchen | OFF+연기 | 0 / 100 | 0 | DANGER | 긴급 신호 우선 | EMERGENCY_WARNING |
 | kitchen | kitchen | ON | 800 / 150, +10°C/s | 0 | DANGER | 급격한 온도 상승 | EMERGENCY_WARNING |
-| kitchen | 미감지 | ON | 800 / 90 | 10 | DANGER | 정상 confidence의 detected=False 10초 | EMERGENCY_WARNING |
+| kitchen | 미감지 | ON | 800 / 90 | 0 | SENSOR_UNCERTAIN | observation_valid=False인 미감지, 외출 근거 없음 | CHECK_SENSOR |
 | kitchen | outside 저신뢰 | ON | 800 / 90 | 0 | SENSOR_UNCERTAIN | 낮은 confidence 20초, 외출 확정 안 함 | CHECK_SENSOR |
 | kitchen | kitchen | 업데이트 없음 | 마지막 800 / 90 | 0 | SENSOR_UNCERTAIN | 기기 데이터 20초 경과 | CHECK_SENSOR |
 

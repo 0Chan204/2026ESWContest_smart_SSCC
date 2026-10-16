@@ -40,6 +40,12 @@ contribution(feature) = feature_score × scenario_weight
 confidence = clamp(sum(contributions), 0, 1)
 ```
 
+주방 이탈 시간 feature는 `clamp(leave_duration / KITCHEN_LEAVE_FULL_SECONDS, 0, 1)`이며
+`KITCHEN_LEAVE_FULL_SECONDS`의 기본값은 60초다. 0/20/40/60초에서 각각 0, 약 1/3,
+약 2/3, 1이며 이후에도 1로 제한한다. 위험 단계의 20/40/60초 기준과 점수 계산은 별개다.
+기존 가중치와 `kitchen_leave_reduce_power` threshold 0.82를 적용하므로 전력·행동 등 근거가
+부족하면 60초에도 요청이 발생하지 않을 수 있다. 미측정 입력을 만들거나 시간만으로 실행하지 않는다.
+
 high threshold 이상은 `execute`, medium 이상은 `wait_for_more_evidence`, 그 미만은
 `do_nothing`이다. 화구 OFF, stale 기기 상태, 이미 감소한 화력, `USER_OVERRIDE`는 점수와
 무관하게 실행을 막는 hard guard다.
@@ -47,7 +53,8 @@ high threshold 이상은 `execute`, medium 이상은 `wait_for_more_evidence`, �
 ## 백엔드 입력과 출력
 
 기존 `SensingUpdate.confidence`는 위치 confidence로 사용한다. 선택적인
-`activity_confidence`를 추가했으며, 없으면 위치 confidence를 재사용한다.
+`activity_confidence`를 추가했으며, 없거나 미관측·만료된 행동은 점수에 0으로 기여한다.
+위치 confidence를 행동 confidence로 복제하지 않는다.
 `ApplianceUpdate.power_watts`와 선택적인 `control_state`를 전달한다.
 
 `control_state` 값은 `NONE`, `HOMEVIS_REDUCED`, `USER_OVERRIDE` 중 하나다. 백엔드는
