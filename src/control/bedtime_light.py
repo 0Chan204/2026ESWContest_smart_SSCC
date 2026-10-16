@@ -15,11 +15,22 @@ class BedtimeLightScenario:
         self._last: float | None = None
         self._requested = False
         self._valid_until = None
+        self._request: ScenarioAction | None = None
 
     def _reset(self) -> None:
         self.state = State.AWAKE
         self._lying_since = None
         self._requested = False
+        self._request = None
+
+    def matches_current_request(self, source: dict) -> bool:
+        """Read-only identity/episode check; the caller must also validate current observations.
+
+        A reset invalidates the old request even if another lying period later qualifies.
+        Do not tick here: a sender can be ahead of the event-time evaluation cursor.
+        """
+        return bool(self._requested and self._lying_since is not None and self._request is not None
+                    and all(source.get(key) == value for key, value in self._request.to_dict().items()))
 
     def tick(self, timestamp: float) -> ScenarioAction | None:
         if self._valid_until is not None and timestamp >= self._valid_until:
@@ -67,7 +78,7 @@ class BedtimeLightScenario:
         self.state = State.BEDTIME_CONFIRMED
         self._requested = True
         self.state = State.LIGHT_OFF_REQUESTED
-        return ScenarioAction(
+        self._request = ScenarioAction(
             timestamp=timestamp,
             scenario="bedtime_light_off",
             event="bedtime_detected",
@@ -76,3 +87,4 @@ class BedtimeLightScenario:
             reason="Bedroom lying duration reached the configured bedtime threshold",
             details={"lying_seconds": timestamp - self._lying_since},
         )
+        return self._request

@@ -31,6 +31,10 @@ class IntegrationRuntime:
         self.state_mapper = StateMapper(config)
         self.decision_mapper = DecisionMapper(config, self.controller.decision_history)
         self.devices = {}
+        # Keep devices as the public latest-received view for existing callers.
+        self.latest_received_devices = self.devices
+        self.evaluated_devices = {}
+        self._device_faults = {}
         self.last_location = None
         self.last_decision = None
         self.diagnostics = []
@@ -42,6 +46,8 @@ class IntegrationRuntime:
         self._queued = {}
         self._conflicts = {}
         self._latest_received_location = None
+        self._latest_received_sample = None
+        self._bedtime_interrupted_at = None
         self._last_location_message_at = None
         self._watermark = None
         self._last_advance = None
@@ -79,8 +85,8 @@ class IntegrationRuntime:
                 self._conflicts[stream] = max(timestamp, self._conflicts.get(stream, timestamp))
                 if stream == "location":
                     self.controller.realtime_engine.sensing_invalid = True
-                elif stream == "stove":
-                    self.controller.realtime_engine.appliance_invalid = True
+                elif kind == "device":
+                    self._queue_device_fault(stream, timestamp)
             return False
         if self._watermark is not None and timestamp < self._watermark:
             self.diagnostic("late_observation_dropped", stream=stream, measured_at=timestamp,
@@ -91,8 +97,42 @@ class IntegrationRuntime:
             self._seen[stream] = (timestamp, fingerprint)
         self._queued[(stream, timestamp)] = fingerprint
         self._sequence += 1
-        heapq.heappush(self._events, (timestamp, self._sequence, stream, kind, value))
+        # All available device observations (then faults) precede sensing at equal times.
+        priority = 0 if kind == "device" else 2
+        heapq.heappush(self._events, (timestamp, priority, self._sequence, stream, kind, value))
         return True
+
+    def _queue_device_fault(self, stream, timestamp):
+        """Queue unavailability, not an OFF sample or a fabricated updatedAt."""
+        if self._watermark is not None and timestamp < self._watermark:
+            self.diagnostic("late_device_fault", stream=stream, timestamp=timestamp)
+            applied = self.evaluated_devices.get(stream)
+            if applied is None or applied.measured_at > timestamp:
+                return
+            # Invalidate a disputed, already-applied cache at the processing cursor.
+            # Do not replay the late measurement or invalidate a newer good sample.
+            timestamp = self._watermark
+        self._sequence += 1
+        heapq.heappush(self._events, (timestamp, 1, self._sequence, stream, "device_fault", None))
+
+    def _record_device_fault(self, stream, received_at):
+        previous = self.devices.get(stream)
+        cutoff = previous.measured_at if previous is not None else received_at
+        self._device_faults[stream] = max(cutoff, self._device_faults.get(stream, cutoff))
+        self._queue_device_fault(stream, received_at)
+
+    def _bedtime_sample_valid(self, sample, at):
+        minimum = self.controller.realtime_engine.config.MIN_CONFIDENCE
+        return bool(sample is not None and sample.observation_valid is True and sample.detected
+                    and sample.location == "bedroom" and sample.confidence >= minimum
+                    and 0 <= at - sample.timestamp < self.controller.realtime_engine.config.UNKNOWN_TIMEOUT
+                    and sample.activity_observed is True and sample.activity == "lying"
+                    and sample.activity_confidence is not None and sample.activity_confidence >= minimum
+                    and sample.activity_timestamp is not None and sample.activity_timestamp <= at
+                    and sample.activity_valid_until is not None and at < sample.activity_valid_until)
+
+    def _interrupt_bedtime(self, timestamp):
+        self._bedtime_interrupted_at = max(timestamp, self._bedtime_interrupted_at or timestamp)
 
     def ingest_location(self, payload, *, received_at=None, behavior: BehaviorObservation | None = None):
         received_at = self.clock() if received_at is None else received_at
@@ -102,12 +142,22 @@ class IntegrationRuntime:
             observation = location_observation(payload, received_at, self.config)
         except (ValueError, TypeError) as exc:
             self.controller.realtime_engine.sensing_invalid = True
+            self._interrupt_bedtime(received_at)
             self.diagnostic("invalid_location_payload", error=str(exc))
             return False
         sample = join_behavior(observation, behavior, self.config.behavior_max_skew)
+        previous_sample = self._latest_received_sample
         if observation.measured_at <= received_at and (self._latest_received_location is None
                 or observation.measured_at >= self._latest_received_location.measured_at):
             self._latest_received_location = observation
+            self._latest_received_sample = sample
+            if (previous_sample is not None and self._bedtime_sample_valid(previous_sample, previous_sample.timestamp)
+                    and sample.activity_timestamp is not None
+                    and (sample.activity_timestamp > previous_sample.activity_valid_until
+                         or sample.timestamp - previous_sample.timestamp >= self.controller.realtime_engine.config.UNKNOWN_TIMEOUT)):
+                self._interrupt_bedtime(sample.timestamp)
+        if observation.measured_at <= received_at and not self._bedtime_sample_valid(sample, sample.timestamp):
+            self._interrupt_bedtime(sample.timestamp)
         self.outbox.audit("location_received", received_at, {
             "raw": observation.raw, "measured_at": observation.measured_at,
             "received_at": received_at, "valid": observation.valid, "diagnostic": observation.diagnostic,
@@ -116,8 +166,12 @@ class IntegrationRuntime:
         # Late or malformed invalid results must not silently authorize restoration/normality.
         if not observation.valid:
             self.controller.realtime_engine.sensing_invalid = True
-        return self._enqueue("location", observation.measured_at, received_at, "location",
-                             (observation, sample), observation.raw)
+        enqueued = self._enqueue("location", observation.measured_at, received_at, "location",
+                                 (observation, sample), {"location": observation.raw,
+                                 "behavior": None if behavior is None else asdict(behavior)})
+        if self._conflicts.get("location") == observation.measured_at:
+            self._interrupt_bedtime(observation.measured_at)
+        return enqueued
 
     def ingest_device_states(self, payload, *, fetched_at=None):
         fetched_at = self.clock() if fetched_at is None else fetched_at
@@ -125,7 +179,7 @@ class IntegrationRuntime:
         try:
             items = device_items(payload)
         except (ValueError, TypeError) as exc:
-            self.poll_failed("invalid_device_payload:" + str(exc))
+            self.poll_failed("invalid_device_payload:" + str(exc), failed_at=fetched_at)
             return
         self._backend_ok = True
         present = set()
@@ -135,8 +189,8 @@ class IntegrationRuntime:
                 observation = self.state_mapper.map(item, fetched_at)
             except (ValueError, TypeError) as exc:
                 self.diagnostic("invalid_device_item", device_id=item["deviceId"], error=str(exc))
-                if kind == "stove":
-                    self.controller.realtime_engine.appliance_invalid = True
+                if self.config.device_ids.get(kind) == item["deviceId"]:
+                    self._record_device_fault(kind, fetched_at)
                 continue
             self.outbox.audit("device_received", fetched_at, {
                 "raw": item, "measured_at": observation.measured_at, "fetched_at": fetched_at,
@@ -148,22 +202,28 @@ class IntegrationRuntime:
             present.add(kind)
             for code in observation.diagnostics:
                 self.diagnostic(code, device_id=item["deviceId"])
+            if observation.measured_at > fetched_at:
+                # Reject the impossible timestamp but retain the latest poll's fault.
+                self._record_device_fault(kind, fetched_at)
             previous = self.devices.get(kind)
             if observation.measured_at <= fetched_at and (previous is None or observation.measured_at >= previous.measured_at):
                 self.devices[kind] = observation
-            if kind == "stove" and observation.appliance is None:
-                self.controller.realtime_engine.appliance_invalid = True
+                if (observation.measured_at > self._device_faults.get(kind, float("-inf"))
+                        and observation.room is not None and observation.raw["online"]
+                        and "device_snapshot_stale" not in observation.diagnostics
+                        and (kind != "stove" or observation.appliance is not None)):
+                    self._device_faults.pop(kind, None)
             self._enqueue(kind, observation.measured_at, fetched_at, "device", observation, item)
         for kind in self.config.device_ids.keys() - present:
+            self._record_device_fault(kind, fetched_at)
             self.devices.pop(kind, None)
             self.diagnostic("device_missing", device=kind)
-            if kind == "stove":
-                self.controller.realtime_engine.appliance_invalid = True
 
-    def poll_failed(self, reason="backend_poll_failed"):
+    def poll_failed(self, reason="backend_poll_failed", *, failed_at=None):
         self._backend_ok = False
-        self.controller.realtime_engine.appliance_invalid = True
-        self.controller.water_dispenser_available = False
+        failed_at = self.clock() if failed_at is None else failed_at
+        for kind in self.config.device_ids:
+            self._record_device_fault(kind, failed_at)
         self.diagnostic(reason)
 
     def _restore_reservation(self, timestamp):
@@ -182,7 +242,7 @@ class IntegrationRuntime:
         self._last_advance = now
         watermark = now - self.config.allowed_lateness
         while self._events and self._events[0][0] <= watermark:
-            timestamp, _, stream, kind, value = heapq.heappop(self._events)
+            timestamp, _, _, stream, kind, value = heapq.heappop(self._events)
             engine = self.controller.realtime_engine
             if kind == "location":
                 observation, sample = value
@@ -191,8 +251,8 @@ class IntegrationRuntime:
                     continue
                 self.last_location = observation
                 self._restore_reservation(timestamp)
-                self.controller.water_dispenser_available = self._backend_ok and self.state_mapper.water_ready(
-                    self.devices.get("water_purifier"), timestamp)
+                self.controller.water_dispenser_available = self.state_mapper.water_ready(
+                    self.evaluated_devices.get("water_purifier"), timestamp)
                 # Reusing a behavior result must not extend the observed activity duration.
                 if (sample.activity_observed and self._last_behavior_time is not None
                         and sample.activity_timestamp <= self._last_behavior_time):
@@ -216,9 +276,13 @@ class IntegrationRuntime:
                 self.outbox.audit("location_applied", now, {
                     "measured_at": timestamp, "processed_at": now,
                     "missing_inputs": self.missing_inputs, "sample": asdict(sample)})
-            elif kind == "device" and stream == "stove" and value.appliance is not None:
-                if engine.last_appliance_update is None or timestamp > engine.last_appliance_update:
-                    self.last_decision = self.controller.update_appliance(value.appliance)
+            elif kind in {"device", "device_fault"}:
+                self.evaluated_devices[stream] = value
+                if stream == "stove":
+                    if value is None or value.appliance is None:
+                        engine.appliance_invalid = True
+                    elif engine.last_appliance_update is None or timestamp > engine.last_appliance_update:
+                        self.last_decision = self.controller.update_appliance(value.appliance)
             self.collect_outputs(now)
         self._watermark = watermark
         self._queued = {key: value for key, value in self._queued.items()
@@ -229,9 +293,8 @@ class IntegrationRuntime:
                 "location" in self._conflicts
                 and (self.controller.realtime_engine.last_sensor_update or float("-inf")) <= self._conflicts["location"]):
             self.controller.realtime_engine.sensing_invalid = True
-        stove = self.devices.get("stove")
-        if (not self._backend_ok or stove is None or stove.appliance is None or
-                ("stove" in self._conflicts and stove.measured_at <= self._conflicts["stove"])):
+        stove = self.evaluated_devices.get("stove")
+        if stove is None or stove.appliance is None:
             self.controller.realtime_engine.appliance_invalid = True
         self.last_decision = self.controller.tick(watermark)
         self._evaluate_light(watermark)
@@ -265,8 +328,8 @@ class IntegrationRuntime:
         }
 
     def _evaluate_light(self, timestamp):
-        observation, decision = self.devices.get("light"), self.last_decision
-        if (not self._backend_ok or observation is None or observation.diagnostics
+        observation, decision = self.evaluated_devices.get("light"), self.last_decision
+        if (observation is None or observation.diagnostics
                 or not 0 <= timestamp - observation.measured_at < self.config.device_max_age
                 or not decision.observation_valid or decision.sensing_status != "valid"
                 or self.last_location is None):
@@ -325,6 +388,8 @@ class IntegrationRuntime:
             if action["action"] == "restore_power":
                 return "restore_control_provenance_unconfirmed"
             observation = self.devices.get(action["device"])
+            if action["device"] in self._device_faults:
+                return "device_state_unavailable"
             if (action["device"] in self._conflicts and observation is not None
                     and observation.measured_at <= self._conflicts[action["device"]]):
                 return "conflicting_device_state"
@@ -346,11 +411,37 @@ class IntegrationRuntime:
                     return "user_returned_to_kitchen"
             elif action["device"] == "light":
                 target_room = observation.room
-                if action["action"] == "turn_off" and engine._sensing.location == target_room:
-                    return "user_returned_to_light_room"
-                if action["action"] == "turn_on" and (
-                        engine._sensing.location != target_room or engine.last_user_location != target_room):
-                    return "user_left_light_room"
+                source = row["source"]
+                if source.get("target", source.get("device")) != f"{target_room}_light":
+                    return "light_target_mismatch"
+                scenario = source.get("scenario")
+                if scenario == "bedtime_light_off" and action["action"] == "turn_off":
+                    reason = self._revalidate_bedtime(source, target_room, now)
+                    if reason:
+                        return reason
+                elif scenario == "light_auto_off" and action["action"] == "turn_off":
+                    if engine._sensing.location == target_room:
+                        return "user_returned_to_light_room"
+                elif scenario == "light_auto_on" and action["action"] == "turn_on":
+                    if engine._sensing.location != target_room or engine.last_user_location != target_room:
+                        return "user_left_light_room"
+                else:
+                    return "unsupported_light_scenario"
+        return None
+
+    def _revalidate_bedtime(self, source, target_room, now):
+        if (target_room != "bedroom" or source.get("type") != "ScenarioAction"
+                or not self.controller.bedtime_light.matches_current_request(source)):
+            return "bedtime_request_no_longer_current"
+        start = source["timestamp"] - source["details"]["lying_seconds"]
+        if self._bedtime_interrupted_at is not None and self._bedtime_interrupted_at > start:
+            return "bedtime_observation_interrupted"
+        # Already-qualified request only: newer buffered behavior can maintain it,
+        # but cannot advance the scenario clock or qualify a new request early.
+        if not self._bedtime_sample_valid(self._latest_received_sample, now):
+            return "bedtime_behavior_missing_or_expired"
+        if self.controller.realtime_engine._sensing.location != target_room:
+            return "user_left_bedroom"
         return None
 
     def _prepare_send(self, now):

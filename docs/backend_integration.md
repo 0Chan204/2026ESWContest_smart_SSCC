@@ -196,6 +196,38 @@ GET 실패나 offline은 OFF로 만들지 않는다. 동일 updatedAt을 반복 
 APPLIANCE_TIMEOUT 뒤 stale로 평가한다. live에서 가전이 정상이어도 오래된 updatedAt만 반환한다면
 제어가 차단될 수 있으며 백엔드와 갱신 기준을 합의해야 한다.
 
+### 판단용 기기 상태와 송신용 기기 상태
+
+기본 `allowed_lateness=2.0`은 유지한다. `latest_received_devices`(기존 `devices`와 같은 객체)는
+최신 수신 관측을, `evaluated_devices`는 현재 처리 시각 이하에서 마지막으로 적용한 관측을 보관한다.
+별도의 DB 이력은 추가하지 않고 기존 heap에서 stove/light/water_purifier 모두 시간순으로 적용한다.
+offline 관측도 그대로 적용하고, 누락·잘못된 응답·조회 실패는 수신/오류 시점의 무효화 이벤트로 처리한다.
+더 최근의 오류를 건너뛰어 예전 정상 관측을 선택하지 않는다.
+
+| 시각 | 의미와 사용처 |
+| --- | --- |
+| 원본 측정 시각 | 기기의 `updatedAt`, 위치의 `time`, 행동의 `measured_at`; 조회 시각으로 바꾸지 않음 |
+| 수신 시각 | `fetched_at` / `received_at`; 원본 측정 시각과 별도 보관, 통신 실패 시점도 구분 |
+| 평가 시각 | 각 이벤트의 측정 시각 및 마지막 watermark=`now-2초`; 이 시각 이하의 기기 관측만 사용 |
+| 송신 시각 | 전송 직전 `now`; 최신 수신 기기·위치·행동의 유효성과 명령 TTL을 다시 검사 |
+
+예를 들어 현재 T+10, watermark T+8이면 판단에는 T+8 이하의 상태를 사용하고,
+송신 직전에는 이미 수신한 T+10 상태를 검사한다. T+8 정상/T+10 offline이면 과거 판단은 가능하지만
+송신은 차단한다. 반대로 T+8 offline/T+10 정상이어도 T+8 평가를 정상으로 바꾸지 않는다.
+평가 시각 이하의 관측이 없으면 미래 관측으로 대체하지 않는다. 음수 age를 보정하지 않는다.
+
+같은 측정 시각에 이미 도착한 이벤트는 기기 관측 → 기기 무효화 → 센싱 순서로 처리한다.
+따라서 수신 순서가 반대여도 같은 시각의 정수기 준비 상태를 사용한다. 한 번의 `advance()`가 여러
+시각을 처리해도 각각의 센싱 시점에 맞는 상태를 사용하며, 조명은 최종 watermark에서 평가한다.
+아직 도착하지 않은 이벤트를 가정하지 않는다. 허용 지연을 넘긴 관측은 기존처럼 진단 후 제외한다.
+이미 적용한 관측의 충돌이 뒤늦게 확인되면 그 캐시를 무효화하되 엔진 시간을 되돌리거나
+더 새로운 정상 관측까지 무효화하지 않는다.
+
+송신은 최신 offline, missing, malformed, conflict, HTTP 실패, stale, 정수기 busy/error를 별도로
+차단한다. 동일 `updatedAt`의 반복 조회는 freshness를 연장하지 않는다. 누락·조회 오류 등의
+차단은 오류 전 관측보다 새로운 검증된 측정으로만 회복하며, 충돌은 그 측정 시각보다 새 관측이 필요하다.
+미래 측정 시각은 거부하고 해당 조회의 오류도 유지한다. 이때 잘못된 시각을 `now`로 바꾼 관측은 만들지 않는다.
+
 ## 출력, 접수 및 재시작
 
 기존 drain API는 유지한다. 통합 런타임은 `peek_outputs()`로 자동 제어/규칙 출력을 모두 조회하고,
@@ -231,6 +263,28 @@ reduce_power를 turn_off로 바꾸는 등 의미 변경은 거부한다.
 timeout 또는 응답 유실로 예약을 되돌리지 않는다. 재시작해도 같은 날 허용 횟수를 유지한다.
 저장 도중 비정상 종료되어 예약만 남을 경우 출수를 놓칠 수는 있지만, 안전하게 중복 출수를 억제한다.
 이미 보낸 명령을 뒤늦게 취소하는 백엔드 계약은 없으므로 전송 후 취소를 보장하지 않는다.
+
+### 조명 시나리오별 송신 직전 재검증
+
+백엔드 `scenario` 이름이 내부 이름과 다를 수 있으므로 outbox `source`의 원래 시나리오와
+`target`/`device`를 사용한다. 실제 전등의 방, 백엔드 방, 원래 대상이 일치해야 한다.
+
+- `light_auto_off`: 유효하고 신선한 부재 근거가 필요하며 대상 방으로 돌아오면 차단한다.
+  unknown·무효·stale 센싱이나 정렬 대기 중의 위치 변경도 허용 근거로 쓰지 않는다.
+- `bedtime_light_off`: 침실에 있다는 사실은 차단 이유가 아니다. 실제 시나리오가 지속 조건을 채워
+  생성한 현재 취침 구간의 요청인지, 지금도 그 침실에서 유효한 실제 lying 행동이 관측되는지 확인한다.
+  행동 신뢰도·측정 시각·만료를 검사하며 `_requested=True`만으로 허용하지 않는다.
+- `light_auto_on`: 기존의 현재 재실 및 확정 위치 검사를 유지한다. 미지원 시나리오는 차단한다.
+
+기상·방 이탈·행동 누락/불확실·관측 공백은 정렬 대기 중이어도 기존 취침 요청을 차단한다.
+다시 누워도 이전 요청을 되살리지 않으며, 새 취침 구간이 기존 임계시간을 충족해 만든 새 요청이 필요하다.
+`BedtimeLightScenario.matches_current_request()`는 요청/취침 구간의 동일성만 읽기 전용으로 확인한다.
+송신 재검증에서 `tick()`이나 `update_sensing()`을 호출하지 않는다.
+
+정렬 지연 때문에 적용된 행동만 만료된 경우에는 최신 수신한 유효한 실제 행동으로 **이미 충족한**
+취침 조건의 유지를 확인할 수 있다. 이를 이용해 취침 지속 시간을 앞당기지는 않는다.
+위치 전용 입력에는 행동을 생성하지 않으며 취침 소등·기상 기반 출수·낙상 입력 부족 진단을 유지한다.
+재시작으로 현재 취침 구간의 근거가 사라진 경우도 기존 pending 취침 요청을 임의 재사용하지 않는다.
 
 ## 낙상과 백엔드 역할
 
@@ -270,3 +324,42 @@ MongoDB/MQTT/LG SDK 코드를 추가하지 않았다. 다음 계약이 필요하
 모든 명령은 기본 mock 저장소를 사용하며 live outbox 경로와 DB 모드 표식을 분리한다.
 설정 변경만으로 Mock 명령을 live에서 읽지 않는다. `.env.example`은 예시이고
 실제 인증 정보는 `IntegrationConfig.headers`에 외부에서 주입한다.
+
+### 3726303 기준 런타임 회귀 수정 검증
+
+수정 전 전체 기준은 `168 passed`였다. 먼저 실제 `IntegrationRuntime`을 사용하는 핵심 회귀 테스트
+3개를 추가했으며 모두 예상대로 실패했다. 취침은 `user_returned_to_light_room`으로 차단됐고,
+2초 지연에서 조명 및 기상 출수 요청은 생성되지 않았다. 수정 후 이 경로들은 Mock 접수까지 검증한다.
+
+추가 테스트 파일은 다음 명령으로 실행한다.
+
+```powershell
+python -m pytest -q tests/test_runtime_regressions.py
+```
+
+이번 수정 후 실제 실행 결과(Anaconda Python, LLM/GPU 없이):
+
+- `python -m pytest -q tests/test_runtime_regressions.py`: 53 passed.
+- `python -m pytest -q`: 221 passed (55.79초).
+- `python -m unittest discover -s tests -v`: 104 tests, OK (30.525초).
+  unittest는 기존 unittest 클래스들을 실행하며 pytest 함수형 회귀 테스트는 위 pytest 명령에서 검증한다.
+- `python -m examples.backend_integration_demo`: 조회 5회, POST 0건, 행동 입력 부족 명시.
+- `python -m examples.backend_integration_demo --with-mock-behavior`: 조회 5회, POST 1건,
+  180ml / `weatherBriefing=true` 요청의 Mock 접수. 응답 진단은 `execution_ack_not_provided`다.
+
+FakeClock·MockBackend·임시 저장소에서 기기 polling 2초 / 센싱·advance 1초 / 정렬 지연 2초를 재현한다.
+기본 지연을 0으로 바꾸지 않고 조명·출수, 동일 시각 입력 순서 반전, 여러 시각의 일괄 처리,
+미래 상태 대체 금지, 과거 offline, 최신 오류 차단/새 측정에 의한 회복, 반복·지연·충돌·시계 역행을 검증한다.
+취침은 적용된 행동의 유효기간이 송신 시점보다 짧아도 최신의 실제 관측이 계속되면 접수되는지,
+반대 관측/공백 후 과거 요청이 재사용되지 않는지, 재검증이 엔진/출력 큐를 바꾸지 않는지 확인한다.
+`allowed_lateness=0`과 기존 outbox 저장 실패·동일 ID/본문 재시도·TTL·재시작 예약 테스트도 유지한다.
+
+성공 테스트의 `room_is_bedroom=True`, `water_ready_states=("idle",)`,
+`rule_confidence_policy="null"`, `mock_sleep/mock_absence/mock_presence` 라우트는 **Mock 전용 가정**이다.
+취침 임계시간 6초 및 가상 `BehaviorObservation`도 테스트에만 사용한다. 운영 기본값·confidence 계산식·
+가중치·시나리오 임계값·출수량 결정 방식·API 계약은 변경하지 않았다.
+
+버그 수정은 실전 활성화와 다르다. 빈 action_routes, 규칙 confidence 표현, 정수기 준비 상태 의미,
+level↔W 대응, 자동 복구 제어 이력, 낙상 시작/확인/종료 API, 실제 행동 데이터 수신·유효기간 계약은
+여전히 합의/구현이 필요하다. yes/no 피드백 연동은 이번 범위가 아니며 기존 FeedbackManager,
+WeightManager와 자연어 피드백 경로는 그대로다. Mock의 접수/sent는 실제 가전 실행 완료가 아니다.
