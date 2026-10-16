@@ -1,12 +1,83 @@
-# 로컬에 Mosquitto를 직접 설치하기 귀찮다면, Docker로 간단히 띄울 수 있습니다.
-# 실행: docker compose up -d
-# 종료: docker compose down
+# HomeVIS 백엔드 실행 구성 (MongoDB + Mosquitto + 백엔드 [+ 가짜 인덕션])
+#
+# 라즈베리파이 5 / 노트북 / 맥 어디서든 같은 파일로 실행합니다.
+#   전체 실행:            docker compose up -d
+#   가짜 인덕션까지 실행:  docker compose --profile sim up -d
+#   GitHub 이미지로 갱신:  docker compose pull && docker compose up -d
+#   이 PC에서 직접 빌드:   docker compose up -d --build
+#   종료:                 docker compose down        (DB 데이터는 볼륨에 남음)
+#
+# 개발할 때 브로커만 필요하면: docker compose up -d mosquitto
+#
+# .env 파일(이 폴더)에 비밀값을 넣어 두면 백엔드 컨테이너에 전달됩니다. (.env.example 참고)
+# MONGODB_URI를 비워 두면 같이 뜨는 로컬 MongoDB(mongo 컨테이너)를 사용하고,
+# Atlas 주소를 넣으면 Atlas를 사용합니다.
+
 services:
+  mongo:
+    image: mongo:7
+    container_name: homevis-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # 이 기기 안에서만 접속 가능 (외부 공개 X). Compass로 보려면 이 기기에서 접속하거나 SSH 터널 사용
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   mosquitto:
     image: eclipse-mosquitto:2
-    container_name: induction-mosquitto
+    container_name: homevis-mosquitto
+    restart: unless-stopped
     ports:
       - "1883:1883"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  backend:
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    build: .
+    container_name: homevis-backend
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # 컨테이너 안에서는 localhost가 아니라 서비스 이름으로 서로를 찾습니다.
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  simulator:
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_device.py"]
+    # 이미지의 헬스체크는 백엔드(8000 포트)용이라 시뮬레이터에서는 끕니다.
+    healthcheck:
+      disable: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+    depends_on:
+      - mosquitto
+      - backend
+
+volumes:
+  mongo-data:

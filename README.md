@@ -30,7 +30,8 @@ ESWC 개발계획서 기준: 백엔드는 **Python FastAPI**, 가전과의 통�
 induction-backend/
 ├── requirements.txt        # 설치할 파이썬 패키지 목록
 ├── .env.example             # 환경변수 예시 (복사해서 .env로 사용)
-├── docker-compose.yml        # 로컬 Mosquitto 브로커 실행용
+├── Dockerfile                # 백엔드 이미지 빌드 설정
+├── docker-compose.yml        # MongoDB + Mosquitto + 백엔드 실행 구성 (10장)
 ├── mosquitto/mosquitto.conf  # Mosquitto 설정
 ├── app/
 │   ├── main.py                # FastAPI 앱 진입점 (Swagger 문서 2개 분리 설정 포함)
@@ -88,8 +89,9 @@ cp .env.example .env
 
 **방법 A) Docker로 실행 (Docker 설치되어 있다면 가장 간단)**
 ```bash
-docker compose up -d
+docker compose up -d mosquitto
 ```
+(서비스 이름 없이 `docker compose up -d`를 하면 MongoDB와 백엔드까지 전부 뜹니다. 10장 참고)
 
 **방법 B) Mosquitto 직접 설치**
 ```bash
@@ -264,9 +266,70 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 
 5. **신뢰성 보강**: 지금은 QoS 1만 쓰는데, 상태 메시지에 `retain` 플래그를 추가하면(하드웨어 쪽 publish 코드에서 설정) 서버가 재시작돼도 마지막 상태를 바로 조회할 수 있습니다. 또한 명세서의 "네트워크 단절 시 Fallback 안전 로직"은 서버가 아니라 **Pico W 펌웨어 쪽에 반드시 구현**되어야 하는 부분이라는 걸 하드웨어 팀과 공유해주세요.
 
-6. **최종 배포 위치 이전**: 지금은 맥에서 개발 중이지만, 개발계획서 기준 최종 중앙 허브는 Raspberry Pi 4입니다. 나중에는 이 프로젝트 폴더를 라즈베리파이로 옮겨 `pip install -r requirements.txt` → `uvicorn` 실행 → 고정 IP(또는 mDNS 호스트네임)로 하드웨어가 항상 같은 주소에 접속하게 만드는 작업이 필요합니다.
+6. **최종 배포 위치 이전**: 대회 보드(라즈베리파이 5, LG AI-Native OS)에서는 Docker로 실행합니다. 10장을 참고하세요. 하드웨어가 항상 같은 주소로 접속할 수 있게 보드의 IP를 고정해 두는 것이 좋습니다.
 
 7. **보안**: 지금 Mosquitto는 `allow_anonymous true`로 인증 없이 열려 있습니다. 발표/시연 시 공유 와이파이에서는 같은 네트워크에 있는 아무나 명령을 위조해서 보낼 수 있으니, 최소한 사용자명/비밀번호 인증(`.env`의 `MQTT_USERNAME`/`MQTT_PASSWORD`, `mosquitto_passwd`로 설정) 정도는 시연 전에 추가하는 걸 권장합니다.
+
+---
+
+## 10. Docker로 실행하기 (라즈베리파이 5 / 노트북 / 맥)
+
+MongoDB, Mosquitto, 백엔드를 컨테이너 3개로 한 번에 띄웁니다. 백엔드 이미지는 `develop`에 머지될 때마다
+GitHub Actions가 빌드해서 GHCR(`ghcr.io/2026esec-sscc/homevis-backend`)에 올립니다. arm64(라즈베리파이 5, M 시리즈 맥)와
+amd64(일반 노트북, 서버)를 모두 지원합니다.
+
+```
+docker compose
+ ├ mongo      MongoDB 7 (데이터는 mongo-data 볼륨에 저장)
+ ├ mosquitto  MQTT 브로커, 1883 포트
+ ├ backend    FastAPI, 8000 포트
+ └ simulator  가짜 인덕션 (선택, --profile sim 일 때만)
+```
+
+**1) 실행할 기기에 필요한 것**
+- Docker와 Docker Compose 플러그인
+- 이 저장소의 `docker-compose.yml`, `mosquitto/` 폴더, 그리고 `.env` 파일 (`git clone`으로 받거나 이 파일들만 복사)
+- 처음 받을 때 인터넷 (GHCR과 Docker Hub에서 이미지를 받음)
+
+**2) 이미지 받기 위한 로그인 (이미지가 비공개일 때, 기기마다 한 번)**
+
+GitHub > Settings > Developer settings > Personal access tokens에서 `read:packages` 권한 토큰을 만든 뒤:
+```bash
+echo <토큰> | docker login ghcr.io -u <GitHub 아이디> --password-stdin
+```
+
+**3) 실행**
+```bash
+cp .env.example .env      # 값 채우기 (MONGODB_URI는 비워두면 로컬 MongoDB 사용)
+docker compose pull       # 최신 이미지 받기
+docker compose up -d      # 실행
+curl http://localhost:8000/health   # {"status":"ok","storage":"mongodb"} 이면 정상
+```
+- 가짜 인덕션도 같이: `docker compose --profile sim up -d`
+- 로그 보기: `docker compose logs -f backend`
+- 종료: `docker compose down` (DB 데이터는 남음. 데이터까지 지우려면 `docker compose down -v`)
+- 이미지 대신 이 PC의 코드로 직접 빌드: `docker compose up -d --build`
+- 특정 커밋 버전으로 되돌리기: `.env`에 `IMAGE_TAG=sha-xxxxxxx` 추가 후 `pull`, `up -d`
+
+**4) 인터넷이 없는 곳에서 설치할 때**
+
+인터넷이 되는 PC에서 이미지를 파일로 저장해 USB로 옮깁니다. 받을 기기와 같은 CPU용(arm64)으로 받아야 합니다.
+```bash
+# 인터넷 되는 PC
+docker pull --platform linux/arm64 ghcr.io/2026esec-sscc/homevis-backend:develop
+docker pull --platform linux/arm64 mongo:7
+docker pull --platform linux/arm64 eclipse-mosquitto:2
+docker save -o homevis-images.tar ghcr.io/2026esec-sscc/homevis-backend:develop mongo:7 eclipse-mosquitto:2
+
+# 보드
+docker load -i homevis-images.tar
+docker compose up -d
+```
+
+**주의**
+- MongoDB 7은 라즈베리파이 5에서는 동작하지만 라즈베리파이 4의 CPU에서는 동작하지 않습니다.
+- MongoDB 포트(27017)는 그 기기 안에서만 접속할 수 있게 열어 두었습니다.
+- Mosquitto는 아직 인증 없이 열려 있습니다(9장 7번). 공유 와이파이에서 시연하기 전에 인증을 추가해야 합니다.
 
 ---
 
