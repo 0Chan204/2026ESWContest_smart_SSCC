@@ -70,7 +70,17 @@ def test_everything_survives_restart(mongo, published):
             "room": ROOM, "zone": "far", "present": False, "absentSec": 200,
             "confidence": 0.9, "observedAt": "2026-10-02T12:00:00+00:00", "modelVersion": "m",
         }
-        client.post(f"{PREFIX}/presence", json=presence)  # -> auto_power_reduced
+        client.post(f"{PREFIX}/presence", json=presence)  # 저장만 됨 (v0.3: 서버가 직접 제어하지 않음)
+        client.post(
+            f"{PREFIX}/ai/decisions",
+            json={
+                "decisionId": "d-restart",
+                "scenario": "bedtime_light_off",
+                "confidence": 0.9,
+                "timestamp": "2026-10-02T12:00:00+00:00",
+                "actions": [{"device": "light", "action": "off"}],
+            },
+        )  # -> ai_control
 
         accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
         incident_id = accepted["incidentId"]
@@ -93,15 +103,15 @@ def test_everything_survives_restart(mongo, published):
 
         # 안전 이벤트는 내용과 순서가 모두 그대로여야 한다
         assert client.get(f"{PREFIX}/safety-events").json()["items"] == events_before
-        assert [e["type"] for e in events_before] == ["auto_power_reduced", "fall_detected"]
+        assert [e["type"] for e in events_before] == ["ai_control", "fall_detected"]
         assert events_before[0]["feedback"]["comment"] == "오탐"
 
         # 문자 발송 이력도 유지 (사용자 확인, 보호자 확인, 낙상 알림)
         assert client.get(f"{PREFIX}/sms-logs").json() == sms_logs_before
         assert sms_logs_before["total"] == 3
 
-        # 부재중 단계도 유지: 같은 보고를 다시 받아도 중복 조치하지 않는다
-        assert client.post(f"{PREFIX}/presence", json=presence).json()["triggeredEventId"] is None
+        # 재실 판단 결과도 유지
+        assert client.get(f"{PREFIX}/snapshot").json()["rooms"][ROOM]["presence"]["absentSec"] == 200
 
         # 낙상 사건과 확인 토큰도 유지: 재시작 후에도 보호자가 링크로 처리할 수 있다
         assert client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"] == "pending"
@@ -111,7 +121,7 @@ def test_everything_survives_restart(mongo, published):
     with _restart_server() as client:
         assert client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"] == "resolved"
         types = [e["type"] for e in client.get(f"{PREFIX}/safety-events").json()["items"]]
-        assert types == ["auto_power_reduced", "fall_detected", "fall_resolved"]
+        assert types == ["ai_control", "fall_detected", "fall_resolved"]
 
 
 def test_overdue_fall_incident_is_auto_reported_after_restart(mongo, published):
@@ -162,3 +172,38 @@ def test_runs_in_memory_when_db_is_unreachable(monkeypatch, published):
     with TestClient(app) as client:
         assert client.get("/health").json()["storage"] == "memory"
         assert client.put(f"{PREFIX}/guardian", json={"name": "보호자", "phone": "01000000000"}).status_code == 200
+
+
+def test_ai_decisions_and_device_states_survive_restart(mongo, published):
+    """v0.3: AI 판단 기록, 전등 상태, 복구용 화력이 재시작 후에도 남아 있는지"""
+    from app import home_device_service
+    from app.main import app
+
+    with TestClient(app) as client:
+        state_store.save_telemetry(
+            DEVICE,
+            TelemetryReport(
+                reportedAt="2026-10-16T12:00:00+00:00",
+                burners=[BurnerTelemetry(burnerId=BURNER, deviceState="on", level=7, temperature=100.0)],
+                lastControl=LastControl(publisher="user"),
+                alarm="off",
+            ),
+        )
+        client.post(
+            f"{PREFIX}/ai/decisions",
+            json={
+                "decisionId": "d-persist",
+                "scenario": "stove_absence",
+                "confidence": 0.8,
+                "timestamp": "2026-10-16T12:00:00+00:00",
+                "actions": [{"device": "stove", "action": "turn_off"}],
+            },
+        )
+        home_device_service.handle_state(
+            "light-01", "light", {"reportedAt": "2026-10-16T12:00:00+00:00", "power": "on"}
+        )
+
+    with _restart_server() as client:
+        assert client.get(f"{PREFIX}/ai/decisions/d-persist").json()["actions"][0]["status"] == "sent"
+        assert client.get(f"{PREFIX}/devices/light-01").json()["current_state"]["power"] == "on"
+        assert state_store.get_restore_level(DEVICE) == 7

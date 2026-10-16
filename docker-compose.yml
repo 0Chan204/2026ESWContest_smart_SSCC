@@ -1,8 +1,8 @@
-# HomeVIS 백엔드 실행 구성 (MongoDB + Mosquitto + 백엔드 [+ 가짜 인덕션])
+# HomeVIS 백엔드 실행 구성 (MongoDB + Mosquitto + 백엔드 [+ 가짜 인덕션·전등·정수기])
 #
 # 라즈베리파이 4(대회 보드) / 노트북 / 맥 어디서든 같은 파일로 실행합니다.
 #   전체 실행:            docker compose up -d
-#   가짜 인덕션까지 실행:  docker compose --profile sim up -d
+#   가짜 가전까지 실행:    docker compose --profile sim up -d   (가짜 인덕션 + 가짜 전등·정수기)
 #   GitHub 이미지로 갱신:  docker compose pull && docker compose up -d
 #   이 PC에서 직접 빌드:   docker compose up -d --build
 #   종료:                 docker compose down        (DB 데이터는 볼륨에 남음)
@@ -70,6 +70,25 @@ services:
     restart: unless-stopped
     command: ["python", "tests/simulate_device.py"]
     # 이미지의 헬스체크는 백엔드(8000 포트)용이라 시뮬레이터에서는 끕니다.
+    healthcheck:
+      disable: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+    depends_on:
+      - mosquitto
+      - backend
+
+  home-simulator:
+    # 가짜 전등·정수기 (v0.3). 실제 기기가 준비되면 이 서비스는 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-home-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_home_devices.py"]
     healthcheck:
       disable: true
     env_file:

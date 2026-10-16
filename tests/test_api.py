@@ -56,7 +56,16 @@ def test_health(client):
 def test_swagger_is_grouped_by_feature(client):
     spec = client.get("/openapi.json").json()
     tags = [t["name"] for t in spec["tags"]]
-    assert tags == ["회원 정보", "낙상 사고 감지", "AI 재실 판단", "인덕션 제어", "대시보드 화면", "안전 이벤트"]
+    assert tags == [
+        "회원 정보",
+        "낙상 사고 감지",
+        "AI 중앙 제어",
+        "AI 재실 판단",
+        "인덕션 제어",
+        "전등·정수기 제어",
+        "대시보드 화면",
+        "안전 이벤트",
+    ]
 
     # 모든 엔드포인트가 위 섹션 중 정확히 하나에 속해야 한다 (/health 제외)
     for path, methods in spec["paths"].items():
@@ -102,7 +111,7 @@ def test_overheated_blocks_turn_on_but_allows_turn_off(client, published):
 
 
 # ---------------------------------------------------------------------------
-# 부재중 자동 제어 정책
+# 재실 판단 (v0.3: 저장·전달만, 서버가 직접 제어하지 않음)
 # ---------------------------------------------------------------------------
 
 def _presence(absent_sec: int, present: bool = False, zone: str = "far") -> dict:
@@ -117,25 +126,14 @@ def _presence(absent_sec: int, present: bool = False, zone: str = "far") -> dict
     }
 
 
-def test_absence_reduces_then_turns_off_then_user_returns(client, published):
-    res = client.post(f"{PREFIX}/presence", json=_presence(200))
-    assert res.json()["safetyPhase"] == "auto_reduced"
-    assert published[-1]["type"] == "set_level"
-
+def test_presence_is_stored_without_auto_control(client, published):
+    # 예전에는 700초 부재면 서버가 화구를 껐지만, 이제 판단은 AI 중앙 판정 엔진이 한다
     res = client.post(f"{PREFIX}/presence", json=_presence(700))
-    assert res.json()["safetyPhase"] == "auto_off"
-    assert published[-1]["type"] == "turn_off"
-
-    res = client.post(f"{PREFIX}/presence", json=_presence(0, present=True, zone="kitchen"))
+    assert res.status_code == 202
     assert res.json()["safetyPhase"] == "normal"
-    assert _event_types(client) == ["auto_power_reduced", "auto_power_off", "user_returned"]
-
-
-def test_near_zone_waits_longer(client, published):
-    # near 구역은 임계값이 2배(180초 -> 360초)라서 200초로는 저감되지 않고 관찰만 한다
-    res = client.post(f"{PREFIX}/presence", json=_presence(200, zone="near"))
-    assert res.json()["safetyPhase"] == "absence_watch"
     assert published == []
+    assert _event_types(client) == []
+    assert client.get(f"{PREFIX}/snapshot").json()["rooms"][ROOM]["presence"]["absentSec"] == 700
 
 
 # ---------------------------------------------------------------------------

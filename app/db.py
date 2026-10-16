@@ -33,6 +33,8 @@ CONTACTS = "contacts"
 FALL_INCIDENTS = "fall_incidents"
 RUNTIME_STATE = "runtime_state"
 SMS_LOGS = "sms_logs"
+DEVICE_STATES = "device_states"   # v0.3: 전등·정수기의 최신 상태
+AI_DECISIONS = "ai_decisions"     # v0.3: AI 중앙 판정 엔진이 보낸 판단과 실행 결과
 
 _client = None  # 이 모듈이 직접 만든 MongoClient (테스트에서 주입한 DB에는 없음)
 _database = None
@@ -104,6 +106,7 @@ def _ensure_indexes() -> None:
         _database[SESSIONS].create_index("startedAt")
         _database[FALL_INCIDENTS].create_index("detectedAt")
         _database[SMS_LOGS].create_index("seq")
+        _database[AI_DECISIONS].create_index("seq")
     except Exception:
         logger.exception("인덱스 생성 실패 (동작에는 지장 없음)")
 

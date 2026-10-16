@@ -47,7 +47,7 @@ burner = {
     "temperature": ROOM_TEMP,
     "activeSec": 0,
 }
-last_control = {"publisher": "system", "commandId": None}
+last_control = {"publisher": "user", "commandId": None}  # 켜진 직후에는 아무도 조작하지 않은 상태
 alarm = "off"
 last_processed_command_id: str | None = None
 
@@ -118,7 +118,10 @@ def apply_control(payload: dict) -> None:
         result = "rejected"
     elif cmd_type == "turn_on":
         burner["deviceState"] = "on"
-        if burner["level"] == 0:
+        if payload.get("level"):
+            # 명령에 화력이 있으면 그 화력으로 켭니다 (restore_power 등)
+            burner["level"] = payload["level"]
+        elif burner["level"] == 0:
             burner["level"] = 5
     elif cmd_type == "turn_off":
         burner["deviceState"] = "cooling" if burner["temperature"] > ROOM_TEMP + 5 else "off"

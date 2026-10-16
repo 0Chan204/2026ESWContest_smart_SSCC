@@ -20,3 +20,4 @@ README.md
 # tests 폴더는 빼되, 시뮬레이터 스크립트만 포함
 tests
 !tests/simulate_device.py
+!tests/simulate_home_devices.py

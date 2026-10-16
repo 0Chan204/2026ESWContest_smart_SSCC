@@ -22,6 +22,9 @@ from pydantic import BaseModel, Field, field_validator
 
 DeviceState = Literal["off", "on", "overheated", "cooling"]
 
+# v0.3: 가전 종류 (app/device_registry.py 참고)
+DeviceType = Literal["stove", "light", "water_purifier"]
+
 
 # ---------------------------------------------------------------------------
 # 1. 가전 <-> 서버 (MQTT로 주고받는 메시지)
@@ -96,12 +99,99 @@ class CommandRecord(BaseModel):
 
     commandId: str
     status: Literal["pending", "sent", "acked", "rejected", "failed", "timeout"]
-    type: Literal["turn_on", "turn_off", "set_level"]
+    # turn_on/turn_off/set_level: 인덕션, on/off/blink: 전등, dispense: 정수기
+    type: Literal["turn_on", "turn_off", "set_level", "on", "off", "blink", "dispense"]
     level: Optional[int] = None
-    actor: Literal["user", "system"]
+    # user: 사용자(대시보드), system: 서버 자체 조치(낙상 비상 차단 등), ai: AI 중앙 판정 엔진의 판단
+    actor: Literal["user", "system", "ai"]
     reason: Optional[str] = None
     issuedAt: str
     ackedAt: Optional[str] = None
+    # v0.3 추가 (예전 기록에는 없을 수 있음)
+    deviceId: Optional[str] = None
+    deviceType: Optional[DeviceType] = None
+    durationSec: Optional[int] = None
+    amountMl: Optional[int] = None
+    decisionId: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# 2-1. 전등·정수기 (v0.3) - 가전 <-> 서버 MQTT 메시지, 조회/제어 REST
+# ---------------------------------------------------------------------------
+
+class LightState(BaseModel):
+    """전등 -> 서버 state 토픽 메시지"""
+
+    reportedAt: str
+    power: Literal["on", "off"]
+    mode: Literal["steady", "blink"] = "steady"
+    lastControl: Optional[LastControl] = None
+
+
+class WaterPurifierState(BaseModel):
+    """정수기 -> 서버 state 토픽 메시지"""
+
+    reportedAt: str
+    status: Literal["idle", "dispensing"]
+    lastDispensedMl: Optional[int] = None
+    lastControl: Optional[LastControl] = None
+
+
+HomeDeviceCommandType = Literal["on", "off", "blink", "dispense"]
+
+
+class HomeDeviceCommandRequest(BaseModel):
+    """전등·정수기 제어 요청 (대시보드 REST, AI 판단 실행에 공통 사용)"""
+
+    type: HomeDeviceCommandType
+    durationSec: Optional[int] = Field(default=None, ge=1, le=600, description="blink 시간(초). 없으면 기본 10초")
+    amountMl: Optional[int] = Field(default=None, ge=1, le=2000, description="dispense 출수량(ml). 필수")
+
+
+class HomeDeviceCommandOut(BaseModel):
+    """서버 -> 전등·정수기 command 토픽 메시지"""
+
+    commandId: str
+    issuedAt: str
+    deviceId: str
+    type: HomeDeviceCommandType
+    durationSec: Optional[int] = None
+    amountMl: Optional[int] = None
+
+
+class HomeDeviceAck(BaseModel):
+    """전등·정수기 -> 서버 ack 토픽 메시지. state는 처리 후 기기 상태(LightState/WaterPurifierState 형식)"""
+
+    commandId: str
+    result: Literal["applied", "rejected", "failed"]
+    appliedAt: str
+    state: Optional[dict] = None
+
+
+class DeviceInfo(BaseModel):
+    """가전 1대의 현재 상태 (AI 판정 엔진과 대시보드에 공통으로 제공)"""
+
+    device: DeviceType
+    deviceId: str
+    room: str
+    online: bool
+    is_on: bool
+    current_state: Optional[dict] = None
+    control_state: Optional[Literal["user", "homevis"]] = Field(
+        default=None, description="마지막으로 상태를 바꾼 주체. user: 사용자, homevis: HomeVIS 자동 제어"
+    )
+    updatedAt: Optional[str] = None
+
+
+class DeviceListResponse(BaseModel):
+    items: list[DeviceInfo]
+
+
+class DeviceCommandAccepted(BaseModel):
+    commandId: str
+    deviceId: str
+    status: Literal["pending"] = "pending"
+    issuedAt: str
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +233,8 @@ SafetyEventType = Literal[
     "fall_resolved",
     "fall_reported",
     "fall_auto_reported",
+    # v0.3: AI 중앙 판정 엔진의 판단으로 가전을 제어함
+    "ai_control",
 ]
 SafetyEventSeverity = Literal["info", "warning", "danger"]
 
@@ -167,6 +259,7 @@ class SafetyEvent(BaseModel):
     action: Optional[str] = None
     reasoning: Optional[str] = None
     feedback: Optional[SafetyEventFeedbackRecord] = None
+    decisionId: Optional[str] = None  # v0.3: AI 판단으로 생긴 이벤트면 그 판단의 id
 
 
 class SafetyEventListResponse(BaseModel):
@@ -245,6 +338,7 @@ class SnapshotResponse(BaseModel):
     rooms: dict[str, KitchenRoomSnapshot]
     appliances: list[ApplianceSnapshot]
     activeIncident: Optional[SafetyEvent] = None
+    devices: list[DeviceInfo] = Field(default_factory=list)  # v0.3: 인덕션·전등·정수기 전체
 
 
 class StreamEnvelope(BaseModel):
@@ -378,3 +472,67 @@ class FallActionResult(BaseModel):
 
 class FallPolicy(BaseModel):
     autoReportSec: int = Field(..., description="확인 링크 미응답 시 자동 신고까지 대기 시간(초). 테스트 기본값 60초")
+
+
+# ---------------------------------------------------------------------------
+# 9. AI 중앙 판정 엔진 -> 서버 (v0.3)
+#
+# 모든 판단은 AI 중앙 판정 엔진이 하고, 서버는 결과를 받아 가전을 제어하고 기록합니다.
+# ---------------------------------------------------------------------------
+
+AiActionName = Literal["turn_on", "turn_off", "set_level", "restore_power", "on", "off", "blink", "dispense"]
+
+
+class AiAction(BaseModel):
+    """판단 결과로 실행할 가전 제어 1건"""
+
+    device: DeviceType
+    deviceId: Optional[str] = Field(default=None, description="없으면 room(또는 첫 번째) 기준으로 서버가 고름")
+    action: AiActionName
+    level: Optional[int] = Field(default=None, ge=1, le=9, description="set_level 화력")
+    durationSec: Optional[int] = Field(default=None, ge=1, le=600, description="blink 시간(초). 없으면 기본 10초")
+    amountMl: Optional[int] = Field(default=None, ge=1, le=2000, description="dispense 출수량(ml). 필수")
+
+
+class AiDecisionRequest(BaseModel):
+    decisionId: str = Field(..., min_length=1, max_length=100, description="판단 id. 같은 id로 다시 보내면 다시 실행하지 않음")
+    scenario: str = Field(..., description="bedtime_light_off / stove_absence / fall_detected / water_dispense 등")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    reason: Optional[str] = None
+    timestamp: str
+    room: Optional[str] = None
+    actions: list[AiAction] = Field(default_factory=list)
+    weatherBriefing: bool = Field(default=False, description="물 출수 시 날씨 안내 요청 (날씨 안내 기능은 추후 연결)")
+
+
+class AiActionResult(BaseModel):
+    device: DeviceType
+    deviceId: Optional[str] = None
+    action: AiActionName
+    status: Literal["sent", "rejected", "failed"]
+    commandId: Optional[str] = None
+    message: Optional[str] = None
+
+
+class AiDecisionRecord(BaseModel):
+    decisionId: str
+    scenario: str
+    confidence: float
+    reason: Optional[str] = None
+    timestamp: str
+    room: Optional[str] = None
+    receivedAt: str
+    weatherBriefing: bool = False
+    actions: list[AiActionResult] = Field(default_factory=list)
+    eventId: Optional[str] = None
+    fallIncidentId: Optional[str] = None
+    feedback: Optional[SafetyEventFeedbackRecord] = None
+
+
+class AiDecisionAccepted(AiDecisionRecord):
+    duplicate: bool = Field(default=False, description="이미 받은 decisionId라 다시 실행하지 않았으면 true")
+
+
+class AiDecisionListResponse(BaseModel):
+    items: list[AiDecisionRecord]
+    total: int

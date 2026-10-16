@@ -16,11 +16,11 @@ from fastapi import FastAPI
 
 from app import db, fall_service, mqtt_client, state_store, ws_hub
 from app.config import settings
-from app.routers import dashboard, device, stream
+from app.routers import ai, dashboard, device, home_devices, stream
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-API_VERSION = "0.2.0"
+API_VERSION = "0.3.0"
 
 # 태그 순서/설명: Swagger UI에서 이 순서 그대로 큰 섹션 헤더로 표시됩니다.
 # 각 엔드포인트의 태그는 app/routers/*.py 의 데코레이터(tags=[...])에서 지정합니다.
@@ -35,13 +35,23 @@ TAGS_METADATA = [
         "description": "낙상 감지 AI 모델의 보고 접수, 보호자의 해결/신고 처리, 자동 신고 정책.",
     },
     {
+        "name": "AI 중앙 제어",
+        "description": "AI 중앙 판정 엔진 연동. 판단에 쓸 기기 상태 조회, 판단 결과 수신(서버가 가전 제어 실행), "
+        "판단 기록과 사용자 피드백 조회. 취침 소등, 부재 시 화구 차단·화력 복구, 낙상, 물 출수 시나리오를 처리합니다.",
+    },
+    {
         "name": "AI 재실 판단",
-        "description": "AI 재실 판단 모델의 보고 접수와 부재중 자동 제어(화력 저감/전원 차단) 정책.",
+        "description": "재실 판단 결과 저장·대시보드 전달과 안전 기준값(과열, 오프라인 판정). "
+        "가전 제어 판단은 하지 않습니다 (AI 중앙 제어 참고).",
     },
     {
         "name": "인덕션 제어",
         "description": "화구 제어 명령과 인덕션 상태 조회. 가전 <-> 서버 통신 자체는 MQTT로 이루어지며, "
         "상태 조회는 서버가 받아둔 최신 값을 돌려줍니다.",
+    },
+    {
+        "name": "전등·정수기 제어",
+        "description": "전등·정수기와 전체 가전 목록 조회, 사용자의 직접 제어. 가전과 서버 사이 통신은 MQTT입니다.",
     },
     {
         "name": "대시보드 화면",
@@ -79,6 +89,8 @@ app = FastAPI(
 
 app.include_router(device.router, prefix=settings.API_PREFIX)
 app.include_router(dashboard.router, prefix=settings.API_PREFIX)
+app.include_router(home_devices.router, prefix=settings.API_PREFIX)
+app.include_router(ai.router, prefix=settings.API_PREFIX)
 app.include_router(stream.router, prefix=settings.API_PREFIX)
 
 

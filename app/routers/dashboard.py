@@ -15,7 +15,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status
 
-from app import commands_service, fall_service, safety_service, state_store
+from app import ai_service, commands_service, fall_service, safety_service, state_store
 from app.config import settings
 from app.schemas import (
     ApplianceSnapshot,
@@ -56,7 +56,9 @@ router = APIRouter()
 
 @router.post("/presence", response_model=PresenceAccepted, status_code=status.HTTP_202_ACCEPTED, tags=["AI 재실 판단"], summary="재실 판단 결과 보고 (AI 모델 → 서버)")
 def report_presence(report: PresenceReport) -> PresenceAccepted:
-    """AI 모델은 '관찰 사실'만 보고합니다. 조치 결정(자동 저감/차단)은 전적으로 서버 몫입니다."""
+    """재실 판단 결과를 저장하고 대시보드로 실시간 전달합니다.
+    v0.3부터 서버는 이 값으로 가전을 제어하지 않습니다. 제어 판단은 AI 중앙 판정 엔진이
+    POST /ai/decisions 로 보냅니다."""
     safety_phase, triggered_event_id = safety_service.evaluate_presence(report)
     return PresenceAccepted(accepted=True, safetyPhase=safety_phase, triggeredEventId=triggered_event_id)
 
@@ -92,6 +94,7 @@ def read_snapshot() -> SnapshotResponse:
         rooms={room: KitchenRoomSnapshot(presence=presence, environment={}, safetyPhase=safety_phase)},
         appliances=[appliance],
         activeIncident=active_incident,
+        devices=ai_service.get_device_states(),
     )
 
 
@@ -172,12 +175,14 @@ def submit_safety_event_feedback(event_id: str, feedback: SafetyEventFeedback) -
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 eventId를 찾을 수 없습니다.")
 
     submitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    state_store.update_safety_event(
+    updated = state_store.update_safety_event(
         event_id,
         feedback=SafetyEventFeedbackRecord(
             verdict=feedback.verdict, comment=feedback.comment, submittedAt=submitted_at
         ),
     )
+    if updated is not None:
+        ai_service.link_feedback(updated)  # AI 판단으로 생긴 이벤트면 판단 기록에도 연결
     logger.info("안전 이벤트 피드백 저장 (eventId=%s, verdict=%s)", event_id, feedback.verdict)
     return SafetyEventFeedbackResult(eventId=event_id, verdict=feedback.verdict, submittedAt=submitted_at)
 
@@ -198,14 +203,15 @@ def read_session(session_id: str) -> SessionRecord:
 # 부재중 안전 정책
 # ---------------------------------------------------------------------------
 
-@router.get("/policies/kitchen-absence", response_model=KitchenAbsencePolicy, tags=["AI 재실 판단"], summary="부재중 자동 제어 정책 조회")
+@router.get("/policies/kitchen-absence", response_model=KitchenAbsencePolicy, tags=["AI 재실 판단"], summary="안전 기준값 조회")
 def read_policy() -> KitchenAbsencePolicy:
     return state_store.get_policy()
 
 
-@router.put("/policies/kitchen-absence", response_model=KitchenAbsencePolicy, tags=["AI 재실 판단"], summary="부재중 자동 제어 정책 수정")
+@router.put("/policies/kitchen-absence", response_model=KitchenAbsencePolicy, tags=["AI 재실 판단"], summary="안전 기준값 수정")
 def update_policy(policy: KitchenAbsencePolicy) -> KitchenAbsencePolicy:
-    """코드에 임계값을 박아두지 않고 API로 분리한 이유: 시연/튜닝 때마다 재배포하지 않아도 되도록."""
+    """과열 기준(overheatEnterC/ExitC)과 오프라인 판정 시간(heartbeatTimeoutSec)을 바꿉니다.
+    v0.3부터 부재 시간 기준값(watch/reduce/offAfterSec 등)은 쓰지 않습니다 (판단은 AI 중앙 판정 엔진)."""
     state_store.set_policy(policy)
     return policy
 

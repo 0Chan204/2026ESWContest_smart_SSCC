@@ -24,6 +24,12 @@ def published(monkeypatch):
         "publish_command",
         lambda device_id, payload: commands.append({"deviceId": device_id, **payload}),
     )
+    # v0.3: 전등·정수기 명령도 같은 리스트에 모읍니다 (payload 안에 deviceId가 들어 있음)
+    monkeypatch.setattr(
+        mqtt_client,
+        "publish_device_command",
+        lambda device_id, payload: commands.append({"deviceId": device_id, **payload}),
+    )
     return commands
 
 
