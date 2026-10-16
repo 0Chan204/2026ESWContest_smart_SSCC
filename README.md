@@ -266,21 +266,21 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 
 5. **신뢰성 보강**: 지금은 QoS 1만 쓰는데, 상태 메시지에 `retain` 플래그를 추가하면(하드웨어 쪽 publish 코드에서 설정) 서버가 재시작돼도 마지막 상태를 바로 조회할 수 있습니다. 또한 명세서의 "네트워크 단절 시 Fallback 안전 로직"은 서버가 아니라 **Pico W 펌웨어 쪽에 반드시 구현**되어야 하는 부분이라는 걸 하드웨어 팀과 공유해주세요.
 
-6. **최종 배포 위치 이전**: 대회 보드(라즈베리파이 5, LG AI-Native OS)에서는 Docker로 실행합니다. 10장을 참고하세요. 하드웨어가 항상 같은 주소로 접속할 수 있게 보드의 IP를 고정해 두는 것이 좋습니다.
+6. **최종 배포 위치 이전**: 대회 보드(라즈베리파이 4, LG AI-Native OS)에서는 Docker로 실행합니다. 10장을 참고하세요. 하드웨어가 항상 같은 주소로 접속할 수 있게 보드의 IP를 고정해 두는 것이 좋습니다.
 
 7. **보안**: 지금 Mosquitto는 `allow_anonymous true`로 인증 없이 열려 있습니다. 발표/시연 시 공유 와이파이에서는 같은 네트워크에 있는 아무나 명령을 위조해서 보낼 수 있으니, 최소한 사용자명/비밀번호 인증(`.env`의 `MQTT_USERNAME`/`MQTT_PASSWORD`, `mosquitto_passwd`로 설정) 정도는 시연 전에 추가하는 걸 권장합니다.
 
 ---
 
-## 10. Docker로 실행하기 (라즈베리파이 5 / 노트북 / 맥)
+## 10. Docker로 실행하기 (라즈베리파이 4 / 노트북 / 맥)
 
 MongoDB, Mosquitto, 백엔드를 컨테이너 3개로 한 번에 띄웁니다. 백엔드 이미지는 `develop`에 머지될 때마다
-GitHub Actions가 빌드해서 GHCR(`ghcr.io/2026esec-sscc/homevis-backend`)에 올립니다. arm64(라즈베리파이 5, M 시리즈 맥)와
+GitHub Actions가 빌드해서 GHCR(`ghcr.io/2026esec-sscc/homevis-backend`)에 올립니다. arm64(라즈베리파이 4·5, M 시리즈 맥)와
 amd64(일반 노트북, 서버)를 모두 지원합니다.
 
 ```
 docker compose
- ├ mongo      MongoDB 7 (데이터는 mongo-data 볼륨에 저장)
+ ├ mongo      MongoDB 4.4 (데이터는 mongo-data 볼륨에 저장)
  ├ mosquitto  MQTT 브로커, 1883 포트
  ├ backend    FastAPI, 8000 포트
  └ simulator  가짜 인덕션 (선택, --profile sim 일 때만)
@@ -317,9 +317,9 @@ curl http://localhost:8000/health   # {"status":"ok","storage":"mongodb"} 이면
 ```bash
 # 인터넷 되는 PC
 docker pull --platform linux/arm64 ghcr.io/2026esec-sscc/homevis-backend:develop
-docker pull --platform linux/arm64 mongo:7
+docker pull --platform linux/arm64 mongo:4.4
 docker pull --platform linux/arm64 eclipse-mosquitto:2
-docker save -o homevis-images.tar ghcr.io/2026esec-sscc/homevis-backend:develop mongo:7 eclipse-mosquitto:2
+docker save -o homevis-images.tar ghcr.io/2026esec-sscc/homevis-backend:develop mongo:4.4 eclipse-mosquitto:2
 
 # 보드
 docker load -i homevis-images.tar
@@ -327,7 +327,10 @@ docker compose up -d
 ```
 
 **주의**
-- MongoDB 7은 라즈베리파이 5에서는 동작하지만 라즈베리파이 4의 CPU에서는 동작하지 않습니다.
+- MongoDB는 기본으로 4.4를 씁니다. 라즈베리파이 4의 CPU에서는 5.0 이상이 실행되지 않기 때문입니다.
+  4.4는 공식 지원이 끝난 버전이라 대회장 로컬 네트워크 안에서만 쓰는 것을 전제로 합니다.
+  파이 5나 노트북에서 최신 버전을 쓰려면 `.env`에 `MONGO_IMAGE=mongo:7`을 넣으면 됩니다.
+- MongoDB 버전을 바꾸면 기존 데이터(볼륨)를 열지 못할 수 있습니다. 특히 7에서 4.4로 내릴 때는 `docker compose down -v`로 데이터를 지운 뒤 실행하세요.
 - MongoDB 포트(27017)는 그 기기 안에서만 접속할 수 있게 열어 두었습니다.
 - Mosquitto는 아직 인증 없이 열려 있습니다(9장 7번). 공유 와이파이에서 시연하기 전에 인증을 추가해야 합니다.
 

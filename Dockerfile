@@ -1,5 +1,5 @@
 # HomeVIS 백엔드 이미지
-# - 공식 python 이미지가 amd64/arm64를 모두 지원하므로 노트북(x86), 라즈베리파이 5, M 시리즈 맥에서 같은 Dockerfile로 빌드됩니다.
+# - 공식 python 이미지가 amd64/arm64를 모두 지원하므로 노트북(x86), 라즈베리파이 4·5, M 시리즈 맥에서 같은 Dockerfile로 빌드됩니다.
 # - .env(비밀값)는 이미지에 넣지 않습니다. 실행할 때 docker compose가 env_file로 넣어줍니다.
 FROM python:3.11-slim
 
