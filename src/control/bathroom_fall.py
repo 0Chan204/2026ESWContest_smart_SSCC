@@ -14,6 +14,7 @@ class BathroomFallScenario:
         self.state = State.NORMAL_BATHROOM_USE
         self._active = False
         self._last = None
+        self._behavior_valid_until = None
         self._previous_activity = None
         self._still_since = None
         self._moving_since = None
@@ -29,7 +30,8 @@ class BathroomFallScenario:
         self._uncertain = True
 
     def tick(self, timestamp: float) -> BathroomFallDecision:
-        if self._last is None or timestamp - self._last >= self.sensing_config.UNKNOWN_TIMEOUT:
+        if (self._last is None or timestamp - self._last >= self.sensing_config.UNKNOWN_TIMEOUT
+                or (self._behavior_valid_until is not None and timestamp >= self._behavior_valid_until)):
             self._interrupt()
         # Silence never confirms stillness or recovery, and never clears risk.
         return self._decision(timestamp)
@@ -123,9 +125,17 @@ class BathroomFallScenario:
             )
 
     def update(self, sample: SensingUpdate, induction_on: bool = False) -> BathroomFallDecision:
+        observed_at = sample.activity_timestamp if sample.activity_timestamp is not None else sample.timestamp
+        if self._behavior_valid_until is not None and observed_at > self._behavior_valid_until:
+            self._interrupt()
+        self._behavior_valid_until = sample.activity_valid_until
         self.tick(sample.timestamp)
         self._last = sample.timestamp
-        if (not sample.detected or sample.confidence < self.sensing_config.MIN_CONFIDENCE
+        if (sample.observation_valid is False or sample.activity_observed is False
+                or (sample.activity_valid_until is not None and sample.timestamp >= sample.activity_valid_until)
+                or (sample.activity_confidence is not None
+                    and sample.activity_confidence < self.sensing_config.MIN_CONFIDENCE)
+                or not sample.detected or sample.confidence < self.sensing_config.MIN_CONFIDENCE
                 or sample.location != "bathroom"):
             self._interrupt()
             return self._decision(sample.timestamp)
@@ -146,8 +156,8 @@ class BathroomFallScenario:
         if sample.motion_state == "moving" and sample.fall_detected is not True:
             self._still_since = None
             if self._moving_since is None:
-                self._moving_since = sample.timestamp
-            if sample.timestamp - self._moving_since >= c.RECOVERY_CONFIRM_SECONDS:
+                self._moving_since = observed_at
+            if observed_at - self._moving_since >= c.RECOVERY_CONFIRM_SECONDS:
                 self.state = State.RECOVERED
                 self._active = False
                 self._duration = 0.0
@@ -156,8 +166,8 @@ class BathroomFallScenario:
         elif sample.motion_state == "still":
             self._moving_since = None
             if self._still_since is None:
-                self._still_since = sample.timestamp
-            duration = sample.timestamp - self._still_since
+                self._still_since = observed_at
+            duration = observed_at - self._still_since
             self._duration = max(self._duration, duration)
             if duration >= c.FALL_EMERGENCY_SECONDS:
                 self.state = State.FALL_EMERGENCY

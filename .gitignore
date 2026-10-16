@@ -6,3 +6,6 @@ venv/
 
 output/*
 !output/.gitkeep
+.env
+.env.*
+!.env.example

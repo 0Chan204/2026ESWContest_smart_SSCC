@@ -89,13 +89,14 @@ class CentralController:
 
     def update_sensing(self, sample: SensingUpdate) -> RealtimeDecision:
         decision = self.realtime_engine.update_sensing(sample)
-        self.routine_manager.record(
-            timestamp=sample.timestamp,
-            location=sample.location,
-            activity=sample.activity,
-            confidence=sample.confidence,
-            user_id=self.user_id,
-        )
+        if sample.observation_valid is not False:
+            self.routine_manager.record(
+                timestamp=sample.timestamp,
+                location=sample.location,
+                activity=sample.activity,
+                confidence=sample.confidence,
+                user_id=self.user_id,
+            )
         self._collect_automation(decision)
         command = self.morning_water.update(sample, self.water_dispenser_available)
         if command is not None:
@@ -169,6 +170,17 @@ class CentralController:
             *self.drain_device_commands(), *self.drain_scenario_actions()
         ]
         return sorted(requests, key=lambda request: request.timestamp)
+
+    def peek_outputs(self) -> list[AutomationAction | DeviceCommand | ScenarioAction]:
+        """Non-destructive snapshot for a single-owner runtime's durable outbox."""
+        return sorted([*self.automation_actions, *self.device_commands, *self.scenario_actions],
+                      key=lambda item: item.timestamp)
+
+    def acknowledge_outputs(self, saved: list) -> None:
+        """Remove only objects persisted successfully; preserve later appended outputs."""
+        saved_ids = {id(item) for item in saved}
+        for queue in (self.automation_actions, self.device_commands, self.scenario_actions):
+            queue[:] = [item for item in queue if id(item) not in saved_ids]
 
     def _collect_automation(self, decision: RealtimeDecision) -> None:
         scored = self.realtime_engine.last_confidence_decision

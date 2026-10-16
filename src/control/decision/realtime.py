@@ -47,6 +47,9 @@ class RealtimeDecisionEngine:
         self._homevis_reduced = False
         self._user_override = False
         self.last_confidence_decision = None
+        self.appliance_invalid = False
+        self.sensing_invalid = False
+        self.automatic_restore_enabled = True
 
     def _validate_time(self, timestamp, last=None):
         finite("timestamp", timestamp)
@@ -62,9 +65,11 @@ class RealtimeDecisionEngine:
             self._candidate = None
             self.outside_start_time = None
         self._sensing = sample
+        self.sensing_invalid = sample.observation_valid is False
         self._sensor_history.append((sample.location, sample.confidence, sample.detected))
         self.last_sensor_update = sample.timestamp
-        uncertain = not sample.detected or sample.confidence < c.MIN_CONFIDENCE or sample.location == "unknown"
+        uncertain = (sample.observation_valid is False or not sample.detected
+                     or sample.confidence < c.MIN_CONFIDENCE or sample.location == "unknown")
         if uncertain:
             if self._unknown_since is None:
                 self._unknown_since = sample.timestamp
@@ -110,6 +115,7 @@ class RealtimeDecisionEngine:
         else:
             self._operating_since = None
         self._appliance = sample
+        self.appliance_invalid = False
         if sample.control_state == "HOMEVIS_REDUCED":
             self._homevis_reduced = True
             self._user_override = False
@@ -130,12 +136,26 @@ class RealtimeDecisionEngine:
         c = self.config
         a = self._appliance
         sensor_uncertain = (
-            self.last_sensor_update is None
+            self.sensing_invalid or self.last_sensor_update is None
             or timestamp - self.last_sensor_update >= c.UNKNOWN_TIMEOUT
             or (self._unknown_since is not None and timestamp - self._unknown_since >= c.UNKNOWN_TIMEOUT)
             or self.last_user_location == "unknown"
+            or (self._sensing is not None and self._sensing.observation_valid is False)
+            or (self._sensing is not None and self._sensing.observation_valid is not None
+                and (not self._sensing.detected or self._sensing.confidence < c.MIN_CONFIDENCE
+                     or self._sensing.location == "unknown"))
         )
-        stale = a is None or timestamp - a.timestamp >= c.APPLIANCE_TIMEOUT
+        observation_valid = bool(
+            not self.sensing_invalid and self._sensing is not None and self._sensing.observation_valid is not False
+            and self._sensing.detected and self._sensing.location != "unknown"
+            and self._sensing.confidence >= c.MIN_CONFIDENCE
+            and timestamp - self._sensing.timestamp < c.UNKNOWN_TIMEOUT
+        )
+        sensing_status = ("timeout" if self.last_sensor_update is None
+                          or timestamp - self.last_sensor_update >= c.UNKNOWN_TIMEOUT else
+                          "invalid" if not observation_valid else
+                          "unconfirmed" if self._candidate != self.last_user_location else "valid")
+        stale = self.appliance_invalid or a is None or timestamp - a.timestamp >= c.APPLIANCE_TIMEOUT
         self.current_absence_duration = 0.0 if self.kitchen_exit_time is None else timestamp - self.kitchen_exit_time
         self.appliance_operating_duration = 0.0 if self._operating_since is None else timestamp - self._operating_since
         high = a is not None and (
@@ -155,15 +175,17 @@ class RealtimeDecisionEngine:
         if (sensor_uncertain or stale) and not (a is not None and not stale and not a.active and not emergency):
             if self.current_state == RealtimeState.DANGER:
                 state, reason = "DANGER", "기존 위험 상태에서 데이터가 불확실하여 위험을 유지함"
-            elif self.current_state == RealtimeState.WARNING and state == "SENSOR_UNCERTAIN":
+            elif self.current_state == RealtimeState.WARNING and state not in {"WARNING", "DANGER"}:
                 state, reason = "WARNING", "기존 경고 상태에서 데이터가 불확실하여 경고를 유지함"
+            elif self.current_state == RealtimeState.CAUTION and state in {"NORMAL", "RECOVERED", "TEMPORARY_ABSENCE"}:
+                state, reason = "CAUTION", "불확실한 관측으로 기존 주의 상태를 해제하지 않음"
         if state == "NORMAL" and self.current_state in {RealtimeState.WARNING, RealtimeState.DANGER}:
             state, reason = "RECOVERED", "주방 복귀 또는 조리기기 종료로 위험 상태가 해제됨"
         self.previous_state = self.current_state
         self.current_state = RealtimeState(state)
         score, action, _ = STATE_OUTPUT[state]
         confidence_decision = self._evaluate_automation(
-            timestamp, sensor_uncertain=sensor_uncertain, appliance_stale=stale
+            timestamp, sensor_uncertain=sensor_uncertain or not observation_valid, appliance_stale=stale
         )
         return RealtimeDecision(
             self.current_state, self.previous_state, reason, self.last_user_location,
@@ -172,6 +194,7 @@ class RealtimeDecisionEngine:
             None if a is None else a.power_watts, None if a is None else a.temperature_c,
             None if stale else self._power_rate, None if stale else self._temperature_rate,
             None if confidence_decision is None else confidence_decision.to_dict(),
+            observation_valid, sensing_status,
         )
 
     def _evaluate_automation(self, timestamp, *, sensor_uncertain, appliance_stale):
@@ -194,7 +217,15 @@ class RealtimeDecisionEngine:
                 feedback_score=service.feedback_score(self.user_id, scenario),
             )
             guard = None
-            if not appliance.active:
+            if not self.automatic_restore_enabled:
+                guard = "restore_control_provenance_unconfirmed"
+            elif sensor_uncertain or sensing.location != "kitchen":
+                guard = "sensing_invalid"
+            elif appliance_stale:
+                guard = "appliance_stale"
+            elif appliance.smoke or appliance.fire or appliance.abnormal or self.current_state == RealtimeState.DANGER:
+                guard = "emergency_active"
+            elif not appliance.active:
                 guard = "stove_off"
             elif self._user_override or appliance.control_state == "USER_OVERRIDE":
                 guard = "user_override"
@@ -214,7 +245,10 @@ class RealtimeDecisionEngine:
         consistency = extractor.sensor_consistency(self._sensor_history, self.last_user_location)
         features = extractor.kitchen_leave(
             location_confidence=0.0 if sensor_uncertain else sensing.confidence,
-            activity_confidence=(sensing.confidence if sensing.activity_confidence is None
+            activity_confidence=(0.0 if sensing.activity_confidence is None
+                                 or sensing.activity_observed is False
+                                 or (sensing.activity_valid_until is not None
+                                     and timestamp >= sensing.activity_valid_until)
                                  else sensing.activity_confidence),
             leave_duration=self.current_absence_duration,
             current_stove_power=appliance.power_watts,
@@ -224,7 +258,9 @@ class RealtimeDecisionEngine:
             feedback_score=service.feedback_score(self.user_id, scenario),
         )
         guard = None
-        if not appliance.active:
+        if sensor_uncertain:
+            guard = "sensing_invalid"
+        elif not appliance.active:
             guard = "stove_off"
         elif appliance_stale:
             guard = "appliance_stale"

@@ -1,5 +1,10 @@
 # 실시간 중앙 판단 설계 및 적용 내역
 
+최종 Wi-Fi 위치 JSON과 백엔드 클라이언트는 [통합 문서](backend_integration.md)를 참고하세요.
+해당 경로는 원본 null/reason, 관측 유효성, 측정 시각을 보존하며 미측정 행동을 만들지 않습니다.
+직접 호출의 unknown 유예와 별도로 `observation_valid=False` 입력은 즉시 불확실하게 처리합니다.
+마지막 확인 위치와 현재 관측의 유효성(`observation_valid`, `sensing_status`)을 함께 확인해야 합니다.
+
 > 이 문서의 `action`은 기존 알림/위험 상태 출력이다. 화력·전등 자동 제어 명령은
 > [Confidence 기반 자동 제어](confidence_control.md)의 점수·threshold 경로에서 별도로 생성한다.
 

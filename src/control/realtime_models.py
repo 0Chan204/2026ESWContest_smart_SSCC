@@ -31,12 +31,23 @@ class SensingUpdate:
     motion_state: str | None = None
     fall_detected: bool | None = None
     activity_confidence: float | None = None
+    # None preserves the legacy direct-call contract; adapters supply explicit validity.
+    observation_valid: bool | None = None
+    activity_observed: bool | None = None
+    activity_valid_until: float | None = None
+    activity_timestamp: float | None = None
 
     def __post_init__(self):
         if self.location not in {"kitchen", "bathroom", "living_room", "bedroom", "entrance", "outside", "unknown"}:
             raise ValueError("Unsupported realtime location")
         finite("timestamp", self.timestamp)
         finite("confidence", self.confidence)
+        for name in ("observation_valid", "activity_observed"):
+            if getattr(self, name) is not None and type(getattr(self, name)) is not bool:
+                raise ValueError(f"{name} must be boolean or None")
+        for name in ("activity_valid_until", "activity_timestamp"):
+            if getattr(self, name) is not None:
+                finite(name, getattr(self, name))
         if not 0 <= self.confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
         if self.activity_confidence is not None:
@@ -102,6 +113,8 @@ class RealtimeDecision:
     power_rise_per_second: float | None
     temperature_rise_per_second: float | None
     confidence_decision: dict | None = None
+    observation_valid: bool = False
+    sensing_status: str = "unavailable"
 
     def to_dict(self):
         data = asdict(self)

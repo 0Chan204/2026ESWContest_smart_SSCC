@@ -14,6 +14,7 @@ class BedtimeLightScenario:
         self._lying_since: float | None = None
         self._last: float | None = None
         self._requested = False
+        self._valid_until = None
 
     def _reset(self) -> None:
         self.state = State.AWAKE
@@ -21,18 +22,30 @@ class BedtimeLightScenario:
         self._requested = False
 
     def tick(self, timestamp: float) -> ScenarioAction | None:
+        if self._valid_until is not None and timestamp >= self._valid_until:
+            self._reset()
+            return None
         if self._last is None or timestamp - self._last >= self.sensing_config.UNKNOWN_TIMEOUT:
             self._reset()
             return None
         return self._maybe_request(timestamp)
 
     def update(self, sample: SensingUpdate) -> ScenarioAction | None:
+        observed_at = sample.activity_timestamp if sample.activity_timestamp is not None else sample.timestamp
+        if self._valid_until is not None and observed_at > self._valid_until:
+            self._reset()
         if (self._last is not None
                 and sample.timestamp - self._last >= self.sensing_config.UNKNOWN_TIMEOUT):
             self._reset()
         self._last = sample.timestamp
+        self._valid_until = sample.activity_valid_until
         reliable = (
-            sample.detected
+            sample.observation_valid is not False
+            and sample.activity_observed is not False
+            and (sample.activity_valid_until is None or sample.timestamp < sample.activity_valid_until)
+            and (sample.activity_confidence is None
+                 or sample.activity_confidence >= self.sensing_config.MIN_CONFIDENCE)
+            and sample.detected
             and sample.confidence >= self.sensing_config.MIN_CONFIDENCE
             and sample.location == "bedroom"
             and sample.activity == "lying"
@@ -42,9 +55,9 @@ class BedtimeLightScenario:
             self._last = sample.timestamp
             return None
         if self._lying_since is None:
-            self._lying_since = sample.timestamp
+            self._lying_since = observed_at
         self.state = State.LYING
-        return self._maybe_request(sample.timestamp)
+        return self._maybe_request(observed_at)
 
     def _maybe_request(self, timestamp: float) -> ScenarioAction | None:
         if self._lying_since is None or self._requested:

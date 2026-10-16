@@ -29,8 +29,10 @@ class MorningWaterScenario:
         self.state = State.IDLE
         self.morning_water_dispensed = False
         self.dispense_count = 0
+        self.reserve_allowance = None  # Optional durable reservation hook, before command emission.
         self._date: date | None = None
         self._last: float | None = None
+        self._behavior_valid_until: float | None = None
         self._wake_candidate: float | None = None
         self._wake_time: float | None = None
         self._kitchen_since: float | None = None
@@ -143,13 +145,29 @@ class MorningWaterScenario:
             self._wake_candidate = self._kitchen_since = None
             if self._wake_time is None:
                 self.state = State.IDLE
+        if self._behavior_valid_until is not None and timestamp >= self._behavior_valid_until:
+            self._wake_candidate = self._kitchen_since = None
+            if self._wake_time is None:
+                self.state = State.IDLE
 
     def update(self, sample: SensingUpdate, available: bool) -> DeviceCommand | None:
+        observed_at = sample.activity_timestamp if sample.activity_timestamp is not None else sample.timestamp
+        if self._behavior_valid_until is not None and observed_at > self._behavior_valid_until:
+            self._wake_candidate = self._kitchen_since = None
+            if self._wake_time is None:
+                self.state = State.IDLE
+        self._behavior_valid_until = sample.activity_valid_until
         self.tick(sample.timestamp)
         self._last = sample.timestamp
         c = self.config
-        if (not sample.detected or sample.confidence < self.sensing_config.MIN_CONFIDENCE
+        if (sample.observation_valid is False or sample.activity_observed is False
+                or (sample.activity_valid_until is not None and sample.timestamp >= sample.activity_valid_until)
+                or (sample.activity_confidence is not None
+                    and sample.activity_confidence < self.sensing_config.MIN_CONFIDENCE)
+                or not sample.detected or sample.confidence < self.sensing_config.MIN_CONFIDENCE
                 or sample.location == "unknown"):
+            if sample.activity_observed is False:
+                self._reset_event()
             self._wake_candidate = self._kitchen_since = None
             if self._wake_time is None:
                 self.state = State.IDLE
@@ -161,9 +179,9 @@ class MorningWaterScenario:
             elif (self.state == State.SLEEPING and sample.location == "bedroom"
                   and sample.activity in {"sitting", "standing", "walking"}):
                 if self._wake_candidate is None:
-                    self._wake_candidate = sample.timestamp
-                if sample.timestamp - self._wake_candidate >= c.WAKE_CONFIRM_SECONDS:
-                    self._wake_time = sample.timestamp
+                    self._wake_candidate = observed_at
+                if observed_at - self._wake_candidate >= c.WAKE_CONFIRM_SECONDS:
+                    self._wake_time = observed_at
                     self.state = State.WAKE_UP_DETECTED
             else:
                 self._reset_event()
@@ -187,6 +205,8 @@ class MorningWaterScenario:
         if not available or self.dispense_count >= c.MAX_MORNING_AUTO_DISPENSE:
             return None
         self.state = State.WATER_DISPENSE_REQUEST
+        if self.reserve_allowance is not None:
+            self.reserve_allowance(str(self._date), self.dispense_count + 1)
         self.dispense_count += 1
         self.morning_water_dispensed = True
         self._wake_time = self._kitchen_since = None

@@ -1,5 +1,22 @@
 # HomeVIS 주방 중앙 제어 및 안전 알림 모듈
 
+## 백엔드 클라이언트와 최종 위치 입력
+
+`src/integration`에서 실제 계약의 장비 조회 → 기존 판단 → 판단 전송 경로를 제공합니다.
+기본은 Mock이며, 위치 JSON의 `time`/`location`/`location_confidence`와 원본 오류 정보를 보존합니다.
+현재 위치 입력만으로 행동을 생성하지 않으며, 취침·기상 출수·낙상에 필요한 행동 입력은 별도입니다.
+
+```powershell
+python -m pytest -q
+python -m examples.backend_integration_demo
+python -m examples.backend_integration_demo --with-mock-behavior
+```
+
+두 번째 데모 옵션은 **별도 가상 행동 및 Mock 전용 계약**을 명시적으로 사용합니다.
+미확정 실전 confidence·제어·낙상 계약은 전송을 차단합니다.
+설정, 시간/유효성, 재시도·재시작, 실제 연결 전 합의 사항은
+[백엔드 통합 문서](docs/backend_integration.md)를 참고하세요.
+
 ## Confidence 기반 자동 제어
 
 기존 실시간 위험 판단과 LLM/TTS 경로를 유지하면서 주방 화력 감소·복구 및 전등 제어에

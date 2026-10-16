@@ -52,7 +52,7 @@ class LightContext:
     presence_duration: float = 0.0
     absence_duration: float = 0.0
     location_confidence: float = 1.0
-    activity_confidence: float = 1.0
+    activity_confidence: float = 0.0
     sensor_consistency: float = 1.0
 
     def __post_init__(self) -> None:

@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 from src.llm.adapters.base import BaseLLMAdapter
-from src.llm.adapters.exaone import EXAONEAdapter
-from src.llm.adapters.llama import LlamaAdapter
-from src.llm.adapters.qwen import QwenAdapter
-from src.llm.adapters.gemini import GeminiAdapter
 
 
 def create_llm(name: str | None) -> BaseLLMAdapter | None:
@@ -14,15 +10,19 @@ def create_llm(name: str | None) -> BaseLLMAdapter | None:
         return None
 
     if normalized == "gemini":
+        from src.llm.adapters.gemini import GeminiAdapter
         return GeminiAdapter()
 
     if normalized == "qwen":
+        from src.llm.adapters.qwen import QwenAdapter
         return QwenAdapter()
 
     if normalized == "llama":
+        from src.llm.adapters.llama import LlamaAdapter
         return LlamaAdapter()
 
     if normalized == "exaone":
+        from src.llm.adapters.exaone import EXAONEAdapter
         return EXAONEAdapter()
 
     raise ValueError(
