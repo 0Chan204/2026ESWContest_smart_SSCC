@@ -4,7 +4,8 @@ POST /api/v1/safety/fall-events 를 호출해보는 테스트 스크립트입니
 
 사용 방법:
     # 1) 서버가 떠 있는 상태에서 (uvicorn app.main:app --reload)
-    # 2) 보호자 연락처를 먼저 등록해두면 실제 SMS 발송까지 확인 가능:
+    # 2) 사용자/보호자 연락처를 먼저 등록해두면 실제 SMS 발송까지 확인 가능
+    #    (사용자에게 먼저 가고, userAlertWaitSec 뒤에 보호자에게 갑니다):
     #    curl -X PUT http://localhost:8000/api/v1/guardian \
     #      -H "Content-Type: application/json" \
     #      -d '{"name": "보호자", "phone": "01000000000"}'
@@ -14,8 +15,9 @@ POST /api/v1/safety/fall-events 를 호출해보는 테스트 스크립트입니
 실행하면:
 - 낙상 이벤트 1건을 서버로 보내고, 응답으로 받은 confirmUrl(확인 링크)을 출력합니다.
 - 서버 로그에서 "인덕션 비상 전원 차단"과 "SMS 발송(또는 미설정 경고)"을 확인할 수 있습니다.
-- 정책(policies/fall-safety)의 autoReportSec(기본 60초) 안에 아무 응답이 없으면
-  서버가 자동으로 '신고' 처리합니다. 그 전에 직접 해결/신고를 호출해볼 수도 있습니다.
+- 사용자가 userAlertWaitSec(기본 30초) 안에 응답하지 않으면 보호자에게 넘어가고,
+  그 뒤 autoReportSec(기본 60초) 안에도 응답이 없으면 서버가 자동으로 '신고' 처리합니다.
+  그 전에 직접 해결/신고를 호출해볼 수도 있습니다.
 """
 
 import sys

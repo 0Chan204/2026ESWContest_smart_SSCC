@@ -13,6 +13,11 @@ v0.2.1 추가 (낙상 사고 안전 기능):
   생애주기(FallIncident), 낙상 안전 정책(FallPolicy) 스키마 추가
 - SafetyEventType에 fall_detected / fall_resolved / fall_reported /
   fall_auto_reported 4종 추가
+
+v0.3.1 추가 (낙상 대응 단계화):
+- FallIncident에 stage / guardianAlertAt / userNotified / lightBlinkSent 등 단계 정보 추가
+- FallPolicy에 userAlertWaitSec(사용자 -> 보호자 대기 시간) 추가
+- SafetyEventType에 fall_escalated, SmsPurpose에 fall_user_alert 추가
 """
 
 import re
@@ -233,6 +238,8 @@ SafetyEventType = Literal[
     "fall_resolved",
     "fall_reported",
     "fall_auto_reported",
+    # v0.3.1: 사용자가 응답하지 않아 보호자에게 알림을 넘김
+    "fall_escalated",
     # v0.3: AI 중앙 판정 엔진의 판단으로 가전을 제어함
     "ai_control",
 ]
@@ -352,12 +359,14 @@ class StreamEnvelope(BaseModel):
 # ---------------------------------------------------------------------------
 # 8. 낙상 사고 안전 기능 (v0.2.1 추가)
 #
-# 흐름: 낙상 감지 AI 모델 -> POST /safety/fall-events -> 서버가
-#   (1) 인덕션 즉시 비상 전원 차단(0단계), (2) 안전 이벤트 생성 + 대시보드 알림,
-#   (3) 보호자에게 SMS로 확인 링크 발송 을 동시에 수행하고 FallIncident를 만듭니다.
-# 보호자가 SMS 링크(프론트가 만드는 모바일 페이지)에서 "해결" 또는 "신고"를 누르면
-# 그 페이지가 POST .../resolve 또는 .../report를 호출합니다.
-# 일정 시간(policy.autoReportSec) 안에 아무 응답이 없으면 서버가 자동으로 "신고" 처리합니다.
+# 흐름 (v0.3.1 단계화): 낙상 감지 -> POST /safety/fall-events 또는 AI 판단(fall_detected) -> 서버가
+#   즉시: 인덕션 비상 전원 차단(0단계) + 전등 깜빡임 + 안전 이벤트 생성/대시보드 알림
+#   1차: 사용자 본인에게 확인 링크 문자 (+ 위의 대시보드 알림)
+#   2차: policy.userAlertWaitSec 안에 응답이 없으면 보호자에게 확인 링크 문자
+#        (사용자 문자를 못 보내도 대시보드로 응답할 수 있으므로 대기는 그대로. 0이면 동시에 알림)
+#   3차: 보호자 알림 뒤 policy.autoReportSec 안에도 응답이 없으면 자동 "신고" 처리
+# 사용자/보호자가 링크(프론트의 모바일 페이지)에서 "해결"(괜찮음) 또는 "신고"를 누르면
+# 그 페이지가 POST .../resolve 또는 .../report를 호출하고, 그 뒤 단계는 진행되지 않습니다.
 # ---------------------------------------------------------------------------
 
 def _normalize_phone(value: str) -> str:
@@ -371,7 +380,7 @@ def _normalize_phone(value: str) -> str:
 
 class UserContact(BaseModel):
     """대시보드에서 등록/수정하는 사용자(거주자 본인) 연락처.
-    낙상 문자는 보호자에게만 가고(팀 결정), 사용자 번호는 등록 확인 문자와 정보 표시용입니다."""
+    낙상이 감지되면 이 번호로 먼저(1차) 확인 링크 문자가 갑니다. (v0.3.1)"""
 
     name: str = Field(..., min_length=1)
     phone: str = Field(..., description="하이픈 유무 상관없음. 저장 시 숫자만 남깁니다.")
@@ -401,7 +410,8 @@ class GuardianContactUpdateResult(BaseModel):
     message: str
 
 
-SmsPurpose = Literal["user_verification", "guardian_verification", "fall_alert"]
+# fall_alert: 보호자에게 보내는 낙상 알림 / fall_user_alert: 사용자 본인에게 보내는 1차 낙상 알림
+SmsPurpose = Literal["user_verification", "guardian_verification", "fall_alert", "fall_user_alert"]
 
 
 class SmsLog(BaseModel):
@@ -431,6 +441,8 @@ class FallDetectedReport(BaseModel):
 
 
 FallIncidentStatus = Literal["pending", "resolved", "reported", "auto_reported"]
+# 지금 응답을 기다리는 단계: user(사용자 본인 응답 대기) -> guardian(보호자 응답 대기)
+FallStage = Literal["user", "guardian"]
 
 
 class FallIncident(BaseModel):
@@ -443,6 +455,17 @@ class FallIncident(BaseModel):
     confidence: float
     confirmUrl: str = Field(..., description="SMS로 발송되는, 프론트의 모바일 확인 페이지 링크")
     autoReportAt: str = Field(..., description="이 시각까지 응답이 없으면 자동으로 신고 처리됨")
+    stage: FallStage = Field(
+        default="guardian",
+        description="지금 응답을 기다리는 대상. user면 guardianAlertAt에 보호자에게 넘어감",
+    )
+    guardianAlertAt: Optional[str] = Field(
+        default=None, description="사용자가 응답하지 않으면 이 시각에 보호자에게 알림 (stage=user일 때)"
+    )
+    guardianAlertedAt: Optional[str] = Field(default=None, description="보호자 알림 단계로 넘어간 시각")
+    userNotified: bool = Field(default=False, description="사용자 본인에게 1차 문자를 발송했는지 여부")
+    lightBlinkSent: bool = Field(default=False, description="전등 깜빡임 명령을 전송했는지 여부")
+    lightDeviceId: Optional[str] = Field(default=None, description="깜빡임 명령을 보낸 전등")
     shutoffSent: bool = Field(
         default=False,
         description="인덕션 차단 명령을 전송했는지 여부. 전송 성공이며, 실제로 꺼졌는지는 인덕션 상태로 확인",
@@ -462,6 +485,11 @@ class FallIncidentAccepted(BaseModel):
     confirmUrl: str
     shutoffSent: bool
     guardianNotified: bool
+    userNotified: bool = False
+    lightBlinkSent: bool = False
+    stage: FallStage = "guardian"
+    guardianAlertAt: Optional[str] = None
+    autoReportAt: Optional[str] = None
 
 
 class FallActionResult(BaseModel):
@@ -471,7 +499,14 @@ class FallActionResult(BaseModel):
 
 
 class FallPolicy(BaseModel):
-    autoReportSec: int = Field(..., description="확인 링크 미응답 시 자동 신고까지 대기 시간(초). 테스트 기본값 60초")
+    userAlertWaitSec: int = Field(
+        default=30,
+        ge=0,
+        description="사용자 본인이 응답하지 않을 때 보호자에게 알리기까지 대기 시간(초). 0이면 사용자와 보호자에게 동시에 알림",
+    )
+    autoReportSec: int = Field(
+        ..., ge=0, description="보호자 알림 뒤에도 응답이 없을 때 자동 신고까지 대기 시간(초). 테스트 기본값 60초"
+    )
 
 
 # ---------------------------------------------------------------------------

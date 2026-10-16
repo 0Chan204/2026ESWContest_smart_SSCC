@@ -66,8 +66,24 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 | `bedtime_light_off` | `actions` 실행 (예: 전등 off) |
 | `stove_absence` | `actions` 실행. 인덕션을 끄거나 낮추면 직전 화력을 저장하고, `restore_power`로 그 화력으로 다시 켭니다 |
 | `water_dispense` | `actions` 실행 (예: 정수기 dispense 250ml) |
-| `fall_detected` | 기존 낙상 처리 실행: 인덕션 비상 차단, 대시보드 알림, 보호자 문자, 자동 신고 타이머 (단계별 대응은 다음 버전) |
+| `fall_detected` | 낙상 단계별 대응 실행 (아래 표). 인덕션 `turn_off`와 전등 `blink`는 서버가 직접 하므로 `actions`는 비워도 됩니다 |
 | 그 외 | `actions` 실행 |
+
+낙상 단계별 대응 (`fall_detected`, 또는 `POST /api/v1/safety/fall-events`)
+
+| 단계 | 시점 | 서버 동작 |
+| --- | --- | --- |
+| 즉시 | 감지 | 인덕션 비상 차단, 전등 10초 깜빡임(낙상 구역 전등, 없으면 첫 번째 전등), 대시보드 경고(`fall_detected`) |
+| 1차 | 감지 | 사용자 본인에게 확인 링크 문자 |
+| 2차 | 감지 + `userAlertWaitSec`(기본 30초) | 응답이 없으면 보호자에게 확인 링크 문자, 대시보드에 `fall_escalated` |
+| 3차 | 보호자 알림 + `autoReportSec`(기본 60초) | 응답이 없으면 자동 신고(`fall_auto_reported`) |
+
+- 1차 알림에는 대시보드 경고도 포함되므로, 사용자 문자를 못 보내도(미등록, 인터넷 불안정) 대기 시간은 그대로 지킵니다.
+  `userAlertWaitSec`를 0으로 하면 사용자와 보호자에게 동시에 보냅니다.
+- 링크에서 "괜찮음"(resolve) 또는 "신고"(report)를 누르면 그 뒤 단계는 진행되지 않습니다.
+- 대기 시간은 `GET/PUT /api/v1/policies/fall-safety`로 바꿉니다. 서버를 다시 켜도 진행 중인 단계를 이어갑니다.
+- 판단 응답의 `actions`에 인덕션 `turn_off`, 전등 `blink` 결과가 들어 있고, 단계 진행 상황은
+  `GET /api/v1/fall-incidents/{fallIncidentId}`의 `stage`(user/guardian), `status`로 확인합니다.
 
 `restore_power`가 거부되는 경우: 저장된 화력이 없을 때(HomeVIS가 끄거나 낮춘 적이 없거나, 그 사이 사용자가 직접 조작함), 화구가 과열 상태일 때.
 

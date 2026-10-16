@@ -19,7 +19,9 @@ COPY app ./app
 COPY tests/simulate_device.py tests/simulate_home_devices.py ./tests/
 
 # root가 아닌 계정으로 실행
-RUN useradd --create-home --uid 10001 homevis
+# 복사한 파일의 권한은 개발자 PC의 파일 권한을 그대로 따라오므로(예: 600), 실행 계정이 읽을 수 있게 맞춰 둡니다.
+RUN useradd --create-home --uid 10001 homevis \
+ && chmod -R a+rX /srv/homevis
 USER homevis
 
 EXPOSE 8000

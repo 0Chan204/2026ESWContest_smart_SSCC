@@ -38,7 +38,9 @@ def receive_decision(request: AiDecisionRequest, response: Response) -> AiDecisi
       네트워크가 불안해서 재전송하는 경우를 위한 동작입니다.
     - 제어 일부가 실패해도 나머지는 실행하며, 각 제어의 결과는 actions[].status로 확인합니다.
       (sent: 전송함, rejected: 실행 조건이 안 맞아 거부, failed: 전송 실패)
-    - scenario가 fall_detected면 기존 낙상 처리(인덕션 비상 차단, 보호자 문자, 자동 신고)를 실행합니다.
+    - scenario가 fall_detected면 낙상 처리 흐름을 실행합니다: 인덕션 비상 차단 + 전등 깜빡임 ->
+      사용자 문자 -> (응답 없으면) 보호자 문자 -> (응답 없으면) 자동 신고.
+      인덕션 turn_off / 전등 blink는 서버가 직접 실행하므로 actions에 넣지 않아도 됩니다.
     - 인덕션 restore_power는 HomeVIS가 끄거나 낮추기 직전의 화력으로 다시 켭니다.
     - 정수기 dispense에는 출수량(amountMl)이 필요합니다. 전등 blink 시간을 비우면 10초입니다.
     """

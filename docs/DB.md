@@ -59,7 +59,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 ```
 
 ```json
-{ "_id": "fall-safety", "autoReportSec": 60 }
+{ "_id": "fall-safety", "userAlertWaitSec": 30, "autoReportSec": 60 }
 ```
 
 문서가 없으면 `app/config.py`의 기본값을 사용합니다.
@@ -174,15 +174,22 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
   "room": "kitchen", "status": "pending",
   "detectedAt": "2026-10-05T03:00:00+00:00", "confidence": 0.95,
   "confirmUrl": "https://(프론트 주소)/fall/fall-71c6610bdb?token=...",
-  "autoReportAt": "2026-10-05T03:01:00+00:00",
-  "shutoffSent": true, "guardianNotified": true,
+  "stage": "user",
+  "guardianAlertAt": "2026-10-05T03:00:30+00:00",
+  "guardianAlertedAt": null,
+  "autoReportAt": "2026-10-05T03:01:30+00:00",
+  "shutoffSent": true, "lightBlinkSent": true, "lightDeviceId": "light-01",
+  "userNotified": true, "guardianNotified": false,
   "eventId": "evt-033aac118458", "resolvedAt": null, "reportedAt": null
 }
 ```
 
 `status`: `pending` → `resolved` / `reported` / `auto_reported`. `token`은 API 응답에는 포함되지 않습니다.
-`shutoffSent`는 인덕션 차단 명령을 전송했는지, `guardianNotified`는 보호자에게 문자를 발송했는지를 나타냅니다.
-서버가 재시작되면 `pending` 상태인 사건의 자동 신고 타이머를 `autoReportAt` 기준으로 다시 겁니다.
+`stage`: 지금 응답을 기다리는 대상. `user`(사용자 본인) → `guardianAlertAt`이 지나면 `guardian`(보호자).
+`userAlertWaitSec`가 0이면 처음부터 `guardian`입니다. `autoReportAt`은 보호자 알림 시각 + `autoReportSec`입니다.
+`shutoffSent` / `lightBlinkSent` / `userNotified` / `guardianNotified`는 각 조치(인덕션 차단, 전등 깜빡임,
+사용자 문자, 보호자 문자)를 실제로 보냈는지를 나타냅니다. 예전 문서에 없는 필드는 기본값(`stage: guardian`, false)으로 읽습니다.
+서버가 재시작되면 `pending` 상태인 사건을 `guardianAlertAt`, `autoReportAt` 기준으로 이어서 진행합니다.
 
 ### sms_logs
 
@@ -199,7 +206,8 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 }
 ```
 
-`purpose`: `user_verification`(사용자 등록 확인) / `guardian_verification`(보호자 등록 확인) / `fall_alert`(낙상 알림).
+`purpose`: `user_verification`(사용자 등록 확인) / `guardian_verification`(보호자 등록 확인) /
+`fall_user_alert`(사용자 본인에게 보내는 1차 낙상 알림) / `fall_alert`(보호자에게 보내는 낙상 알림).
 발송에 실패한 경우도 `success: false`로 남깁니다. 문자 본문은 저장하지 않습니다 (낙상 문자에는 확인 링크의 토큰이 들어 있기 때문).
 
 ### runtime_state

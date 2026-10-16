@@ -224,7 +224,7 @@ def update_policy(policy: KitchenAbsencePolicy) -> KitchenAbsencePolicy:
 def update_user(contact: UserContact) -> UserContactUpdateResult:
     """
     사용자(거주자 본인) 연락처를 등록/변경합니다. 저장과 동시에 그 번호로 확인 문자를 발송합니다.
-    낙상 사고 문자는 보호자에게만 발송되며, 사용자 이름은 그 문자 문구에 포함됩니다.
+    낙상이 감지되면 이 번호로 먼저(1차) 확인 링크 문자가 가고, 응답이 없으면 보호자에게 넘어갑니다.
     """
     return fall_service.update_user(contact)
 
@@ -267,13 +267,17 @@ def list_sms_logs(limit: int = 50) -> SmsLogListResponse:
 @router.post("/safety/fall-events", response_model=FallIncidentAccepted, status_code=status.HTTP_202_ACCEPTED, tags=["낙상 사고 감지"], summary="낙상 감지 보고 (AI 모델 → 서버)")
 def report_fall_event(report: FallDetectedReport) -> FallIncidentAccepted:
     """
-    낙상 감지 AI 모델 -> 서버. 재실 판단 모델(POST /presence)과 같은 패턴으로,
-    모델은 '감지 사실'만 보고합니다. 접수 즉시 서버가 인덕션 비상 전원 차단(0단계),
-    대시보드 알림, 보호자 SMS 발송을 모두 수행합니다.
+    낙상 감지 -> 서버. 감지 사실만 보고하면 서버가 단계별로 대응합니다.
+    (AI 중앙 판정 엔진은 POST /ai/decisions 에 scenario=fall_detected 로 보내도 같은 흐름이 실행됩니다)
 
-    연락처 등록 여부와 무관하게 인덕션 차단을 가장 먼저 수행하며, 각 단계는 독립적이라
-    하나가 실패해도 나머지는 진행됩니다. 실제 수행 결과는 응답의 shutoffSent(차단 명령 전송 여부),
-    guardianNotified(보호자 문자 발송 여부)로 확인할 수 있습니다.
+    - 즉시: 인덕션 비상 전원 차단 + 전등 깜빡임 + 대시보드 알림
+    - 1차: 사용자 본인에게 확인 링크 문자
+    - 2차: userAlertWaitSec 안에 응답이 없으면 보호자에게 확인 링크 문자
+      (사용자 문자를 못 보내도 대시보드 알림으로 응답할 수 있으므로 대기는 그대로 진행. 0이면 동시에 알림)
+    - 3차: 보호자 알림 뒤 autoReportSec 안에도 응답이 없으면 자동 신고
+
+    각 조치는 독립적이라 하나가 실패해도 나머지는 진행됩니다. 실제 수행 결과는 응답의
+    shutoffSent / lightBlinkSent / userNotified / guardianNotified 와 stage(지금 응답을 기다리는 대상)로 확인합니다.
     """
     incident = fall_service.report_fall(report)
     return FallIncidentAccepted(
@@ -282,6 +286,11 @@ def report_fall_event(report: FallDetectedReport) -> FallIncidentAccepted:
         confirmUrl=incident.confirmUrl,
         shutoffSent=incident.shutoffSent,
         guardianNotified=incident.guardianNotified,
+        userNotified=incident.userNotified,
+        lightBlinkSent=incident.lightBlinkSent,
+        stage=incident.stage,
+        guardianAlertAt=incident.guardianAlertAt,
+        autoReportAt=incident.autoReportAt,
     )
 
 
@@ -295,7 +304,8 @@ def read_fall_incident(incident_id: str) -> FallIncident:
 
 @router.post("/fall-incidents/{incident_id}/resolve", response_model=FallActionResult, tags=["낙상 사고 감지"], summary="낙상 사건 '해결' 처리")
 def resolve_fall_incident(incident_id: str, token: str) -> FallActionResult:
-    """보호자가 SMS 링크(프론트의 모바일 확인 페이지)에서 '해결'을 눌렀을 때 호출됩니다."""
+    """사용자나 보호자가 문자 링크(프론트의 모바일 확인 페이지)에서 '해결'(괜찮음)을 눌렀을 때 호출됩니다.
+    해결된 사건은 다음 단계(보호자 알림, 자동 신고)로 넘어가지 않습니다."""
     try:
         incident = fall_service.resolve_fall_incident(incident_id, token)
     except fall_service.FallIncidentError as exc:
@@ -305,7 +315,7 @@ def resolve_fall_incident(incident_id: str, token: str) -> FallActionResult:
 
 @router.post("/fall-incidents/{incident_id}/report", response_model=FallActionResult, tags=["낙상 사고 감지"], summary="낙상 사건 '신고' 처리")
 def report_fall_incident(incident_id: str, token: str) -> FallActionResult:
-    """보호자가 SMS 링크(프론트의 모바일 확인 페이지)에서 '신고'를 눌렀을 때 호출됩니다."""
+    """사용자나 보호자가 문자 링크(프론트의 모바일 확인 페이지)에서 '신고'를 눌렀을 때 호출됩니다."""
     try:
         incident = fall_service.report_fall_incident(incident_id, token)
     except fall_service.FallIncidentError as exc:
@@ -320,7 +330,12 @@ def read_fall_policy() -> FallPolicy:
 
 @router.put("/policies/fall-safety", response_model=FallPolicy, tags=["낙상 사고 감지"], summary="낙상 안전 정책 수정")
 def update_fall_policy(policy: FallPolicy) -> FallPolicy:
-    """테스트 중엔 autoReportSec=60(1분)처럼 짧게 두고, 운영 값은 재배포 없이 여기서 조정합니다."""
+    """
+    - userAlertWaitSec: 사용자(1차) -> 보호자(2차)로 넘어가기까지 대기 시간. 0이면 둘에게 동시에 알림 (기본 30초)
+    - autoReportSec: 보호자 알림 -> 자동 신고(3차)까지 대기 시간 (기본 60초)
+
+    userAlertWaitSec를 빼고 보내면 기본값 30초가 됩니다. 이미 진행 중인 사건에는 적용되지 않습니다.
+    """
     state_store.set_fall_policy(policy)
     return policy
 
