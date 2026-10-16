@@ -286,6 +286,48 @@ timeout 또는 응답 유실로 예약을 되돌리지 않는다. 재시작해�
 위치 전용 입력에는 행동을 생성하지 않으며 취침 소등·기상 기반 출수·낙상 입력 부족 진단을 유지한다.
 재시작으로 현재 취침 구간의 근거가 사라진 경우도 기존 pending 취침 요청을 임의 재사용하지 않는다.
 
+#### 관측 공백 이후의 취침 구간과 서로 다른 측정 시각
+
+위치의 `sample.timestamp`와 행동의 `activity_timestamp`는 서로 다른 측정의 시각이다.
+수신 시각은 입력을 받은 시각이고, 엔진 평가 시각은 정렬된 이벤트 시각/마지막 watermark다.
+위치가 T+20, 행동이 T+19이고 기존 결합 조건을 만족한다면 새 누움 구간은 행동 측정 T+19에서 시작한다.
+새 행동이 수신됐다는 이유로 엔진의 T+18 평가를 앞당기거나 이전 누움 시간을 합산하지 않는다.
+
+관측 공백을 발견한 **새 위치의 시각**을 중단 시각으로 기록하면 이 예에서 T+20 > T+19가 되어,
+새 구간이 정상적으로 지속 조건을 채운 요청까지 `bedtime_observation_interrupted`로 차단될 수 있다.
+공백 경계와 명시적 반대 관측은 다음처럼 기록한다.
+
+| 원인 | 중단 근거를 기록하는 시각 | 요청에 미치는 영향 |
+| --- | --- | --- |
+| 새 행동 시작이 이전 행동의 만료보다 늦음 | 이전 행동의 `activity_valid_until` | 이전 구간을 종료하며, 그 뒤에 시작한 새 구간 내부의 중단으로 해석하지 않음 |
+| 행동 유효기간은 길지만 위치 관측 간격이 timeout에 도달 | 이전 유효 위치의 측정 시각 | 기존 freshness/시나리오 timeout과 현재 요청 식별 검사로 이전 구간을 차단 |
+| standing·방 이탈·unknown·행동 누락/무효/신뢰도 부족 | 해당 위치·행동 결합 관측의 위치 측정 시각 | 정렬 대기 중이어도 해당 구간의 요청을 송신하지 않음 |
+
+예를 들어 이전 행동 근거가 T+11에 만료되고 새 위치가 T+20에 측정됐다면,
+공백 표시는 T+11에 남는다. 새 행동의 시각이 T+20 / T+19.5 / T+19 중 어느 것이든
+이전 만료 경계 뒤에서 새 구간을 시작할 수 있다. 첫 새 관측 두 개가 역순으로 도착해도
+공백 경계는 이전 관측에서 얻으므로 새 구간 시작보다 뒤로 밀리지 않는다.
+
+`_bedtime_interrupted_at > 구간 시작` 검사와 `matches_current_request()`를 함께 유지한다.
+공백 이전 pending 요청은 기존 구간이 종료됐으므로 사용할 수 없고, 새로운 요청은 새 구간만으로
+기존 취침 지속 조건을 충족해야 한다. 새 구간 내부에 늦게 도착한 반대 관측은 계속 차단 근거이며,
+이미 끝난 이전 구간의 오래된 standing 관측을 새 구간 내부의 중단으로 해석하지 않는다.
+새 lying마다 중단 표시를 지우거나 메시지 수신마다 새 구간 ID를 만들지 않는다.
+
+행동 유효기간은 `[measured_at, valid_until)`이다. 위치 결합 시각 또는 송신 시각이
+`valid_until` 이상이면 그 행동은 만료다. 다음 행동의 시작이 이전 `valid_until`과 정확히 같으면
+양의 시간 공백 자체는 없으므로, 시나리오가 아직 유지되고 새 관측이 만료 tick 전에 적용되는 경우
+기존 구간을 유지한다. 반면 기존 `tick()`이 만료 시각에 도달해 구간을 이미 종료했다면,
+정렬 대기 중인 새 행동이 그 경계에 맞닿아 있어도 이전 요청을 되살리지 않는다.
+새로 적용한 관측에서 구간을 다시 시작하고 지속 조건을 다시 확인한다.
+예를 들어 행동 T+30 / 위치 T+31이 대기 중인데 엔진이 T+30 만료를 처리했다면 이 후자의 경우다.
+수신 순서를 바꾸어도 동일한 시간순 적용 결과를 사용하며, timestamp 보정이나 epsilon은 사용하지 않는다.
+
+이 수정은 공백 표시의 시간 의미만 바로잡는다. 시나리오의 행동 시작 시각·지속 시간·tick 의미,
+결합 허용 시각차 1초, 기본 정렬 지연 2초, 명령 TTL은 그대로다. 재검증은 읽기 전용이다.
+요청 모델과 API JSON에 구간 필드를 추가하지 않아 기존 `source_id`/`decisionId` 생성 방식도 유지한다.
+재시작한 런타임에 현재 구간 근거가 없는 이전 pending 요청은 새 구간에 연결하지 않는다.
+
 ## 낙상과 백엔드 역할
 
 통합 경로는 backend-managed 모드다. 기존 BathroomFallScenario와 단독 동작은 유지한다.
@@ -337,7 +379,7 @@ MongoDB/MQTT/LG SDK 코드를 추가하지 않았다. 다음 계약이 필요하
 python -m pytest -q tests/test_runtime_regressions.py
 ```
 
-이번 수정 후 실제 실행 결과(Anaconda Python, LLM/GPU 없이):
+92f7030 수정 당시 실제 실행 결과(Anaconda Python, LLM/GPU 없이):
 
 - `python -m pytest -q tests/test_runtime_regressions.py`: 53 passed.
 - `python -m pytest -q`: 221 passed (55.79초).
@@ -363,3 +405,47 @@ FakeClock·MockBackend·임시 저장소에서 기기 polling 2초 / 센싱·adv
 level↔W 대응, 자동 복구 제어 이력, 낙상 시작/확인/종료 API, 실제 행동 데이터 수신·유효기간 계약은
 여전히 합의/구현이 필요하다. yes/no 피드백 연동은 이번 범위가 아니며 기존 FeedbackManager,
 WeightManager와 자연어 피드백 경로는 그대로다. Mock의 접수/sent는 실제 가전 실행 완료가 아니다.
+
+### 92f7030 이후: 공백 뒤 위치·행동 시각차 회귀 검증
+
+README 커밋 5ab1f42가 포함된 깨끗한 로컬 main에서 작업을 시작했다.
+변경 전 전체 pytest를 다시 실행하여 `221 passed`(78.47초)를 확인했다.
+실제 `IntegrationRuntime` / `CentralController` / `BedtimeLightScenario`와 FakeClock,
+MockBackend, 임시 outbox로 재현했으며, 부분 메서드를 복사한 별도 구현을 사용하지 않았다.
+
+핵심 테스트는 T+0~8의 첫 누움 구간과 미전송 요청을 만들고, T+9~19 동안 센싱을 중단한다.
+그동안 기기 polling과 advance는 계속하여 이전 행동을 만료시킨다.
+T+20부터 행동의 측정 시각을 `위치 시각-skew`, 만료를 `행동 시각+3초`로 공급한다.
+수정 전 skew=0은 통과했고, 0.5와 1초는 정상 생성된 새 요청이
+`bedtime_observation_interrupted`로 차단되어 실패했다.
+
+테스트용 `BEDTIME_LYING_SECONDS=6`, 명시적인 침실/조명 라우트와 nullable 규칙 confidence를 사용한다.
+실제 운영 기본값은 변경하지 않는다. 새 요청은 시나리오/tick의 기존 시간 계산을 따르며,
+이전 요청의 차단을 명령 TTL 만료 전에도 별도로 확인한다.
+반복 송신은 새 요청 한 건만 접수하고, 응답 유실 뒤 재시도는 동일 본문/ID를 사용함을 검사한다.
+
+추가 경계 검증은 연속 관측의 skew 0·0.5·1초, 허용 범위 초과·미래·만료 행동,
+새 구간 중 반대/누락/무효 관측과 재누움, 두 번째 공백, 역순 도착, 이전/현재 구간의 늦은 반대 관측,
+중복·충돌, 맞닿은 유효기간, 재시작, 지연 0초, 반복 재검증의 무변경을 포함한다.
+기존 53개 런타임 회귀 테스트도 유지하여 재실 중 취침 소등, 시간순 기기 캐시, 일반 조명 검사를 함께 실행한다.
+
+핵심 회귀 테스트의 실제 실행 결과:
+
+| 행동이 위치보다 앞선 시간 | 수정 전 | 수정 후 |
+| --- | --- | --- |
+| 0초 | 통과 | 새 구간 요청만 Mock 접수 |
+| 0.5초 | `bedtime_observation_interrupted`로 실패 | 새 구간 요청만 Mock 접수 |
+| 1초 | `bedtime_observation_interrupted`로 실패 | 새 구간 요청만 Mock 접수 |
+
+이번 변경 후 아래 명령을 다시 실행했다(Anaconda Python, LLM/GPU 없이).
+
+- `python -m pytest -q tests/test_runtime_regressions.py`: **86 passed** (40.18초).
+- `python -m pytest -q`: **254 passed** (84.31초).
+- `python -m unittest discover -s tests -v`: **104 tests, OK** (37.057초).
+- `python -m examples.backend_integration_demo`: 조회 5회, POST 0건, 행동 입력 부족 표시.
+- `python -m examples.backend_integration_demo --with-mock-behavior`: 조회 5회, POST 1건,
+  180ml / `weatherBriefing=true` 요청 Mock 접수, `execution_ack_not_provided` 유지.
+
+새 테스트는 기존 `tests/test_runtime_regressions.py`에 추가했다. 기존 테스트 실패는 없었다.
+Mock 접수는 실제 소등·출수 실행을 확인한 결과가 아니다. 위의 실전 연결 전 계약 목록과
+별도 행동 데이터 수신 방식, yes/no 피드백·낙상 API·자동 복구의 미구현/차단 상태는 그대로다.

@@ -152,10 +152,17 @@ class IntegrationRuntime:
             self._latest_received_location = observation
             self._latest_received_sample = sample
             if (previous_sample is not None and self._bedtime_sample_valid(previous_sample, previous_sample.timestamp)
-                    and sample.activity_timestamp is not None
-                    and (sample.activity_timestamp > previous_sample.activity_valid_until
-                         or sample.timestamp - previous_sample.timestamp >= self.controller.realtime_engine.config.UNKNOWN_TIMEOUT)):
-                self._interrupt_bedtime(sample.timestamp)
+                    and sample.activity_timestamp is not None):
+                # A gap ends the OLD evidence; its discovery is not an interruption
+                # inside the new episode. Location can trail behavior by max_skew,
+                # and the first received new sample need not be first in event time.
+                if sample.activity_timestamp > previous_sample.activity_valid_until:
+                    self._interrupt_bedtime(previous_sample.activity_valid_until)
+                elif sample.timestamp - previous_sample.timestamp >= self.controller.realtime_engine.config.UNKNOWN_TIMEOUT:
+                    # Even long-lived behavior cannot cover missing location evidence.
+                    # The engine's existing timeout/reset and request identity check
+                    # also prevent the old episode from being resumed.
+                    self._interrupt_bedtime(previous_sample.timestamp)
         if observation.measured_at <= received_at and not self._bedtime_sample_valid(sample, sample.timestamp):
             self._interrupt_bedtime(sample.timestamp)
         self.outbox.audit("location_received", received_at, {
