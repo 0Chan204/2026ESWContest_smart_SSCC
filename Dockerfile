@@ -16,7 +16,7 @@ RUN pip install -r requirements.txt
 
 COPY app ./app
 # 가짜 인덕션(시뮬레이터)도 같은 이미지로 실행할 수 있게 함께 넣습니다.
-COPY tests/simulate_device.py ./tests/simulate_device.py
+COPY tests/simulate_device.py tests/simulate_home_devices.py ./tests/
 
 # root가 아닌 계정으로 실행
 RUN useradd --create-home --uid 10001 homevis

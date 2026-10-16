@@ -32,6 +32,7 @@ from app.schemas import (
     FallIncident,
     FallPolicy,
     SmsLog,
+    AiDecisionRecord,
 )
 
 logger = logging.getLogger("induction.store")
@@ -44,6 +45,7 @@ _LOAD_LIMIT_COMMANDS = 500
 _LOAD_LIMIT_SESSIONS = 200
 _LOAD_LIMIT_FALL_INCIDENTS = 200
 _LOAD_LIMIT_SMS_LOGS = 200
+_LOAD_LIMIT_AI_DECISIONS = 500
 
 # --- 가전 텔레메트리 ---
 _latest_telemetry: dict[str, TelemetryReport] = {}
@@ -87,12 +89,26 @@ _fall_policy = FallPolicy(**settings.DEFAULT_FALL_POLICY)
 _sms_logs: list[SmsLog] = []
 _next_sms_seq = 1
 
+# --- v0.3: 전등·정수기 최신 상태 (deviceId -> {"type", "state"}) ---
+_device_states: dict[str, dict] = {}
+_device_last_seen: dict[str, datetime] = {}
+
+# --- v0.3: HomeVIS가 끄거나 낮추기 직전의 인덕션 화력 (deviceId -> level, restore_power용) ---
+_restore_levels: dict[str, int] = {}
+
+# --- v0.3: AI 판단 기록 ---
+_ai_decisions: dict[str, AiDecisionRecord] = {}
+_ai_decision_order: list[str] = []
+_ai_decision_seq: dict[str, int] = {}
+_next_ai_seq = 1
+
 _POLICY_KITCHEN_ABSENCE = "kitchen-absence"
 _POLICY_FALL_SAFETY = "fall-safety"
 _CONTACT_USER = "user"
 _CONTACT_GUARDIAN = "guardian"
 _STATE_ACTIVE_SESSIONS = "active_sessions"
 _STATE_ABSENCE_STAGES = "absence_stages"
+_STATE_RESTORE_LEVELS = "restore_levels"
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +117,7 @@ _STATE_ABSENCE_STAGES = "absence_stages"
 
 def reset_memory() -> None:
     """메모리의 모든 데이터를 초기 상태로 되돌립니다. (DB는 건드리지 않음. 시작 시, 테스트에서 사용)"""
-    global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq
+    global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq, _next_ai_seq
     with _lock:
         for store in (
             _latest_telemetry,
@@ -115,12 +131,19 @@ def reset_memory() -> None:
             _absence_stage_by_room,
             _fall_incidents,
             _fall_tokens,
+            _device_states,
+            _device_last_seen,
+            _restore_levels,
+            _ai_decisions,
+            _ai_decision_seq,
         ):
             store.clear()
         _safety_event_order.clear()
         _sms_logs.clear()
+        _ai_decision_order.clear()
         _next_event_seq = 1
         _next_sms_seq = 1
+        _next_ai_seq = 1
         _policy = KitchenAbsencePolicy(**settings.DEFAULT_POLICY)
         _fall_policy = FallPolicy(**settings.DEFAULT_FALL_POLICY)
         _guardian = None
@@ -217,6 +240,24 @@ def load_from_db() -> None:
                 _active_session_by_device.update(doc.get("values", {}))
             elif doc["_id"] == _STATE_ABSENCE_STAGES:
                 _absence_stage_by_room.update(doc.get("values", {}))
+            elif doc["_id"] == _STATE_RESTORE_LEVELS:
+                _restore_levels.update(doc.get("values", {}))
+
+    def load_device_states() -> None:
+        for doc in db.find_all(db.DEVICE_STATES):
+            device_id = doc["_id"]
+            _device_states[device_id] = {"type": doc.get("type"), "state": doc.get("state", {})}
+            if doc.get("lastSeenAt") is not None:
+                _device_last_seen[device_id] = _as_utc(doc["lastSeenAt"])
+
+    def load_ai_decisions() -> None:
+        global _next_ai_seq
+        for doc in db.find_all(db.AI_DECISIONS, sort_field="seq", newest_limit=_LOAD_LIMIT_AI_DECISIONS):
+            record = AiDecisionRecord.model_validate(_without_id(doc, "seq"))
+            _ai_decisions[record.decisionId] = record
+            _ai_decision_order.append(record.decisionId)
+            _ai_decision_seq[record.decisionId] = doc["seq"]
+            _next_ai_seq = max(_next_ai_seq, doc["seq"] + 1)
 
     with _lock:
         load("인덕션 상태", load_telemetry)
@@ -229,6 +270,8 @@ def load_from_db() -> None:
         load("낙상 사건", load_fall_incidents)
         load("문자 발송 이력", load_sms_logs)
         load("진행 상태", load_runtime_state)
+        load("전등·정수기 상태", load_device_states)
+        load("AI 판단 기록", load_ai_decisions)
 
     logger.info(
         "DB에서 불러옴: 안전 이벤트 %d건, 제어 명령 %d건, 조리 세션 %d건, 낙상 사건 %d건",
@@ -531,3 +574,95 @@ def list_sms_logs() -> list[SmsLog]:
     """오래된 것부터 순서대로 돌려줍니다."""
     with _lock:
         return list(_sms_logs)
+
+
+# ---------------------------------------------------------------------------
+# v0.3: 전등·정수기 상태
+# ---------------------------------------------------------------------------
+
+def save_device_state(device_id: str, device_type: str, state: dict) -> None:
+    now = datetime.now(timezone.utc)
+    with _lock:
+        _device_states[device_id] = {"type": device_type, "state": state}
+        _device_last_seen[device_id] = now
+    db.upsert(db.DEVICE_STATES, device_id, {"type": device_type, "state": state, "lastSeenAt": now})
+
+
+def get_device_state(device_id: str) -> Optional[dict]:
+    """마지막으로 받은 상태 메시지(dict). 아직 없으면 None"""
+    with _lock:
+        entry = _device_states.get(device_id)
+        return dict(entry["state"]) if entry else None
+
+
+def get_device_last_seen(device_id: str) -> Optional[datetime]:
+    with _lock:
+        return _device_last_seen.get(device_id)
+
+
+def is_device_online(device_id: str) -> bool:
+    """인덕션과 같은 기준: 마지막 상태 수신 후 heartbeatTimeoutSec가 지나지 않았으면 온라인"""
+    seen = get_device_last_seen(device_id)
+    if seen is None:
+        return False
+    return (datetime.now(timezone.utc) - seen).total_seconds() <= get_policy().heartbeatTimeoutSec
+
+
+# ---------------------------------------------------------------------------
+# v0.3: restore_power용 이전 화력
+# ---------------------------------------------------------------------------
+
+def get_restore_level(device_id: str) -> Optional[int]:
+    with _lock:
+        return _restore_levels.get(device_id)
+
+
+def set_restore_level(device_id: str, level: Optional[int]) -> None:
+    """level=None이면 지웁니다. 값이 그대로면 DB에 다시 쓰지 않습니다."""
+    with _lock:
+        if _restore_levels.get(device_id) == level:
+            return
+        if level is None:
+            _restore_levels.pop(device_id, None)
+        else:
+            _restore_levels[device_id] = level
+        snapshot = dict(_restore_levels)
+    db.upsert(db.RUNTIME_STATE, _STATE_RESTORE_LEVELS, {"values": snapshot})
+
+
+# ---------------------------------------------------------------------------
+# v0.3: AI 판단 기록
+# ---------------------------------------------------------------------------
+
+def save_ai_decision(record: AiDecisionRecord) -> None:
+    global _next_ai_seq
+    with _lock:
+        seq = _ai_decision_seq.get(record.decisionId)
+        if seq is None:
+            seq = _next_ai_seq
+            _next_ai_seq += 1
+            _ai_decision_order.append(record.decisionId)
+            _ai_decision_seq[record.decisionId] = seq
+        _ai_decisions[record.decisionId] = record
+    db.upsert(db.AI_DECISIONS, record.decisionId, {"seq": seq, **record.model_dump()})
+
+
+def get_ai_decision(decision_id: str) -> Optional[AiDecisionRecord]:
+    with _lock:
+        return _ai_decisions.get(decision_id)
+
+
+def update_ai_decision(decision_id: str, **changes) -> Optional[AiDecisionRecord]:
+    with _lock:
+        record = _ai_decisions.get(decision_id)
+        if record is None:
+            return None
+        updated = record.model_copy(update=changes)
+    save_ai_decision(updated)
+    return updated
+
+
+def list_ai_decisions() -> list[AiDecisionRecord]:
+    """오래된 것부터 순서대로 돌려줍니다."""
+    with _lock:
+        return [_ai_decisions[d] for d in _ai_decision_order if d in _ai_decisions]

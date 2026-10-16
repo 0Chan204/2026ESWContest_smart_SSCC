@@ -6,6 +6,8 @@ MQTT 통신을 담당하는 모듈입니다.
 - 서버 --publish(제어명령)-----------> [Mosquitto] --전달--> 가전(subscribe)
 
 즉 서버는 telemetry/ack 토픽에는 "구독자", command 토픽에는 "발행자" 역할을 합니다.
+
+v0.3: 전등·정수기도 같은 방식으로 주고받습니다. 토픽 규칙은 app/device_registry.py 참고.
 """
 
 import json
@@ -14,6 +16,7 @@ import logging
 import paho.mqtt.client as mqtt
 from pydantic import ValidationError
 
+from app import device_registry
 from app.config import settings
 from app.schemas import AckReport, TelemetryReport
 
@@ -45,11 +48,30 @@ def _on_connect(client: mqtt.Client, userdata, flags, rc: int) -> None:
     client.subscribe(ack_topic, qos=1)
     logger.info("ack 토픽 구독 시작: %s", ack_topic)
 
+    for home_topic in device_registry.home_device_subscriptions():
+        client.subscribe(home_topic, qos=1)
+    logger.info("전등·정수기 토픽 구독 시작: %s", ", ".join(device_registry.home_device_subscriptions()))
+
 
 def _on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
     # 지연 import: device_service가 commands_service/safety_service를 거쳐
     # 다시 mqtt_client를 참조할 수 있으므로, 순환 참조를 피하기 위해 호출 시점에 import합니다.
-    from app import device_service
+    from app import device_service, home_device_service
+
+    parsed = device_registry.parse_topic(msg.topic)
+    if parsed is not None and parsed[0] in device_registry.HOME_DEVICE_TYPES:
+        device_type, home_device_id, kind = parsed
+        try:
+            home_payload = json.loads(msg.payload.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            logger.error("JSON 파싱 실패 (topic=%s): %s", msg.topic, exc)
+            return
+        if kind == "state":
+            home_device_service.handle_state(home_device_id, device_type, home_payload)
+        elif kind == "ack":
+            logger.info("ack 수신 (device=%s) %s", home_device_id, home_payload)
+            home_device_service.handle_ack(home_device_id, device_type, home_payload)
+        return
 
     device_id = _extract_device_id(msg.topic)
     if device_id is None:
@@ -106,6 +128,18 @@ def stop() -> None:
 def publish_command(device_id: str, payload: dict) -> None:
     """제어 명령을 해당 가전의 command 토픽으로 발행합니다."""
     topic = settings.command_topic(device_id)
+    message = json.dumps(payload, ensure_ascii=False)
+    result = _client.publish(topic, message, qos=1)
+    logger.info("제어 명령 발행 (topic=%s): %s", topic, message)
+    result.wait_for_publish(timeout=5)
+
+
+def publish_device_command(device_id: str, payload: dict) -> None:
+    """전등·정수기 제어 명령을 해당 기기의 command 토픽으로 발행합니다. (v0.3)"""
+    device = device_registry.get_device(device_id)
+    if device is None:
+        raise ValueError(f"등록되지 않은 기기: {device_id}")
+    topic = device_registry.topic(device, "command")
     message = json.dumps(payload, ensure_ascii=False)
     result = _client.publish(topic, message, qos=1)
     logger.info("제어 명령 발행 (topic=%s): %s", topic, message)

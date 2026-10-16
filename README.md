@@ -272,6 +272,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 
 ---
 
+## 9-1. AI 중앙 판정 엔진 · 전등 · 정수기 연동 (v0.3)
+
+모든 제어 판단은 AI 중앙 판정 엔진이 하고, 백엔드는 판단 결과(`POST /api/v1/ai/decisions`)를 받아
+인덕션·전등·정수기를 제어하고 기록합니다. 판정 엔진용 API와 전등·정수기 MQTT 메시지 형식은
+`docs/AI-INTEGRATION.md`에 정리되어 있습니다. (v0.3부터 `POST /presence`는 저장·전달만 하고 직접 제어하지 않습니다.)
+
+---
+
 ## 10. Docker로 실행하기 (라즈베리파이 4 / 노트북 / 맥)
 
 MongoDB, Mosquitto, 백엔드를 컨테이너 3개로 한 번에 띄웁니다. 백엔드 이미지는 `develop`에 머지될 때마다

@@ -27,13 +27,15 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `policies` | `kitchen-absence` / `fall-safety` | 부재중 정책, 낙상 안전 정책 | AI 재실 판단, 낙상 사고 감지 |
 | `telemetry_latest` | 기기 ID | 인덕션의 최신 상태 1건 | 인덕션 제어, 대시보드 화면 |
 | `telemetry_logs` | 자동 생성 | 인덕션 상태 이력 (자동 삭제) | 조회 API 없음 (기록용) |
-| `commands` | 명령 ID | 화구 제어 명령과 처리 상태 | 인덕션 제어 |
+| `commands` | 명령 ID | 가전 제어 명령과 처리 상태 (v0.3: 전등·정수기 포함) | 인덕션 제어, 전등·정수기 제어 |
 | `safety_events` | 이벤트 ID | 안전 이벤트 이력 | 안전 이벤트 |
 | `sessions` | 세션 ID | 조리 세션과 타임라인 | 대시보드 화면 |
 | `presence` | 방 이름 | 방별 최신 재실 판단 결과 | AI 재실 판단 |
 | `fall_incidents` | 사건 ID | 낙상 사건과 확인 토큰 | 낙상 사고 감지 |
 | `sms_logs` | 발송 기록 ID | 문자 발송 이력 | 회원 정보 |
-| `runtime_state` | 고정 키 | 진행 중인 세션, 부재 단계 | 내부용 |
+| `runtime_state` | 고정 키 | 진행 중인 세션, 복구용 화력 | 내부용 |
+| `device_states` | 기기 ID | 전등·정수기의 최신 상태 (v0.3) | 전등·정수기 제어, AI 중앙 제어 |
+| `ai_decisions` | 판단 ID | AI 중앙 판정 엔진의 판단과 실행 결과, 피드백 (v0.3) | AI 중앙 제어 |
 
 ## 문서 예시
 
@@ -204,10 +206,51 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 
 ```json
 { "_id": "active_sessions", "values": { "induction-01": "session-1a2b3c4d5e6f" } }
-{ "_id": "absence_stages", "values": { "kitchen": "reduce" } }
+{ "_id": "restore_levels", "values": { "induction-01": 6 } }
 ```
 
-재시작 후에도 진행 중인 조리 세션과 부재 단계를 이어가기 위한 내부 상태입니다.
+재시작 후에도 진행 중인 조리 세션과 복구용 화력을 이어가기 위한 내부 상태입니다.
+`restore_levels`는 HomeVIS(AI 판단)가 인덕션을 끄거나 낮추기 직전 화력이며, `restore_power`로 복구하거나
+사용자가 직접 조작하면 지워집니다. (v0.3부터 `absence_stages`는 쓰지 않습니다.)
+
+### device_states (v0.3)
+
+```json
+{
+  "_id": "light-01",
+  "type": "light",
+  "state": { "reportedAt": "2026-10-16T23:00:00+09:00", "power": "on", "mode": "steady",
+             "lastControl": { "publisher": "api", "commandId": "cmd-20261016-1a2b3c4d" } },
+  "lastSeenAt": "2026-10-16T14:00:00Z"
+}
+```
+
+정수기는 `state`가 `{ "status": "idle|dispensing", "lastDispensedMl": 250, ... }` 형태입니다.
+
+### ai_decisions (v0.3)
+
+```json
+{
+  "_id": "dec-001",
+  "seq": 1,
+  "decisionId": "dec-001",
+  "scenario": "bedtime_light_off",
+  "confidence": 0.88,
+  "reason": "누운 상태 20분 지속",
+  "timestamp": "2026-10-16T23:10:00+09:00",
+  "room": "room",
+  "receivedAt": "2026-10-16T14:10:01+00:00",
+  "weatherBriefing": false,
+  "actions": [
+    { "device": "light", "deviceId": "light-01", "action": "off", "status": "sent", "commandId": "cmd-20261016-9f8e7d6c" }
+  ],
+  "eventId": "evt-0a1b2c3d4e5f",
+  "fallIncidentId": null,
+  "feedback": { "verdict": "rejected", "comment": "아직 안 잤어요", "submittedAt": "2026-10-16T14:12:00+00:00" }
+}
+```
+
+판단으로 생긴 안전 이벤트(`ai_control`)에 사용자가 피드백을 남기면 `feedback`에도 복사됩니다.
 
 ## 인덱스
 
@@ -220,6 +263,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `sessions` | `startedAt` | 최근 세션 불러오기 |
 | `fall_incidents` | `detectedAt` | 최근 사건 불러오기 |
 | `sms_logs` | `seq` | 발송 순서대로 불러오기 |
+| `ai_decisions` | `seq` | 받은 순서대로 불러오기 |
 
 인덱스는 서버가 DB에 연결될 때 자동으로 만들어집니다.
 
@@ -234,6 +278,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | 조리 세션 | 최근 200건 |
 | 낙상 사건 | 최근 200건 |
 | 문자 발송 이력 | 최근 200건 |
+| AI 판단 기록 | 최근 500건 |
 
 ## 용량
 

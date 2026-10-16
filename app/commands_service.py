@@ -28,8 +28,9 @@ def dispatch_command(
     device_id: str,
     burner_id: str,
     request: BurnerCommandRequest,
-    actor: Literal["user", "system"] = "user",
+    actor: Literal["user", "system", "ai"] = "user",
     reason: Optional[str] = None,
+    decision_id: Optional[str] = None,
 ) -> CommandRecord:
     """
     제어 명령을 검증하고 MQTT로 발행합니다.
@@ -51,8 +52,15 @@ def dispatch_command(
         reason=reason,
         issuedAt=command.issuedAt,
         ackedAt=None,
+        deviceId=device_id,
+        deviceType="stove",
+        decisionId=decision_id,
     )
     state_store.save_command(record)
+
+    if actor == "user":
+        # 사용자가 직접 조작하면, HomeVIS가 끄기 전 화력을 복구(restore_power)할 근거가 사라집니다.
+        state_store.set_restore_level(device_id, None)
 
     from app import mqtt_client  # 지연 import: mqtt_client <-> device_service/commands_service 순환 참조 방지
 
