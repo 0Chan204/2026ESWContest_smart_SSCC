@@ -168,6 +168,9 @@ def main() -> None:
     _client = mqtt.Client(client_id=f"induction-simulator-{DEVICE_ID}")
     _client.on_connect = on_connect
     _client.on_message = on_message
+    if settings.MQTT_USERNAME:
+        # 브로커에 인증이 켜져 있으면 백엔드와 같은 방식으로 계정을 사용합니다.
+        _client.username_pw_set(settings.MQTT_USERNAME, settings.MQTT_PASSWORD)
     _client.connect(settings.MQTT_BROKER_HOST, settings.MQTT_BROKER_PORT, keepalive=60)
     _client.loop_start()
 
