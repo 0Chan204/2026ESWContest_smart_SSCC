@@ -76,9 +76,11 @@ class Settings:
     }
 
     # --- 낙상 사고 안전 정책 기본값 (GET/PUT /policies/fall-safety 초기값) ---
-    # autoReportSec: 확인 링크를 누르지 않았을 때 자동으로 "신고" 처리하기까지의 대기 시간.
-    # 테스트 중에는 1분(60초)으로 짧게 두고, 실제 운영 값은 팀 논의 후 늘릴 예정.
+    # userAlertWaitSec: 사용자 본인(1차)이 응답하지 않을 때 보호자(2차)에게 넘기기까지의 대기 시간.
+    # autoReportSec: 보호자 알림 뒤에도 응답이 없을 때 자동으로 "신고"(3차) 처리하기까지의 대기 시간.
+    # 테스트 중에는 짧게 두고, 실제 운영 값은 팀 논의 후 늘릴 예정.
     DEFAULT_FALL_POLICY: dict = {
+        "userAlertWaitSec": 30,
         "autoReportSec": 60,
     }
 

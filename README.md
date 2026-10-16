@@ -200,23 +200,28 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 
 ---
 
-## 7. 낙상 사고 안전 기능 (v0.2.1)
+## 7. 낙상 사고 안전 기능 (v0.2.1, v0.3.1 단계화)
 
-보호자 알림 + 인덕션 비상 차단 기능입니다. 전체 로직은 `app/fall_service.py` 하나에 모여 있고,
+인덕션 비상 차단 + 전등 깜빡임 + 사용자 → 보호자 → 자동 신고 단계별 알림 기능입니다. 전체 로직은 `app/fall_service.py` 하나에 모여 있고,
 라우터(`app/routers/dashboard.py`)는 입출력 변환만 합니다.
 
 **흐름**
 
-1. (아직 미구현/다른 팀원 담당) 낙상 감지 AI 모델이 `POST /api/v1/safety/fall-events`를
-   호출합니다. 재실 판단 모델과 같은 패턴 — 모델은 "감지 사실"만 보고하고, 조치는 서버가 다 합니다.
-2. 접수 즉시 서버가 동시에 수행:
+1. AI 중앙 판정 엔진이 `POST /api/v1/ai/decisions`(scenario `fall_detected`) 또는
+   `POST /api/v1/safety/fall-events`로 낙상을 알립니다. 판단은 AI가, 조치는 서버가 합니다.
+2. 접수 즉시 서버가 수행:
    - 인덕션 **비상 전원 차단** (재실 부재 정책의 점진적 저감과 달리 바로 `turn_off`)
+   - 전등 **10초 깜빡임** (낙상 구역 전등, 없으면 첫 번째 전등)
    - 안전 이벤트(`fall_detected`) 생성 + WebSocket `/stream`으로 대시보드에 실시간 알림
-   - 등록된 보호자에게 **SMS**로 확인 링크 발송 (`확인 링크 = FRONTEND_BASE_URL/fall/{incidentId}?token=...`)
-3. 보호자가 SMS 링크(프론트가 만드는 모바일 페이지)에서 "해결"/"신고"를 누르면 그 페이지가
-   `POST /api/v1/fall-incidents/{id}/resolve` 또는 `.../report`를 `?token=...`과 함께 호출합니다.
-4. `policies/fall-safety`의 `autoReportSec`(테스트 기본값 60초) 안에 아무 응답이 없으면
-   서버가 알아서 `auto_reported`로 처리합니다 (안전 이벤트 `fall_auto_reported` 발생).
+   - **1차**: 사용자 본인에게 SMS로 확인 링크 발송 (`확인 링크 = FRONTEND_BASE_URL/fall/{incidentId}?token=...`)
+3. **2차**: `userAlertWaitSec`(기본 30초) 안에 응답이 없으면 보호자에게 같은 확인 링크 발송
+   (안전 이벤트 `fall_escalated`). 사용자 문자를 못 보내도 대시보드로 응답할 수 있으므로 대기는 그대로이며,
+   `userAlertWaitSec`를 0으로 하면 사용자와 보호자에게 동시에 보냅니다.
+4. **3차**: 보호자 알림 뒤 `autoReportSec`(기본 60초) 안에도 응답이 없으면 `auto_reported`로
+   처리합니다 (안전 이벤트 `fall_auto_reported`).
+5. 사용자나 보호자가 링크(프론트가 만드는 모바일 페이지)에서 "괜찮음"/"신고"를 누르면 그 페이지가
+   `POST /api/v1/fall-incidents/{id}/resolve` 또는 `.../report`를 `?token=...`과 함께 호출하고,
+   그 뒤 단계는 진행되지 않습니다. 서버를 다시 켜도 진행 중인 단계를 이어갑니다.
 
 **새 엔드포인트**
 
@@ -231,7 +236,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 | GET | `/api/v1/fall-incidents/{id}` | 낙상 사건 상태 조회 (프론트 모바일 페이지가 폴링용으로 사용 가능) |
 | POST | `/api/v1/fall-incidents/{id}/resolve?token=` | "해결" 처리 |
 | POST | `/api/v1/fall-incidents/{id}/report?token=` | "신고" 처리 |
-| GET/PUT | `/api/v1/policies/fall-safety` | `autoReportSec` 조회/수정 |
+| GET/PUT | `/api/v1/policies/fall-safety` | `userAlertWaitSec`, `autoReportSec` 조회/수정 |
 
 **SMS 연동**: 솔라피(SOLAPI) (`app/sms_service.py`). 네이버 SENS는 사업자 계정 전용이라 변경했습니다.
 솔라피 콘솔에서 발신번호를 등록하고 API Key를 만들어(허용 IP에 서버 외부 IP 입력) `.env`의

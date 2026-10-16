@@ -45,6 +45,25 @@ def _token_of(confirm_url: str) -> str:
     return confirm_url.split("token=")[1]
 
 
+def _wait_for(predicate, timeout_sec: float = 4.0) -> bool:
+    """타이머로 진행되는 단계(보호자 알림, 자동 신고)를 기다립니다."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.1)
+    return predicate()
+
+
+def _alert_guardian_at_once(client, auto_report_sec: int = 60) -> None:
+    """사용자 응답 대기 없이 사용자·보호자에게 동시에 알리도록 정책을 바꿉니다."""
+    client.put(f"{PREFIX}/policies/fall-safety", json={"userAlertWaitSec": 0, "autoReportSec": auto_report_sec})
+
+
+def _types_sent(published: list[dict]) -> list[tuple[str, str]]:
+    return [(c["deviceId"], c["type"]) for c in published]
+
+
 # ---------------------------------------------------------------------------
 # 기본
 # ---------------------------------------------------------------------------
@@ -165,7 +184,8 @@ def test_invalid_phone_is_rejected(client):
     assert client.put(f"{PREFIX}/guardian", json={"name": "보호자", "phone": "1234"}).status_code == 422
 
 
-def test_fall_sms_goes_only_to_guardian(client, monkeypatch):
+def test_fall_alerts_user_first_then_guardian(client, monkeypatch):
+    """1차 사용자 문자 -> userAlertWaitSec 동안 응답이 없으면 2차 보호자 문자 -> 3차 자동 신고"""
     from app import sms_service
 
     sent: list[tuple[str, str]] = []
@@ -173,13 +193,107 @@ def test_fall_sms_goes_only_to_guardian(client, monkeypatch):
 
     client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})
     client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    client.put(f"{PREFIX}/policies/fall-safety", json={"userAlertWaitSec": 1, "autoReportSec": 1})
     sent.clear()  # 등록 확인 문자 2건은 제외
 
-    confirm_url = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["confirmUrl"]
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    incident_id = accepted["incidentId"]
+    assert (accepted["stage"], accepted["userNotified"], accepted["guardianNotified"]) == ("user", True, False)
+    assert accepted["guardianAlertAt"] is not None
 
-    assert [to for to, _ in sent] == ["01033334444"]
-    assert "김사용님 댁" in sent[0][1]
-    assert confirm_url in sent[0][1]
+    # 1차: 사용자에게만
+    assert [to for to, _ in sent] == ["01011112222"]
+    assert "김사용님" in sent[0][1]
+    assert accepted["confirmUrl"] in sent[0][1]
+
+    # 2차: 응답이 없으면 보호자에게
+    assert _wait_for(lambda: len(sent) == 2)
+    assert sent[1][0] == "01033334444"
+    assert "김사용님 댁" in sent[1][1]
+    assert "본인이 응답하지 않아" in sent[1][1]
+    assert accepted["confirmUrl"] in sent[1][1]
+
+    # 3차: 보호자도 응답이 없으면 자동 신고
+    assert _wait_for(lambda: client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"] == "auto_reported")
+    incident = client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()
+    assert (incident["stage"], incident["userNotified"], incident["guardianNotified"]) == ("guardian", True, True)
+    assert incident["guardianAlertedAt"] is not None
+    assert _event_types(client) == ["fall_detected", "fall_escalated", "fall_auto_reported"]
+
+    purposes = [item["purpose"] for item in client.get(f"{PREFIX}/sms-logs").json()["items"]]
+    assert purposes[:2] == ["fall_alert", "fall_user_alert"]
+
+
+def test_user_answer_stops_escalation(client, monkeypatch):
+    """사용자가 '괜찮음'을 누르면 보호자 문자와 자동 신고로 넘어가지 않는다."""
+    from app import sms_service
+
+    sent: list[str] = []
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: sent.append(to) or True)
+    client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    client.put(f"{PREFIX}/policies/fall-safety", json={"userAlertWaitSec": 1, "autoReportSec": 1})
+    sent.clear()
+
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    resolved = client.post(
+        f"{PREFIX}/fall-incidents/{accepted['incidentId']}/resolve",
+        params={"token": _token_of(accepted["confirmUrl"])},
+    )
+    assert resolved.json()["status"] == "resolved"
+
+    time.sleep(2.5)  # 보호자 알림·자동 신고 기한이 모두 지나도
+    assert sent == ["01011112222"]
+    incident = client.get(f"{PREFIX}/fall-incidents/{accepted['incidentId']}").json()
+    assert (incident["status"], incident["stage"], incident["guardianNotified"]) == ("resolved", "user", False)
+    assert "fall_escalated" not in _event_types(client)
+
+
+def test_user_sms_failure_still_waits_for_dashboard_answer(client, monkeypatch):
+    """사용자 문자가 실패해도(대회장 인터넷 불안정 등) 대시보드로 응답할 수 있으니 1차 대기는 그대로 진행한다."""
+    from app import sms_service
+
+    sent: list[str] = []
+
+    def fake_send(to, content):
+        sent.append(to)
+        return to != "01011112222"
+
+    monkeypatch.setattr(sms_service, "send_sms", fake_send)
+    client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    sent.clear()
+
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    assert sent == ["01011112222"]
+    assert (accepted["stage"], accepted["userNotified"], accepted["guardianNotified"]) == ("user", False, False)
+    event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
+    assert event["action"].endswith("사용자 문자 발송 실패 (30초 안에 응답 없으면 보호자 알림)")
+
+
+def test_zero_wait_alerts_user_and_guardian_together(client, monkeypatch):
+    from app import sms_service
+
+    sent: list[str] = []
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: sent.append(to) or True)
+    client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    _alert_guardian_at_once(client)
+    sent.clear()
+
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    assert sent == ["01011112222", "01033334444"]
+    assert (accepted["stage"], accepted["userNotified"], accepted["guardianNotified"]) == ("guardian", True, True)
+
+
+def test_fall_policy_defaults_and_partial_update(client):
+    assert client.get(f"{PREFIX}/policies/fall-safety").json() == {"userAlertWaitSec": 30, "autoReportSec": 60}
+    # 예전처럼 autoReportSec만 보내도 된다 (userAlertWaitSec는 기본값)
+    assert client.put(f"{PREFIX}/policies/fall-safety", json={"autoReportSec": 10}).json() == {
+        "userAlertWaitSec": 30,
+        "autoReportSec": 10,
+    }
+    assert client.put(f"{PREFIX}/policies/fall-safety", json={"userAlertWaitSec": -1, "autoReportSec": 10}).status_code == 422
 
 
 def test_sms_request_format(monkeypatch):
@@ -238,8 +352,10 @@ def test_fall_turns_off_burner_and_can_be_resolved(client, published):
     incident_id = accepted.json()["incidentId"]
     token = _token_of(accepted.json()["confirmUrl"])
 
-    # 재실 정책과 달리 단계 없이 즉시 전원 차단
-    assert published[-1]["type"] == "turn_off"
+    # 재실 정책과 달리 단계 없이 즉시 전원 차단 + 전등 깜빡임
+    assert _types_sent(published) == [(DEVICE, "turn_off"), ("light-01", "blink")]
+    assert published[-1]["durationSec"] == settings.LIGHT_BLINK_SEC
+    assert accepted.json()["lightBlinkSent"] is True
     assert client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"] == "pending"
 
     wrong = client.post(f"{PREFIX}/fall-incidents/{incident_id}/resolve", params={"token": "wrong"})
@@ -263,17 +379,12 @@ def test_fall_can_be_reported(client):
 
 
 def test_fall_is_auto_reported_when_nobody_answers(client):
-    client.put(f"{PREFIX}/policies/fall-safety", json={"autoReportSec": 1})
-    incident_id = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["incidentId"]
+    _alert_guardian_at_once(client, auto_report_sec=1)
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    assert accepted["stage"] == "guardian"
+    incident_id = accepted["incidentId"]
 
-    status = "pending"
-    for _ in range(40):  # 최대 4초 대기
-        status = client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"]
-        if status != "pending":
-            break
-        time.sleep(0.1)
-
-    assert status == "auto_reported"
+    assert _wait_for(lambda: client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"] == "auto_reported")
     assert "fall_auto_reported" in _event_types(client)
 
 
@@ -313,16 +424,20 @@ def test_sms_logs_record_every_send(client, monkeypatch):
 
     client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})      # 실패하도록 설정
     client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})  # 성공
+    _alert_guardian_at_once(client)
     incident_id = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["incidentId"]
 
     body = client.get(f"{PREFIX}/sms-logs").json()
-    assert body["total"] == 3
-    newest, middle, oldest = body["items"]  # 최신순
+    assert body["total"] == 4
+    guardian_alert, user_alert, guardian_check, user_check = body["items"]  # 최신순
 
-    assert (newest["purpose"], newest["to"], newest["success"]) == ("fall_alert", "01033334444", True)
-    assert newest["incidentId"] == incident_id
-    assert (middle["purpose"], middle["success"]) == ("guardian_verification", True)
-    assert (oldest["purpose"], oldest["to"], oldest["success"]) == ("user_verification", "01011112222", False)
+    # 대기 시간 0: 사용자(실패)와 보호자에게 동시에 보냄
+    assert (guardian_alert["purpose"], guardian_alert["to"], guardian_alert["success"]) == ("fall_alert", "01033334444", True)
+    assert guardian_alert["incidentId"] == incident_id
+    assert (user_alert["purpose"], user_alert["to"], user_alert["success"]) == ("fall_user_alert", "01011112222", False)
+    assert user_alert["incidentId"] == incident_id
+    assert (guardian_check["purpose"], guardian_check["success"]) == ("guardian_verification", True)
+    assert (user_check["purpose"], user_check["to"], user_check["success"]) == ("user_verification", "01011112222", False)
 
     # 본문(확인 링크의 토큰 포함)은 기록에 남기지 않는다
     assert all("content" not in item and "text" not in item for item in body["items"])
@@ -351,11 +466,14 @@ def test_fall_without_any_contact_still_shuts_off(client, published):
     assert res.status_code == 202
     assert res.json()["shutoffSent"] is True
     assert res.json()["guardianNotified"] is False
-    assert published[-1]["type"] == "turn_off"
+    assert (DEVICE, "turn_off") in _types_sent(published)
 
     event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
     assert event["type"] == "fall_detected"
-    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 보호자 미등록으로 문자 미발송"
+    assert event["action"] == (
+        "인덕션 비상 전원 차단 명령 전송 + 전등 깜빡임 명령 전송 + "
+        "사용자 미등록으로 문자 미발송 (30초 안에 응답 없으면 보호자 알림)"
+    )
     assert client.get(f"{PREFIX}/sms-logs").json()["total"] == 0
 
 
@@ -364,6 +482,7 @@ def test_fall_records_what_was_actually_done(client, published, monkeypatch):
 
     monkeypatch.setattr(sms_service, "send_sms", lambda to, content: True)
     client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    _alert_guardian_at_once(client)
 
     accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
     assert (accepted["shutoffSent"], accepted["guardianNotified"]) == (True, True)
@@ -371,7 +490,7 @@ def test_fall_records_what_was_actually_done(client, published, monkeypatch):
     incident = client.get(f"{PREFIX}/fall-incidents/{accepted['incidentId']}").json()
     assert (incident["shutoffSent"], incident["guardianNotified"]) == (True, True)
     event = client.get(f"{PREFIX}/safety-events/{incident['eventId']}").json()
-    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 보호자 문자 발송"
+    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 전등 깜빡임 명령 전송 + 사용자 미등록으로 문자 미발송 + 보호자 문자 발송"
 
 
 def test_fall_still_notifies_when_induction_is_unreachable(client, monkeypatch):
@@ -385,6 +504,7 @@ def test_fall_still_notifies_when_induction_is_unreachable(client, monkeypatch):
     monkeypatch.setattr(mqtt_client, "publish_command", broken_publish)
     monkeypatch.setattr(sms_service, "send_sms", lambda to, content: sent.append((to, content)) or True)
     client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    _alert_guardian_at_once(client)
     sent.clear()
 
     res = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT)
@@ -398,7 +518,7 @@ def test_fall_still_notifies_when_induction_is_unreachable(client, monkeypatch):
     assert "자동 차단 명령을 보냈습니다" not in sent[0][1]
 
     event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
-    assert event["action"] == "인덕션 차단 명령 전송 실패 + 보호자 문자 발송"
+    assert event["action"] == "인덕션 차단 명령 전송 실패 + 전등 깜빡임 명령 전송 + 사용자 미등록으로 문자 미발송 + 보호자 문자 발송"
 
     # 보호자는 여전히 링크로 사건을 처리할 수 있다
     token = _token_of(res.json()["confirmUrl"])
@@ -411,11 +531,12 @@ def test_fall_reports_sms_failure(client, published, monkeypatch):
 
     monkeypatch.setattr(sms_service, "send_sms", lambda to, content: False)
     client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    _alert_guardian_at_once(client)
 
     accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
     assert (accepted["shutoffSent"], accepted["guardianNotified"]) == (True, False)
     event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
-    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 보호자 문자 발송 실패"
+    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 전등 깜빡임 명령 전송 + 사용자 미등록으로 문자 미발송 + 보호자 문자 발송 실패"
 
 
 def test_failed_publish_marks_command_failed(client, monkeypatch):
@@ -429,5 +550,31 @@ def test_failed_publish_marks_command_failed(client, monkeypatch):
 
     from app import state_store as store
 
-    records = list(store._commands.values())
+    records = [r for r in store._commands.values() if r.deviceType == "stove"]
     assert len(records) == 1 and records[0].status == "failed"
+
+
+def test_fall_light_failure_does_not_stop_the_rest(client, monkeypatch):
+    """전등 통신이 끊겨도 인덕션 차단과 문자는 진행된다."""
+    from app import mqtt_client, sms_service
+
+    def broken(device_id, payload):
+        raise RuntimeError("not connected")
+
+    monkeypatch.setattr(mqtt_client, "publish_device_command", broken)
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: True)
+    client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+    _alert_guardian_at_once(client)
+
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    assert (accepted["shutoffSent"], accepted["lightBlinkSent"], accepted["guardianNotified"]) == (True, False, True)
+    event = client.get(f"{PREFIX}/safety-events").json()["items"][0]
+    assert event["action"] == "인덕션 비상 전원 차단 명령 전송 + 전등 깜빡임 명령 전송 실패 + 사용자 미등록으로 문자 미발송 + 보호자 문자 발송"
+
+
+def test_fall_without_light_skips_blink(client, published, monkeypatch):
+    monkeypatch.setattr(settings, "HOMEVIS_DEVICES", "[]", raising=False)
+    accepted = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()
+    assert accepted["lightBlinkSent"] is False
+    assert _types_sent(published) == [(DEVICE, "turn_off")]
+    assert "등록된 전등 없음" in client.get(f"{PREFIX}/safety-events").json()["items"][0]["action"]

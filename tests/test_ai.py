@@ -241,10 +241,35 @@ def test_fall_decision_runs_fall_flow(client, published):
         json=_decision("d-fall", "fall_detected", [], room="toilet"),
     ).json()
     assert res["fallIncidentId"] is not None
-    assert res["actions"][0]["action"] == "turn_off"
-    assert published[-1]["type"] == "turn_off"
+    assert [(a["device"], a["action"], a["status"]) for a in res["actions"]] == [
+        ("stove", "turn_off", "sent"),
+        ("light", "blink", "sent"),
+    ]
+    assert [c["type"] for c in published] == ["turn_off", "blink"]
     incident = client.get(f"{PREFIX}/fall-incidents/{res['fallIncidentId']}").json()
     assert incident["room"] == "toilet"
+    # 화장실에는 전등이 없어서 첫 번째 전등을 깜빡인다
+    assert incident["lightDeviceId"] == "light-01"
+
+    # fall_detected 이벤트가 판단에 연결되어, 피드백이 판단 기록에도 남는다
+    assert res["eventId"] == incident["eventId"]
+    client.post(f"{PREFIX}/safety-events/{res['eventId']}/feedback", json={"verdict": "rejected", "comment": "오탐"})
+    assert client.get(f"{PREFIX}/ai/decisions/d-fall").json()["feedback"]["verdict"] == "rejected"
+
+
+def test_fall_decision_does_not_repeat_builtin_actions(client, published):
+    """판단 결과에 인덕션 끄기·전등 깜빡임을 같이 보내도 한 번만 실행한다."""
+    res = client.post(
+        f"{PREFIX}/ai/decisions",
+        json=_decision(
+            "d-fall-2",
+            "fall_detected",
+            [{"device": "stove", "action": "turn_off"}, {"device": "light", "action": "blink"}],
+            room="room",
+        ),
+    ).json()
+    assert len(res["actions"]) == 2
+    assert [c["type"] for c in published] == ["turn_off", "blink"]
 
 
 def test_feedback_is_linked_to_decision(client, published):

@@ -11,7 +11,7 @@ AI 중앙 판정 엔진과 연동하는 서비스입니다. (v0.3)
 - link_feedback():     사용자가 남긴 피드백을 판단 기록에 연결 (판정 엔진의 가중치 조정용)
 
 시나리오별 처리:
-- fall_detected  : 기존 낙상 처리 흐름(인덕션 비상 차단, 보호자 문자, 자동 신고)을 그대로 실행
+- fall_detected  : 낙상 처리 흐름(인덕션 비상 차단 + 전등 깜빡임 -> 사용자 -> 보호자 -> 자동 신고)을 실행
 - 그 외          : actions에 적힌 제어를 순서대로 실행 (bedtime_light_off, stove_absence, water_dispense 등)
 - restore_power  : HomeVIS가 인덕션을 끄거나 낮추기 직전 화력으로 다시 켭니다.
 """
@@ -41,6 +41,8 @@ logger = logging.getLogger("induction.ai")
 
 FALL_SCENARIO = "fall_detected"
 STOVE_ACTIONS = ("turn_on", "turn_off", "set_level", "restore_power")
+# 낙상 처리 흐름이 직접 실행하는 제어 (판단 결과의 actions에 같이 와도 중복 실행하지 않음)
+FALL_BUILTIN_ACTIONS = {("stove", "turn_off"), ("light", "blink")}
 
 
 def _now_iso() -> str:
@@ -142,8 +144,20 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
                 message="낙상 비상 차단",
             )
         )
+        if incident.lightDeviceId is not None:
+            results.append(
+                AiActionResult(
+                    device="light",
+                    deviceId=incident.lightDeviceId,
+                    action="blink",
+                    status="sent" if incident.lightBlinkSent else "failed",
+                    message="낙상 알림 깜빡임",
+                )
+            )
 
     for action in request.actions:
+        if request.scenario == FALL_SCENARIO and (action.device, action.action) in FALL_BUILTIN_ACTIONS:
+            continue  # 낙상 처리 흐름이 이미 실행한 제어라 두 번 보내지 않습니다.
         results.append(_execute(action, request))
 
     record = AiDecisionRecord(
@@ -160,9 +174,13 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
     )
 
     if request.scenario != FALL_SCENARIO:
-        # 낙상은 낙상 처리 흐름이 자체 이벤트(fall_detected)를 남기므로 여기서는 생략
         event = _emit_decision_event(request, results)
         record = record.model_copy(update={"eventId": event.eventId})
+    elif incident.eventId is not None:
+        # 낙상은 낙상 처리 흐름이 만든 fall_detected 이벤트를 이 판단에 연결합니다.
+        # (대시보드에서 그 이벤트에 피드백을 남기면 판단 기록에도 복사되도록)
+        state_store.update_safety_event(incident.eventId, decisionId=request.decisionId)
+        record = record.model_copy(update={"eventId": incident.eventId})
 
     if request.weatherBriefing:
         logger.info("날씨 안내 요청 수신 (decisionId=%s) - 날씨 안내 기능은 추후 연결 예정", request.decisionId)

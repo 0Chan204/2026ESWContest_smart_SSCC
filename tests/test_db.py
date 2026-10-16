@@ -46,7 +46,7 @@ def test_everything_survives_restart(mongo, published):
     with TestClient(app) as client:
         client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "010-1111-2222"})
         client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
-        client.put(f"{PREFIX}/policies/fall-safety", json={"autoReportSec": 300})
+        client.put(f"{PREFIX}/policies/fall-safety", json={"userAlertWaitSec": 120, "autoReportSec": 300})
 
         policy = client.get(f"{PREFIX}/policies/kitchen-absence").json()
         policy["offAfterSec"] = 999
@@ -95,7 +95,7 @@ def test_everything_survives_restart(mongo, published):
     with _restart_server() as client:
         assert client.get(f"{PREFIX}/user").json() == {"name": "김사용", "phone": "01011112222"}
         assert client.get(f"{PREFIX}/guardian").json() == {"name": "박보호", "phone": "01033334444"}
-        assert client.get(f"{PREFIX}/policies/fall-safety").json() == {"autoReportSec": 300}
+        assert client.get(f"{PREFIX}/policies/fall-safety").json() == {"userAlertWaitSec": 120, "autoReportSec": 300}
         assert client.get(f"{PREFIX}/policies/kitchen-absence").json()["offAfterSec"] == 999
 
         assert client.get(f"{PREFIX}/commands/{command_id}").json()["status"] == "sent"
@@ -131,7 +131,8 @@ def test_overdue_fall_incident_is_auto_reported_after_restart(mongo, published):
     with TestClient(app) as client:
         incident_id = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["incidentId"]
         overdue = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(timespec="seconds")
-        state_store.update_fall_incident(incident_id, autoReportAt=overdue)
+        # 사용자 응답 기한과 자동 신고 기한이 모두 지난 상태로 만든다
+        state_store.update_fall_incident(incident_id, guardianAlertAt=overdue, autoReportAt=overdue)
 
     with _restart_server() as client:
         status = "pending"
@@ -141,6 +142,35 @@ def test_overdue_fall_incident_is_auto_reported_after_restart(mongo, published):
                 break
             time.sleep(0.1)
         assert status == "auto_reported"
+
+
+def test_user_stage_incident_moves_to_guardian_after_restart(mongo, published, monkeypatch):
+    """사용자 응답을 기다리던 중 서버가 꺼졌다 켜져도, 기한이 지났으면 보호자에게 넘어간다."""
+    from app import sms_service
+    from app.main import app
+
+    sent: list[str] = []
+    monkeypatch.setattr(sms_service, "send_sms", lambda to, content: sent.append(to) or True)
+
+    with TestClient(app) as client:
+        client.put(f"{PREFIX}/user", json={"name": "김사용", "phone": "01011112222"})
+        client.put(f"{PREFIX}/guardian", json={"name": "박보호", "phone": "01033334444"})
+        incident_id = client.post(f"{PREFIX}/safety/fall-events", json=FALL_REPORT).json()["incidentId"]
+        assert client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["stage"] == "user"
+        overdue = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(timespec="seconds")
+        later = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat(timespec="seconds")
+        state_store.update_fall_incident(incident_id, guardianAlertAt=overdue, autoReportAt=later)
+
+    with _restart_server() as client:
+        stage = "user"
+        for _ in range(40):
+            stage = client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["stage"]
+            if stage != "user":
+                break
+            time.sleep(0.1)
+        incident = client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()
+        assert (incident["stage"], incident["status"], incident["guardianNotified"]) == ("guardian", "pending", True)
+        assert sent[-1] == "01033334444"
 
 
 def test_telemetry_is_logged_with_expiry_index(mongo):
