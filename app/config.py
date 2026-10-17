@@ -127,6 +127,8 @@ class Settings:
     # 이 시간(초)보다 오래된 날씨로 안내할 때는 "몇 시 기준"을 문장에 붙입니다.
     WEATHER_STALE_SEC: int = int(os.getenv("WEATHER_STALE_SEC", "3600"))
     WEATHER_TIMEOUT_SEC: float = float(os.getenv("WEATHER_TIMEOUT_SEC", "5"))
+    # 시간대별 예보를 지금 시간부터 몇 시간치 줄지 (v0.4.3)
+    WEATHER_HOURLY_HOURS: int = int(os.getenv("WEATHER_HOURLY_HOURS", "12"))
 
     # --- SMS에 담을 확인 링크의 기준 URL (프론트가 만드는 모바일 확인 페이지) ---
     FRONTEND_BASE_URL: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")

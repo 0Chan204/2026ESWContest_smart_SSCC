@@ -142,6 +142,9 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 - 1시간보다 오래된 날씨면 문장 앞에 "(오후 3시 05분 기준)"처럼 기준 시각을 붙이고 `stale: true`입니다.
 - 한 번도 받지 못했으면 `available: false`, 문장은 "날씨 정보를 아직 가져오지 못했어요."입니다. 출수는 그대로 실행됩니다.
 - 대시보드에는 WebSocket 이벤트 `weather.briefing`으로 보내고, `GET /api/v1/weather`로도 조회할 수 있습니다.
+- `weather.hourly` (v0.4.3): 지금 시간부터 12시간(`WEATHER_HOURLY_HOURS`)의 시간대별 예보입니다.
+  `time`은 그 시간의 시작 시각(`+09:00` 포함)이고, 이미 지나간 시간은 응답할 때 빠집니다.
+  `precipitationProbability`는 그 시간의 강수 확률(%)입니다. (바깥의 `precipitationProbability`는 오늘 최대 강수 확률)
 
 ```json
 "weather": {
@@ -150,7 +153,11 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
   "stale": false,
   "basedOn": "2026-10-16T12:45:00+00:00",
   "weather": { "location": "서울", "temperature": 18.3, "humidity": 60, "condition": "맑음",
-               "tempMax": 22.4, "tempMin": 11.6, "precipitationProbability": 10, "...": "..." }
+               "tempMax": 22.4, "tempMin": 11.6, "precipitationProbability": 10, "...": "...",
+               "hourly": [
+                 { "time": "2026-10-16T21:00:00+09:00", "temperature": 17.5, "weatherCode": 3, "condition": "흐림", "precipitationProbability": 0 },
+                 { "time": "2026-10-16T22:00:00+09:00", "temperature": 17.0, "weatherCode": 61, "condition": "약한 비", "precipitationProbability": 60 }
+               ] }
 }
 ```
 

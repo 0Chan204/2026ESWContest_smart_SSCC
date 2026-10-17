@@ -6,6 +6,8 @@
   날씨를 받아 메모리와 DB(runtime_state)에 저장합니다. 실패하면 WEATHER_RETRY_SEC 뒤 다시 시도합니다.
 - build_briefing(): 저장해 둔 날씨로 안내 문장을 만듭니다. 인터넷이 끊겨도 마지막으로 받은 날씨로
   안내하고, 오래된 날씨면 "몇 시 기준"을 붙입니다. 한 번도 못 받았으면 못 가져왔다고 안내합니다.
+- 시간대별 예보(v0.4.3): 지금 시간부터 WEATHER_HOURLY_HOURS(기본 12)시간치를 weather.hourly로 줍니다.
+  응답할 때 이미 지나간 시간은 빼므로, 인터넷이 끊겨 갱신이 밀려도 지난 예보를 보여주지 않습니다.
 
 Open-Meteo는 API 키가 필요 없습니다. 위치는 .env의 WEATHER_LAT / WEATHER_LON / WEATHER_LOCATION_NAME.
 """
@@ -19,7 +21,7 @@ import requests
 
 from app import state_store
 from app.config import settings
-from app.schemas import WeatherBriefing, WeatherSnapshot
+from app.schemas import HourlyWeather, WeatherBriefing, WeatherSnapshot
 
 logger = logging.getLogger("induction.weather")
 
@@ -75,6 +77,48 @@ def _first(values: Optional[list]) -> Optional[float]:
     return values[0] if values else None
 
 
+def _at(values: Optional[list], index: int):
+    return values[index] if values and index < len(values) else None
+
+
+def _parse_hourly(body: dict, current_time: str) -> Optional[list[HourlyWeather]]:
+    """Open-Meteo hourly 값에서 지금 시간(current_time이 속한 시간)부터 WEATHER_HOURLY_HOURS개를 고릅니다.
+
+    Open-Meteo는 timezone=Asia/Seoul로 요청하면 "2026-10-17T20:00"처럼 시간대 없는 현지 시각을 주므로,
+    응답의 utc_offset_seconds로 시간대를 붙여 프론트(브라우저)가 헷갈리지 않게 합니다.
+    """
+    hourly = body.get("hourly") or {}
+    times = hourly.get("time") or []
+    if not times:
+        return None
+
+    tz = timezone(timedelta(seconds=int(body.get("utc_offset_seconds", 9 * 3600))))
+    start = current_time[:13]  # "2026-10-17T19:30" -> "2026-10-17T19" (그 시간의 시작부터)
+    temps = hourly.get("temperature_2m")
+    codes = hourly.get("weather_code")
+    probs = hourly.get("precipitation_probability")
+
+    items: list[HourlyWeather] = []
+    for i, local_time in enumerate(times):
+        if local_time[:13] < start:
+            continue
+        temperature, code = _at(temps, i), _at(codes, i)
+        if temperature is None or code is None:
+            continue
+        items.append(
+            HourlyWeather(
+                time=datetime.fromisoformat(local_time).replace(tzinfo=tz).isoformat(timespec="seconds"),
+                temperature=float(temperature),
+                weatherCode=int(code),
+                condition=condition_of(int(code)),
+                precipitationProbability=_at(probs, i),
+            )
+        )
+        if len(items) >= settings.WEATHER_HOURLY_HOURS:
+            break
+    return items
+
+
 def parse_open_meteo(body: dict) -> WeatherSnapshot:
     """Open-Meteo 응답(JSON)을 저장용 형태로 바꿉니다. 필요한 값이 없으면 KeyError/TypeError"""
     current = body["current"]
@@ -94,18 +138,21 @@ def parse_open_meteo(body: dict) -> WeatherSnapshot:
         tempMax=_first(daily.get("temperature_2m_max")),
         tempMin=_first(daily.get("temperature_2m_min")),
         precipitationProbability=_first(daily.get("precipitation_probability_max")),
+        hourly=_parse_hourly(body, current["time"]),
     )
 
 
 def fetch_weather() -> WeatherSnapshot:
-    """Open-Meteo에서 현재·오늘 날씨를 받습니다. 실패하면 예외를 그대로 던집니다."""
+    """Open-Meteo에서 현재·오늘·시간대별 날씨를 받습니다. 실패하면 예외를 그대로 던집니다."""
     params = {
         "latitude": settings.WEATHER_LAT,
         "longitude": settings.WEATHER_LON,
         "current": "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+        "hourly": "temperature_2m,weather_code,precipitation_probability",
         "timezone": "Asia/Seoul",
-        "forecast_days": 1,
+        # 밤에도 12시간치 예보가 나오도록 내일까지 받습니다 (daily는 첫 번째 값 = 오늘만 씁니다)
+        "forecast_days": 2,
     }
     response = requests.get(OPEN_METEO_URL, params=params, timeout=settings.WEATHER_TIMEOUT_SEC)
     response.raise_for_status()
@@ -165,10 +212,25 @@ def _based_on_text(fetched: datetime) -> str:
     return f"{ampm} {hour}시 {local.minute:02d}분 기준"
 
 
+def _upcoming(hourly: list[HourlyWeather], now: datetime) -> list[HourlyWeather]:
+    """이미 끝난 시간(시작 + 1시간 <= 지금)의 예보는 뺍니다."""
+    upcoming = []
+    for item in hourly:
+        try:
+            ends_at = datetime.fromisoformat(item.time) + timedelta(hours=1)
+        except ValueError:
+            continue
+        if ends_at.tzinfo is not None and ends_at > now:
+            upcoming.append(item)
+    return upcoming
+
+
 def build_briefing(snapshot: Optional[WeatherSnapshot] = None) -> WeatherBriefing:
     snapshot = snapshot or state_store.get_weather()
     if snapshot is None:
         return WeatherBriefing(available=False, text="날씨 정보를 아직 가져오지 못했어요.")
+    if snapshot.hourly is not None:
+        snapshot = snapshot.model_copy(update={"hourly": _upcoming(snapshot.hourly, _now())})
 
     try:
         fetched = datetime.fromisoformat(snapshot.fetchedAt)
