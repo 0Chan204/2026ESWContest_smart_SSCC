@@ -614,6 +614,16 @@ class AiDecisionListResponse(BaseModel):
 # 대시보드 요청(GET /weather)이 오면 캐시한 값으로 안내 문장을 만듭니다.
 # ---------------------------------------------------------------------------
 
+class HourlyWeather(BaseModel):
+    """시간대별 예보 1칸 (v0.4.3). time은 그 시간의 시작 시각"""
+
+    time: str = Field(..., description="예보 시각, 시간대 포함 ISO 8601 (예: 2026-10-17T20:00:00+09:00)")
+    temperature: float
+    weatherCode: int
+    condition: str = Field(..., description="날씨 상태 한국어")
+    precipitationProbability: Optional[float] = Field(default=None, description="그 시간의 강수 확률(%)")
+
+
 class WeatherSnapshot(BaseModel):
     """Open-Meteo에서 받아 저장해 둔 날씨 1건"""
 
@@ -630,6 +640,9 @@ class WeatherSnapshot(BaseModel):
     tempMax: Optional[float] = None
     tempMin: Optional[float] = None
     precipitationProbability: Optional[float] = Field(default=None, description="오늘 최대 강수 확률(%)")
+    hourly: Optional[list[HourlyWeather]] = Field(
+        default=None, description="지금 시간부터 WEATHER_HOURLY_HOURS(기본 12)시간의 시간대별 예보 (v0.4.3)"
+    )
 
 
 class WeatherBriefing(BaseModel):

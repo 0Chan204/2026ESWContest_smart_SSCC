@@ -14,9 +14,14 @@ from app.schemas import WeatherSnapshot
 
 PREFIX = settings.API_PREFIX
 
+# 시간대별 예보: 10-16 18시 ~ 10-17 23시 (Open-Meteo처럼 시간대 없는 현지 시각). 10-17 1~3시에 비(60%)
+HOURLY_TIMES = [f"2026-10-16T{h:02d}:00" for h in range(18, 24)] + [f"2026-10-17T{h:02d}:00" for h in range(24)]
+RAIN_TIMES = {"2026-10-17T01:00", "2026-10-17T02:00", "2026-10-17T03:00"}
+
 OPEN_METEO_BODY = {
     "latitude": 37.56,
     "longitude": 126.97,
+    "utc_offset_seconds": 32400,
     "current": {
         "time": "2026-10-16T21:45",
         "interval": 900,
@@ -31,6 +36,12 @@ OPEN_METEO_BODY = {
         "temperature_2m_max": [22.4],
         "temperature_2m_min": [11.6],
         "precipitation_probability_max": [10],
+    },
+    "hourly": {
+        "time": HOURLY_TIMES,
+        "temperature_2m": [round(19.0 - i * 0.5, 1) for i in range(len(HOURLY_TIMES))],
+        "weather_code": [61 if t in RAIN_TIMES else 3 for t in HOURLY_TIMES],
+        "precipitation_probability": [60 if t in RAIN_TIMES else 0 for t in HOURLY_TIMES],
     },
 }
 
@@ -84,9 +95,43 @@ def test_parse_open_meteo():
     assert snapshot.observedAt == "2026-10-16T21:45"
 
 
+def test_parse_hourly_starts_at_current_hour():
+    hourly = weather_service.parse_open_meteo(OPEN_METEO_BODY).hourly
+    # 지금 21:45 -> 21시 칸부터 12시간
+    assert len(hourly) == settings.WEATHER_HOURLY_HOURS == 12
+    assert hourly[0].time == "2026-10-16T21:00:00+09:00"
+    assert hourly[-1].time == "2026-10-17T08:00:00+09:00"
+    assert (hourly[0].temperature, hourly[0].weatherCode, hourly[0].condition) == (17.5, 3, "흐림")
+    rainy = [h.time for h in hourly if (h.precipitationProbability or 0) >= 30]
+    assert rainy == ["2026-10-17T01:00:00+09:00", "2026-10-17T02:00:00+09:00", "2026-10-17T03:00:00+09:00"]
+    assert hourly[4].condition == "약한 비"
+
+
+def test_parse_without_hourly_is_none():
+    body = {k: v for k, v in OPEN_METEO_BODY.items() if k != "hourly"}
+    assert weather_service.parse_open_meteo(body).hourly is None
+
+
+def test_briefing_drops_past_hours(monkeypatch):
+    snapshot = _snapshot()
+    # 한국 시각 10-16 22:30 -> 21시 칸은 끝났으므로 빠지고 22시 칸부터
+    monkeypatch.setattr(weather_service, "_now", lambda: datetime(2026, 10, 16, 13, 30, tzinfo=timezone.utc))
+    hourly = weather_service.build_briefing(snapshot).weather.hourly
+    assert hourly[0].time == "2026-10-16T22:00:00+09:00"
+    assert len(hourly) == 11
+    # 저장된 원본은 그대로
+    assert len(snapshot.hourly) == 12
+
+    # 인터넷이 끊겨 하루가 지나면 지난 예보는 하나도 보여주지 않는다
+    monkeypatch.setattr(weather_service, "_now", lambda: datetime(2026, 10, 18, 0, 0, tzinfo=timezone.utc))
+    assert weather_service.build_briefing(snapshot).weather.hourly == []
+
+
 def test_refresh_requests_configured_location(weather_ok):
     assert weather_service.refresh() is True
     params = weather_ok[0]["params"]
+    assert "precipitation_probability" in params["hourly"]
+    assert params["forecast_days"] == 2
     assert (params["latitude"], params["longitude"]) == (settings.WEATHER_LAT, settings.WEATHER_LON)
     assert weather_ok[0]["timeout"] == settings.WEATHER_TIMEOUT_SEC
     assert state_store.get_weather().temperature == 18.3
@@ -155,6 +200,20 @@ def test_weather_api(client, weather_ok):
     assert body["available"] is True
     assert body["weather"]["condition"] == "맑음"
     assert body["text"].startswith("현재 서울은 맑음")
+
+
+def test_weather_api_hourly(client, weather_ok, monkeypatch):
+    monkeypatch.setattr(weather_service, "_now", lambda: datetime(2026, 10, 16, 12, 50, tzinfo=timezone.utc))
+    body = client.get(f"{PREFIX}/weather", params={"refresh": True}).json()
+    first = body["weather"]["hourly"][0]
+    assert first == {
+        "time": "2026-10-16T21:00:00+09:00",
+        "temperature": 17.5,
+        "weatherCode": 3,
+        "condition": "흐림",
+        "precipitationProbability": 0,
+    }
+    assert len(body["weather"]["hourly"]) == 12
 
 
 def test_weather_api_refresh_without_internet_uses_last_weather(client, weather_down):

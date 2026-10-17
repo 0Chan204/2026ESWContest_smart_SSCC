@@ -297,6 +297,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 - 날씨는 Open-Meteo(API 키 불필요)에서 30분마다 미리 받아 메모리와 DB에 저장합니다. 대회장 인터넷이 끊겨도
   마지막으로 받은 날씨로 안내하고, 오래된 값이면 "몇 시 기준"을 붙입니다.
 - 위치는 `.env`의 `WEATHER_LOCATION_NAME` / `WEATHER_LAT` / `WEATHER_LON` (기본 서울). 로직은 `app/weather_service.py`.
+- 시간대별 예보(v0.4.3): `weather.hourly`에 지금 시간부터 12시간치(`WEATHER_HOURLY_HOURS`)의 기온·날씨·강수 확률을 담습니다.
 
 ## 9-3. 엣지 노드 · 최종 재실 판단 결과 (v0.4)
 
