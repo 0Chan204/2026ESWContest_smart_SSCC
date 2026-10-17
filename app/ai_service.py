@@ -15,6 +15,10 @@ AI 중앙 판정 엔진과 연동하는 서비스입니다. (v0.3)
 - 그 외          : actions에 적힌 제어를 순서대로 실행 (bedtime_light_off, stove_absence, water_dispense 등)
 - restore_power  : HomeVIS가 인덕션을 끄거나 낮추기 직전 화력으로 다시 켭니다.
 - weatherBriefing: true면 미리 받아 둔 날씨로 안내를 만들어 대시보드(weather.briefing)와 응답(weather)에 담습니다.
+- announcement   : 판정 엔진이 만든 안내 문장을 대시보드(ai.announcement)로 보냅니다. 대시보드가 표시하고 음성으로 읽습니다.
+- expiresAt      : 이 시각이 지나서 도착한 판단은 실행하지 않고 status=expired로 기록합니다.
+                   (네트워크가 끊겼다가 늦게 재전송된 판단이 엉뚱한 때 실행되지 않도록)
+                   낙상(fall_detected)은 늦게 도착해도 안전을 위해 항상 실행합니다.
 """
 
 import logging
@@ -125,12 +129,50 @@ def get_device_states() -> list[DeviceInfo]:
 # 판단 결과 실행
 # ---------------------------------------------------------------------------
 
+def _is_expired(request: AiDecisionRequest) -> bool:
+    if request.expiresAt is None or request.scenario == FALL_SCENARIO:
+        return False
+    expires = datetime.fromisoformat(request.expiresAt.replace("Z", "+00:00"))
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) > expires
+
+
+def _record_expired(request: AiDecisionRequest) -> AiDecisionRecord:
+    """만료된 판단: 가전 제어·안내 없이 기록만 남깁니다."""
+    record = AiDecisionRecord(
+        decisionId=request.decisionId,
+        scenario=request.scenario,
+        confidence=request.confidence,
+        reason=request.reason,
+        timestamp=request.timestamp,
+        room=request.room,
+        receivedAt=_now_iso(),
+        weatherBriefing=request.weatherBriefing,
+        announcement=request.announcement,
+        expiresAt=request.expiresAt,
+        status="expired",
+    )
+    logger.warning(
+        "만료 시각(%s)이 지나 도착한 AI 판단이라 실행하지 않습니다 (decisionId=%s, scenario=%s)",
+        request.expiresAt,
+        request.decisionId,
+        request.scenario,
+    )
+    state_store.save_ai_decision(record)
+    ws_hub.broadcast_threadsafe("ai.decision", record.model_dump())
+    return record
+
+
 def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]:
     """(판단 기록, 중복 여부)를 돌려줍니다. 이미 받은 decisionId면 실행하지 않고 처음 기록을 돌려줍니다."""
     existing = state_store.get_ai_decision(request.decisionId)
     if existing is not None:
         logger.info("이미 처리한 AI 판단이라 다시 실행하지 않습니다 (decisionId=%s)", request.decisionId)
         return existing, True
+
+    if _is_expired(request):
+        return _record_expired(request), False
 
     results: list[AiActionResult] = []
     fall_incident_id: Optional[str] = None
@@ -181,6 +223,8 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
         weatherBriefing=request.weatherBriefing,
         actions=results,
         fallIncidentId=fall_incident_id,
+        announcement=request.announcement,
+        expiresAt=request.expiresAt,
     )
 
     if request.scenario != FALL_SCENARIO:
@@ -200,6 +244,19 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
             "weather.briefing", {"decisionId": request.decisionId, "room": request.room, **briefing.model_dump()}
         )
 
+    if request.announcement:
+        # 대시보드가 화면에 표시하고 음성으로 읽습니다.
+        ws_hub.broadcast_threadsafe(
+            "ai.announcement",
+            {
+                "decisionId": request.decisionId,
+                "scenario": request.scenario,
+                "room": request.room,
+                "text": request.announcement,
+                "announcedAt": record.receivedAt,
+            },
+        )
+
     state_store.save_ai_decision(record)
     ws_hub.broadcast_threadsafe("ai.decision", record.model_dump())
     return record, False
@@ -207,6 +264,8 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
 
 def _emit_decision_event(request: AiDecisionRequest, results: list[AiActionResult]) -> SafetyEvent:
     summary = ", ".join(f"{r.deviceId or r.device} {r.action} {r.status}" for r in results) or "실행할 제어 없음"
+    if request.announcement:
+        summary += f" / 안내: {request.announcement}"
     has_problem = any(r.status != "sent" for r in results)
     return safety_service.emit_event(
         "ai_control",

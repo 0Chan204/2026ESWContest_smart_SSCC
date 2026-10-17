@@ -285,7 +285,12 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 인덕션·전등·정수기를 제어하고 기록합니다. 판정 엔진용 API와 전등·정수기 MQTT 메시지 형식은
 `docs/AI-INTEGRATION.md`에 정리되어 있습니다. (v0.3부터 `POST /presence`는 저장·전달만 하고 직접 제어하지 않습니다.)
 
-## 9-2. 날씨 안내 (v0.3.2)
+## 9-2. 날씨 · 음성 안내 (v0.3.2, v0.4.1)
+
+- 판정 엔진이 판단에 `announcement`(안내 문장)를 담아 보내면 대시보드로 WebSocket `ai.announcement`를 보내고,
+  대시보드가 화면 표시 + 음성 재생을 합니다. 날씨는 판정 엔진이 `GET /api/v1/weather`로 가져가 문장에 넣습니다.
+- 판단에 `expiresAt`을 담으면, 그 시각이 지나서 도착한 판단은 실행하지 않고 `status: expired`로 기록합니다
+  (낙상은 예외로 항상 실행).
 
 - 판단 결과에 `weatherBriefing: true`가 오면(물 출수 시나리오) 날씨 안내 문장을 만들어 대시보드(WebSocket
   `weather.briefing`)로 보내고 판단 기록에도 남깁니다. 대시보드는 `GET /api/v1/weather`로도 조회할 수 있습니다.

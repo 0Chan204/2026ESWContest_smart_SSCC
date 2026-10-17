@@ -43,6 +43,10 @@ def receive_decision(request: AiDecisionRequest, response: Response) -> AiDecisi
       인덕션 turn_off / 전등 blink는 서버가 직접 실행하므로 actions에 넣지 않아도 됩니다.
     - 인덕션 restore_power는 HomeVIS가 끄거나 낮추기 직전의 화력으로 다시 켭니다.
     - 정수기 dispense에는 출수량(amountMl)이 필요합니다. 전등 blink 시간을 비우면 10초입니다.
+    - announcement를 보내면 대시보드에 WebSocket(ai.announcement)으로 전달하고, 대시보드가 화면 표시 + 음성 안내를 합니다.
+      제어 없이 안내만 보내도 됩니다 (actions 비움). 날씨는 GET /weather로 가져가 문장에 넣으세요.
+    - expiresAt이 지난 뒤 도착한 판단은 실행하지 않고 status=expired로 기록합니다 (응답은 그대로 202).
+      낙상(fall_detected)은 늦게 도착해도 안전을 위해 항상 실행합니다.
     """
     record, duplicate = ai_service.handle_decision(request)
     if duplicate:

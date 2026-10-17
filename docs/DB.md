@@ -261,11 +261,15 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
   "eventId": "evt-0a1b2c3d4e5f",
   "fallIncidentId": null,
   "feedback": { "verdict": "rejected", "comment": "아직 안 잤어요", "submittedAt": "2026-10-16T14:12:00+00:00" },
-  "weather": null
+  "weather": null,
+  "announcement": "주무실 시간이라 불을 끌게요.",
+  "expiresAt": "2026-10-16T23:10:30+09:00",
+  "status": "executed"
 }
 ```
 
 판단으로 생긴 안전 이벤트(`ai_control`)에 사용자가 피드백을 남기면 `feedback`에도 복사됩니다.
+`status`는 `executed`(실행함) / `expired`(만료 시각이 지나 도착해서 실행하지 않음)이며, 예전 문서에 없으면 `executed`로 읽습니다 (v0.4.1).
 
 ### sensing_results (v0.4)
 
