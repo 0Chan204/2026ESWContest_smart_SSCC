@@ -1,6 +1,7 @@
 /**
  * 온도 추이 미니 그래프 (SVG, 라이브러리 없이).
  * threshold 선(과열 기준)을 함께 그려 "얼마나 가까운지" 를 보이게 한다.
+ * 색은 CSS 변수로 받아 테마에 따라 바뀐다. (예: 'var(--color-brand-ink)')
  */
 export function Sparkline({ values, max, threshold, color, height = 72, label }: {
   values: number[]
@@ -21,11 +22,12 @@ export function Sparkline({ values, max, threshold, color, height = 72, label }:
   const area = `${line} L${W},${H} L0,${H} Z`
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-full w-full" role="img" aria-label={label}>
-      <path d={area} fill={color} opacity="0.08" />
+      <path d={area} style={{ fill: color }} opacity="0.12" />
       {threshold !== undefined && (
-        <line x1="0" x2={W} y1={y(threshold)} y2={y(threshold)} stroke="#dc3a3a" strokeWidth="1" strokeDasharray="4 4" opacity="0.55" vectorEffect="non-scaling-stroke" />
+        <line x1="0" x2={W} y1={y(threshold)} y2={y(threshold)} style={{ stroke: 'var(--color-danger)' }}
+          strokeWidth="1" strokeDasharray="4 4" opacity="0.7" vectorEffect="non-scaling-stroke" />
       )}
-      <path d={line} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      <path d={line} fill="none" style={{ stroke: color }} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
     </svg>
   )
 }

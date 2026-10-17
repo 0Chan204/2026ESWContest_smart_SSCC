@@ -6,14 +6,11 @@ import { RISK_TONE } from '@/lib/labels'
 import type { Risk } from '@/types'
 import { cn } from '@/lib/cn'
 
-/**
- * 왼쪽 내비게이션 레일 (One UI 태블릿 · 월패드 방식).
- * 가로 화면에서 세로 공간을 아끼고, 음성 버튼을 레일 하단에 고정해 콘텐츠를 가리지 않는다.
- */
-export function NavRail({ onVoice, voiceActive, onDemo }: { onVoice: () => void; voiceActive: boolean; onDemo: () => void }) {
-  const { elderly } = usePreferences()
-  const { kitchenRisk, bathroomRisk, source } = useHome()
+interface NavProps { onVoice: () => void; voiceActive: boolean; onDemo: () => void }
 
+function useNavItems() {
+  const { elderly } = usePreferences()
+  const { kitchenRisk, bathroomRisk } = useHome()
   const items: { to: string; label: string; Icon: typeof House; risk?: Risk }[] = [
     { to: '/home', label: '홈', Icon: House },
     { to: '/kitchen', label: '주방', Icon: UtensilsCrossed, risk: kitchenRisk },
@@ -21,40 +18,44 @@ export function NavRail({ onVoice, voiceActive, onDemo }: { onVoice: () => void;
     { to: '/history', label: elderly ? '안전 기록' : '기록', Icon: ClipboardList },
     { to: '/settings', label: '설정', Icon: Settings },
   ]
+  return items
+}
+
+function RiskDot({ risk, label }: { risk?: Risk; label: string }) {
+  if (!risk || risk === 'normal') return null
+  return (
+    <span className={cn('absolute -top-0.5 -right-1 h-2.5 w-2.5 rounded-full ring-2 ring-canvas', RISK_TONE[risk].strong, risk === 'danger' && 'soft-pulse')}
+      aria-label={`${label} 확인 필요`} />
+  )
+}
+
+/**
+ * 왼쪽 메뉴 (태블릿·월패드, 768px 이상). iPad 탭 막대처럼 선택된 항목만 파란 글자.
+ * 음성 버튼은 아래에 고정해 콘텐츠를 가리지 않는다.
+ */
+export function NavRail({ onVoice, voiceActive, onDemo }: NavProps) {
+  const { elderly } = usePreferences()
+  const { source } = useHome()
+  const items = useNavItems()
 
   return (
-    <nav
-      aria-label="주요 메뉴"
-      className={cn('flex h-full shrink-0 flex-col items-center bg-surface py-5', elderly ? 'w-[124px]' : 'w-[100px]')}
-    >
-      <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-xl bg-ink" aria-label="HomeVIS">
-        <House className="h-5 w-5 text-white" strokeWidth={2.2} aria-hidden="true" />
-      </div>
+    <nav aria-label="주요 메뉴"
+      className={cn('hidden h-full shrink-0 flex-col items-center border-r border-line bg-canvas pt-6 pb-5 md:flex', elderly ? 'w-[112px]' : 'w-[88px]')}>
+      <p className="mb-5 text-[0.8125rem] font-bold tracking-[-0.01em] text-ink">HomeVIS</p>
 
-      <ul className="flex w-full flex-1 flex-col gap-1 px-2.5">
+      <ul className="flex w-full flex-1 flex-col gap-1.5 px-2">
         {items.map(({ to, label, Icon, risk }) => (
           <li key={to}>
-            <NavLink
-              to={to}
-              className={({ isActive }) => cn(
-                'group flex w-full flex-col items-center gap-1 rounded-2xl py-2.5 transition-colors',
-                isActive ? 'text-brand' : 'text-ink-2 hover:text-ink',
-              )}
-            >
+            <NavLink to={to}
+              className={({ isActive }) => cn('press flex w-full flex-col items-center gap-1 rounded-xl py-2.5',
+                isActive ? 'bg-surface text-brand-ink' : 'text-ink-3 hover:text-ink')}>
               {({ isActive }) => (
                 <>
-                  <span className={cn(
-                    'relative flex items-center justify-center rounded-full transition-colors',
-                    elderly ? 'h-11 w-16' : 'h-9 w-14',
-                    isActive ? 'bg-brand-soft' : 'group-hover:bg-sunken',
-                  )}>
-                    <Icon className={elderly ? 'h-6 w-6' : 'h-[22px] w-[22px]'} strokeWidth={isActive ? 2.2 : 1.8} aria-hidden="true" />
-                    {risk && risk !== 'normal' && (
-                      <span className={cn('absolute top-1 right-2.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface', RISK_TONE[risk].strong)}
-                        aria-label={`${label} 확인 필요`} />
-                    )}
+                  <span className="relative">
+                    <Icon className={elderly ? 'h-7 w-7' : 'h-6 w-6'} strokeWidth={isActive ? 2.2 : 1.8} aria-hidden="true" />
+                    <RiskDot risk={risk} label={label} />
                   </span>
-                  <span className={cn('font-semibold', elderly ? 'text-base' : 'text-[0.8125rem]')}>{label}</span>
+                  <span className={cn('font-medium', elderly ? 'text-base' : 'text-[0.75rem]')}>{label}</span>
                 </>
               )}
             </NavLink>
@@ -62,29 +63,57 @@ export function NavRail({ onVoice, voiceActive, onDemo }: { onVoice: () => void;
         ))}
       </ul>
 
-      <div className="flex flex-col items-center gap-2 px-2.5">
+      <div className="flex flex-col items-center gap-3">
         {source.demo && (
           <button type="button" onClick={onDemo} aria-label="시연 도구"
-            className="flex flex-col items-center gap-1 rounded-2xl px-2 py-2 text-ink-3 hover:bg-sunken hover:text-ink-2">
+            className="press flex h-10 w-10 items-center justify-center rounded-full text-ink-3 hover:bg-fill">
             <FlaskConical className="h-5 w-5" aria-hidden="true" />
-            <span className="text-[0.6875rem] font-semibold">시연</span>
           </button>
         )}
-        <button
-          type="button"
-          onClick={onVoice}
-          aria-label="음성으로 말하기"
-          aria-expanded={voiceActive}
-          className={cn(
-            'flex flex-col items-center justify-center gap-1 rounded-2xl text-white transition-colors',
-            elderly ? 'h-[76px] w-[88px]' : 'h-16 w-16',
-            voiceActive ? 'bg-brand-dark' : 'bg-brand hover:bg-brand-dark',
-          )}
-        >
-          <Mic className={elderly ? 'h-7 w-7' : 'h-6 w-6'} aria-hidden="true" />
-          {elderly && <span className="text-sm font-bold">말하기</span>}
-        </button>
+        <VoiceButton onVoice={onVoice} voiceActive={voiceActive} elderly={elderly} />
       </div>
+    </nav>
+  )
+}
+
+function VoiceButton({ onVoice, voiceActive, elderly, compact = false }: { onVoice: () => void; voiceActive: boolean; elderly: boolean; compact?: boolean }) {
+  return (
+    <button type="button" onClick={onVoice} aria-label="음성으로 말하기" aria-expanded={voiceActive}
+      className={cn('press flex items-center justify-center rounded-full text-white',
+        compact ? 'h-12 w-12' : elderly ? 'h-[68px] w-[68px]' : 'h-14 w-14',
+        voiceActive ? 'bg-brand-dark' : 'bg-brand')}>
+      <Mic className={elderly && !compact ? 'h-7 w-7' : 'h-6 w-6'} strokeWidth={2} aria-hidden="true" />
+    </button>
+  )
+}
+
+/** 휴대폰 폭(768px 미만) 하단 탭 막대. 음성 버튼은 오른쪽 끝. */
+export function BottomBar({ onVoice, voiceActive, onDemo }: NavProps) {
+  const { elderly } = usePreferences()
+  const { source } = useHome()
+  const items = useNavItems()
+  return (
+    <nav aria-label="주요 메뉴"
+      className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-1 border-t border-line bg-canvas/95 px-2 pt-1.5 pb-[max(6px,env(safe-area-inset-bottom))] backdrop-blur md:hidden">
+      <ul className="flex min-w-0 flex-1 justify-around">
+        {items.map(({ to, label, Icon, risk }) => (
+          <li key={to} className="flex-1">
+            <NavLink to={to} className={({ isActive }) => cn('press flex flex-col items-center gap-0.5 py-1', isActive ? 'text-brand-ink' : 'text-ink-3')}>
+              <span className="relative">
+                <Icon className="h-6 w-6" aria-hidden="true" />
+                <RiskDot risk={risk} label={label} />
+              </span>
+              <span className="text-[0.625rem] font-medium">{label}</span>
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+      {source.demo && (
+        <button type="button" onClick={onDemo} aria-label="시연 도구" className="press flex h-11 w-11 items-center justify-center rounded-full text-ink-3">
+          <FlaskConical className="h-5 w-5" aria-hidden="true" />
+        </button>
+      )}
+      <VoiceButton onVoice={onVoice} voiceActive={voiceActive} elderly={elderly} compact />
     </nav>
   )
 }

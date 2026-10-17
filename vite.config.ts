@@ -47,11 +47,14 @@ function cspPlugin(csp: string) {
   }
 }
 
+// file:// URL → 파일 경로. Windows(/C:/… → C:/…)와 한글·공백 폴더명(%EC…)에서도 동작한다.
+const toPath = (u: URL) => decodeURIComponent(u.pathname).replace(/^\/([A-Za-z]:)/, '$1')
+
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), cspPlugin(buildCsp(loadEnv(mode, new URL('.', import.meta.url).pathname, 'VITE_').VITE_API_BASE_URL ?? ''))],
+  plugins: [react(), tailwindcss(), cspPlugin(buildCsp(loadEnv(mode, toPath(new URL('.', import.meta.url)), 'VITE_').VITE_API_BASE_URL ?? ''))],
   resolve: {
     alias: {
-      '@': new URL('./src', import.meta.url).pathname,
+      '@': toPath(new URL('./src', import.meta.url)),
     },
   },
   server: {

@@ -19,9 +19,8 @@ export function useDismissable(open: boolean, onClose: () => void) {
     if (!open) return
     previousFocusRef.current = document.activeElement
 
-    const container = containerRef.current
-    const focusables = container?.querySelectorAll<HTMLElement>(FOCUSABLE)
-    focusables?.[0]?.focus()
+    // 창 자체에 포커스를 둔다 — 스크린리더는 제목을 읽고, 터치 화면에는 첫 버튼 테두리가 생기지 않는다
+    containerRef.current?.focus({ preventScroll: true })
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -35,7 +34,10 @@ export function useDismissable(open: boolean, onClose: () => void) {
       const first = nodes[0]
       const last = nodes[nodes.length - 1]
       if (!first || !last) return
-      if (event.shiftKey && document.activeElement === first) {
+      if (document.activeElement === containerRef.current) {
+        event.preventDefault()
+        ;(event.shiftKey ? last : first).focus()
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault()
         last.focus()
       } else if (!event.shiftKey && document.activeElement === last) {

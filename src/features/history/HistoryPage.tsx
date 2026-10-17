@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react'
 import { Calendar, ClipboardList, Search } from 'lucide-react'
 import { PageHeader } from '@/app/PageHeader'
-import { Card } from '@/components/ui/Card'
+import { Card, SectionTitle } from '@/components/ui/Card'
+import { Segmented } from '@/components/ui/Segmented'
 import { Pagination } from '@/components/ui/Pagination'
+import { ListGroup, ListRow } from '@/components/ui/List'
 import { EventRow } from './EventRow'
 import { EventDetailSheet } from './EventDetailSheet'
 import { useHome } from '@/store/HomeStore'
 import { usePreferences } from '@/store/PreferencesContext'
 import { CATEGORY_LABEL, EVENT_TITLE, FEEDBACK_TYPES, eventCategory, isRecord, type EventCategory } from '@/lib/labels'
 import { toDateInput } from '@/lib/format'
+import type { SafetyEvent } from '@/types'
 import { cn } from '@/lib/cn'
 
 type CategoryFilter = EventCategory | 'all'
@@ -21,6 +24,17 @@ function defaultRange() {
 
 /** 로컬 날짜(YYYY-MM-DD) 비교용 — 이벤트 시각은 ISO(UTC) 라 로컬 날짜로 바꿔서 비교한다 */
 const localDay = (iso: string) => toDateInput(new Date(iso))
+
+/** 날짜 묶음 제목: 오늘 / 어제 / 10월 15일 수요일 */
+function dayTitle(day: string) {
+  const today = toDateInput(new Date())
+  const y = new Date(); y.setDate(y.getDate() - 1)
+  if (day === today) return '오늘'
+  if (day === toDateInput(y)) return '어제'
+  const [, m, d] = day.split('-').map(Number)
+  const w = ['일', '월', '화', '수', '목', '금', '토'][new Date(`${day}T00:00:00`).getDay()]
+  return `${m}월 ${d}일 ${w}요일`
+}
 
 export function HistoryPage() {
   const { events } = useHome()
@@ -54,31 +68,36 @@ export function HistoryPage() {
   const items = filtered.slice((current - 1) * perPage, current * perPage)
   const update = (fn: () => void) => { fn(); setPage(1) }   // 필터가 바뀌면 1페이지로
 
+  // 이 페이지의 기록을 날짜별로 묶는다
+  const groups = useMemo(() => {
+    const map = new Map<string, SafetyEvent[]>()
+    for (const e of items) {
+      const day = localDay(e.occurredAt)
+      map.set(day, [...(map.get(day) ?? []), e])
+    }
+    return [...map.entries()]
+  }, [items])
+
   const counts = useMemo(() => {
     const week = records.filter((e) => localDay(e.occurredAt) >= initial.from)
     return {
       fire: week.filter((e) => eventCategory(e.type) === 'fire').length,
-      fall: week.filter((e) => eventCategory(e.type) === 'fall' && e.type === 'fall_detected').length,
+      fall: week.filter((e) => e.type === 'fall_detected').length,
       routine: week.filter((e) => eventCategory(e.type) === 'routine').length,
       feedback: records.filter((e) => FEEDBACK_TYPES.has(e.type) && !e.feedback).length,
     }
   }, [records, initial.from])
 
-  const field = 'flex min-h-11 items-center gap-2 rounded-xl bg-surface px-3.5 text-[0.9375rem] text-ink'
+  const field = 'flex min-h-10 items-center gap-2 rounded-[10px] bg-fill px-3 text-[0.9375rem] text-ink'
 
   return (
-    <div className="flex h-full flex-col">
-      <PageHeader title={elderly ? '안전 기록' : '안전 기록'} subtitle="HomeVIS 가 감지하고 조치한 일을 모아 보여드려요" />
+    <div className="flex flex-col wall:h-full">
+      <PageHeader title="안전 기록" />
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2.5 px-8 pt-5">
-        <div className="flex rounded-xl bg-surface p-1" role="radiogroup" aria-label="분류">
-          {(['all', 'fire', 'fall', 'routine'] as const).map((c) => (
-            <button key={c} type="button" role="radio" aria-checked={category === c}
-              onClick={() => update(() => setCategory(c))}
-              className={cn('min-h-9 rounded-lg px-3.5 text-[0.875rem] font-semibold', category === c ? 'bg-ink text-white' : 'text-ink-2 hover:text-ink')}>
-              {c === 'all' ? '전체' : CATEGORY_LABEL[c]}
-            </button>
-          ))}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pt-5 md:px-8 wall:short:pt-4">
+        <div className="w-full md:w-[360px]">
+          <Segmented<CategoryFilter> label="분류" value={category} onChange={(v) => update(() => setCategory(v))}
+            options={[{ value: 'all', label: '전체' }, { value: 'fire', label: CATEGORY_LABEL.fire }, { value: 'fall', label: CATEGORY_LABEL.fall }, { value: 'routine', label: CATEGORY_LABEL.routine }]} />
         </div>
         <label className={field}>
           <span className="sr-only">공간</span>
@@ -89,60 +108,51 @@ export function HistoryPage() {
         <div className={field}>
           <Calendar className="h-4 w-4 text-ink-3" aria-hidden="true" />
           <input type="date" value={from} max={to} aria-label="시작 날짜" onChange={(e) => update(() => setFrom(e.target.value))} className="tabular bg-transparent outline-none" />
-          <span className="text-ink-3">~</span>
+          <span className="text-ink-3">–</span>
           <input type="date" value={to} min={from} aria-label="종료 날짜" onChange={(e) => update(() => setTo(e.target.value))} className="tabular bg-transparent outline-none" />
         </div>
-        <label className={cn(field, 'min-w-0 flex-1')}>
+        <label className={cn(field, 'min-w-44 flex-1')}>
           <Search className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
-          <input type="search" value={q} placeholder="내용 검색" aria-label="내용 검색" onChange={(e) => update(() => setQ(e.target.value))} className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-ink-3" />
+          <input type="search" value={q} placeholder="검색" aria-label="내용 검색" onChange={(e) => update(() => setQ(e.target.value))} className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-ink-3" />
         </label>
         <button type="button" onClick={() => { setCategory('all'); setRoom('all'); setFrom(initial.from); setTo(initial.to); setQ(''); setPage(1) }}
-          className="min-h-11 rounded-xl px-3 text-[0.875rem] font-semibold text-ink-2 hover:bg-surface">초기화</button>
+          className="press min-h-10 px-2 text-[0.9375rem] text-brand-ink">초기화</button>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-12 gap-5 px-8 pt-4 pb-7">
-        <Card className="col-span-8 flex min-h-0 flex-col p-3">
-          <p className="px-3 pt-2 pb-1 text-[0.8125rem] font-semibold text-ink-3">{filtered.length}건</p>
-          <div className="min-h-0 flex-1">
-            {items.map((e) => <EventRow key={e.eventId} event={e} big={elderly} onClick={() => setSelected(e.eventId)} />)}
+      <div className="grid grid-cols-1 gap-6 px-5 pt-5 pb-6 md:px-8 wall:min-h-0 wall:flex-1 wall:grid-cols-12 wall:pb-7 wall:short:pt-4 wall:short:pb-5">
+        <div className="flex flex-col wall:col-span-8 wall:min-h-0">
+          <div className="flex flex-col gap-5 wall:min-h-0 wall:flex-1 wall:overflow-y-auto">
+            {groups.map(([day, list]) => (
+              <ListGroup key={day} title={dayTitle(day)}>
+                {list.map((e) => <EventRow key={e.eventId} event={e} big={elderly} timeOnly onClick={() => setSelected(e.eventId)} />)}
+              </ListGroup>
+            ))}
             {items.length === 0 && (
-              <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-3">
-                <ClipboardList className="h-9 w-9" aria-hidden="true" />
-                <p className="text-[0.9375rem]">조건에 맞는 기록이 없어요</p>
-              </div>
+              <Card className="flex flex-col items-center justify-center gap-2 py-12 text-ink-3 wall:flex-1">
+                <ClipboardList className="h-8 w-8" strokeWidth={1.6} aria-hidden="true" />
+                <p className="text-[0.9375rem]">조건에 맞는 기록 없음</p>
+              </Card>
             )}
           </div>
-          <div className="pt-2"><Pagination page={current} totalPages={totalPages} onChange={setPage} /></div>
-        </Card>
-
-        <div className="col-span-4 flex flex-col gap-4">
-          <Card className="p-6">
-            <h2 className="text-[0.9375rem] font-semibold text-ink">최근 7일</h2>
-            <dl className="mt-3 space-y-3">
-              <Stat k="화재 예방 조치" v={counts.fire} />
-              <Stat k="낙상 감지" v={counts.fall} />
-              <Stat k="아침 자동 출수" v={counts.routine} />
-            </dl>
-          </Card>
-          {counts.feedback > 0 && !elderly && (
-            <Card className="bg-brand-soft p-6">
-              <p className="text-[0.9375rem] font-semibold text-[#2a4a8f]">피드백을 기다리는 조치 {counts.feedback}건</p>
-              <p className="mt-1 text-[0.875rem] leading-relaxed text-[#2a4a8f]/80">자동 조치가 적절했는지 알려주시면 판단 기준을 다듬는 데 쓰여요.</p>
-            </Card>
-          )}
+          <div className="flex shrink-0 items-center justify-between pt-3">
+            <span className="text-[0.8125rem] text-ink-3">{filtered.length}건</span>
+            <Pagination page={current} totalPages={totalPages} onChange={setPage} />
+            <span className="w-8" />
+          </div>
         </div>
+
+        <section className="wall:col-span-4">
+          <SectionTitle>최근 7일</SectionTitle>
+          <ListGroup footer={counts.feedback > 0 && !elderly ? '자동 조치가 적절했는지 알려주시면 판단 기준을 다듬는 데 쓰여요.' : undefined}>
+            <ListRow big={elderly} title="화재 예방 조치" value={`${counts.fire}건`} />
+            <ListRow big={elderly} title="낙상 감지" value={`${counts.fall}건`} />
+            <ListRow big={elderly} title="아침 자동 출수" value={`${counts.routine}건`} />
+            {counts.feedback > 0 && !elderly && <ListRow title="피드백 대기" value={<span className="font-semibold text-brand-ink">{counts.feedback}건</span>} />}
+          </ListGroup>
+        </section>
       </div>
 
       <EventDetailSheet eventId={selected} onClose={() => setSelected(null)} />
-    </div>
-  )
-}
-
-function Stat({ k, v }: { k: string; v: number }) {
-  return (
-    <div className="flex items-baseline justify-between">
-      <dt className="text-[0.9375rem] text-ink-2">{k}</dt>
-      <dd className="tabular text-2xl font-bold text-ink">{v}<span className="ml-0.5 text-[0.875rem] font-medium text-ink-3">건</span></dd>
     </div>
   )
 }

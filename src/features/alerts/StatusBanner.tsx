@@ -7,8 +7,9 @@ import { usePreferences } from '@/store/PreferencesContext'
 import { cn } from '@/lib/cn'
 
 /**
- * 모든 화면 상단에 걸리는 한 줄 상태 안내. 가장 급한 것 하나만 보여준다.
+ * 모든 화면 상단에 걸리는 한 줄 알림. 가장 급한 것 하나만 보여준다.
  * 우선순위: 낙상(응답 대기) > 과열 > 자동 차단 > 화력 저감 > 이탈 관찰 > 기기 연결 끊김
+ * 위험(빨강)만 채운 막대, 나머지는 흰 막대에 색 아이콘 (iOS 알림 배너 방식).
  */
 export function StatusBanner() {
   const { fall, fallAlertOpen, setFallAlert, kitchenPhase, presence, policy, induction, devices } = useHome()
@@ -21,54 +22,62 @@ export function StatusBanner() {
 
   let tone: 'danger' | 'warn' | 'caution' | 'muted' | null = null
   let Icon = AlertTriangle
-  let text = ''
+  let title = ''
+  let detail = ''
   let action: { label: string; to?: string; onClick?: () => void } | null = null
 
   if (fall?.status === 'pending' && !fallAlertOpen) {
     tone = 'danger'; Icon = AlertTriangle
-    const left = (new Date(fall.autoReportAt).getTime() - now) / 1000
-    text = `욕실에서 낙상이 감지됐어요 · 보호자 응답이 없으면 ${formatCountdown(left)} 후 자동 신고돼요`
+    title = '욕실 낙상 감지'
+    detail = `보호자 응답이 없으면 ${formatCountdown((new Date(fall.autoReportAt).getTime() - now) / 1000)} 후 자동 신고`
     action = { label: '자세히', onClick: () => setFallAlert(true) }
   } else if (kitchenPhase === 'overheat') {
     tone = 'danger'; Icon = Flame
-    text = `인덕션이 과열됐어요 (${Math.round(induction?.burner.temperature ?? 0)}°C) · 식을 때까지 켤 수 없어요`
-    action = { label: '주방 보기', to: '/kitchen' }
+    title = `인덕션 과열 ${Math.round(induction?.burner.temperature ?? 0)}°C`
+    detail = '식을 때까지 켤 수 없어요'
+    action = { label: '주방', to: '/kitchen' }
   } else if (kitchenPhase === 'auto_off') {
     tone = 'danger'; Icon = Flame
-    text = '주방을 오래 비우셔서 인덕션 전원을 껐어요'
-    action = { label: '주방 보기', to: '/kitchen' }
+    title = '인덕션 전원 자동 차단'
+    detail = '주방을 오래 비우셨어요'
+    action = { label: '주방', to: '/kitchen' }
   } else if (kitchenPhase === 'auto_reduced') {
     tone = 'warn'; Icon = UserX
-    text = `인덕션 화력을 ${policy.reduceToLevel}단으로 낮췄어요 · 부재 ${formatDuration(k.absentSec)} — ${Math.round((policy.offAfterSec * mult) / 60)}분이 되면 전원을 꺼요`
-    action = { label: '주방 보기', to: '/kitchen' }
+    title = `화력 ${policy.reduceToLevel}단으로 낮춤`
+    detail = `부재 ${formatDuration(k.absentSec)} · ${Math.round((policy.offAfterSec * mult) / 60)}분이 되면 전원을 꺼요`
+    action = { label: '주방', to: '/kitchen' }
   } else if (kitchenPhase === 'absence_watch') {
     tone = 'caution'; Icon = UserX
-    text = `주방에 아무도 없어요 · 부재 ${formatDuration(k.absentSec)} — ${Math.round((policy.reduceAfterSec * mult) / 60)}분이 되면 화력을 자동으로 낮춰요`
-    action = { label: '주방 보기', to: '/kitchen' }
+    title = '조리 중 주방 비어 있음'
+    detail = `부재 ${formatDuration(k.absentSec)} · ${Math.round((policy.reduceAfterSec * mult) / 60)}분이 되면 화력을 낮춰요`
+    action = { label: '주방', to: '/kitchen' }
   } else if (offline.length > 0) {
     tone = 'muted'; Icon = WifiOff
-    text = `${offline.map((d) => d.name).join(', ')} 연결이 끊겼어요 · 기기 전원과 Wi-Fi 를 확인해 주세요`
+    title = `${offline.map((d) => d.name).join(', ')} 응답 없음`
+    detail = '전원과 Wi-Fi 를 확인해 주세요'
   }
 
   if (!tone) return null
-  const cls = {
-    danger: 'bg-danger text-white',
-    warn: 'bg-warn-soft text-[#9a4a00]',
-    caution: 'bg-caution-soft text-[#7a5600]',
-    muted: 'bg-[#e9ebee] text-ink-2',
-  }[tone]
+  const danger = tone === 'danger'
+  const iconColor = { danger: 'text-white', warn: 'text-warn', caution: 'text-caution', muted: 'text-ink-3' }[tone]
 
   return (
-    <div role="status" aria-live="polite" className={cn('mx-8 mt-5 flex shrink-0 items-center gap-3 rounded-2xl px-5', elderly ? 'min-h-16 text-lg' : 'min-h-12 text-[0.9375rem]', cls)}>
-      <Icon className={cn('shrink-0', elderly ? 'h-6 w-6' : 'h-5 w-5', tone === 'danger' && 'soft-pulse')} aria-hidden="true" />
-      <p className="min-w-0 flex-1 font-semibold">{text}</p>
+    <div role="status" aria-live="polite"
+      className={cn('mx-5 mt-3 flex shrink-0 items-center gap-3 rounded-xl pr-2 pl-4 md:mx-8',
+        elderly ? 'min-h-16 text-lg' : 'min-h-12 text-[0.9375rem]',
+        danger ? 'bg-danger-fill text-white' : 'bg-surface text-ink')}>
+      <Icon className={cn('shrink-0', elderly ? 'h-6 w-6' : 'h-5 w-5', iconColor, danger && 'soft-pulse')} strokeWidth={2.2} aria-hidden="true" />
+      <p className="min-w-0 flex-1 truncate">
+        <span className="font-semibold">{title}</span>
+        <span className={danger ? 'text-white/85' : 'text-ink-2'}> · {detail}</span>
+      </p>
       {action && (action.to ? (
-        <Link to={action.to} className="flex shrink-0 items-center gap-0.5 rounded-lg px-2 py-2 font-semibold opacity-90 hover:opacity-100">
-          {action.label}<ChevronRight className="h-4 w-4" aria-hidden="true" />
+        <Link to={action.to} className={cn('press flex min-h-10 shrink-0 items-center gap-0.5 rounded-lg px-2 font-semibold', danger ? 'text-white' : 'text-brand-ink')}>
+          {action.label}<ChevronRight className="h-4 w-4" strokeWidth={2.4} aria-hidden="true" />
         </Link>
       ) : (
-        <button type="button" onClick={action.onClick} className="flex shrink-0 items-center gap-0.5 rounded-lg px-2 py-2 font-semibold">
-          {action.label}<ChevronRight className="h-4 w-4" aria-hidden="true" />
+        <button type="button" onClick={action.onClick} className={cn('press flex min-h-10 shrink-0 items-center gap-0.5 rounded-lg px-2 font-semibold', danger ? 'text-white' : 'text-brand-ink')}>
+          {action.label}<ChevronRight className="h-4 w-4" strokeWidth={2.4} aria-hidden="true" />
         </button>
       ))}
     </div>

@@ -8,6 +8,8 @@
 
 export type Mode = 'normal' | 'elderly'
 export type Language = 'ko' | 'en'
+/** 화면 테마. 기본 light (밝은 주방 월패드). 다크·시스템은 설정에서 선택 */
+export type Theme = 'dark' | 'light' | 'system'
 
 /** 부스 구성: 침실 · 거실 · 주방 · 욕실 */
 export type RoomId = 'kitchen' | 'bathroom' | 'bedroom' | 'living'

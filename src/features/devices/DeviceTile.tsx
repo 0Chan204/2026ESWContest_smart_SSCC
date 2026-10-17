@@ -1,51 +1,42 @@
-import { WifiOff } from 'lucide-react'
-import { DeviceIcon } from '@/components/DeviceIcon'
-import { Toggle } from '@/components/ui/Toggle'
-import { isControllable, summarize } from '@/lib/device'
+import { Tile } from '@/components/ui/Tile'
+import { DEVICE_GLYPH } from '@/components/DeviceIcon'
 import { useHome } from '@/store/HomeStore'
-import { usePreferences } from '@/store/PreferencesContext'
-import { ROOM_LABEL } from '@/lib/labels'
+import { summarize } from '@/lib/device'
 import type { Device } from '@/types'
-import { cn } from '@/lib/cn'
 
 /**
- * 기기 타일 (SmartThings · ThinQ 기기 카드 구성).
- * 아이콘 / 이름 / 상태 / 보조 설명. 제어 가능한 기기만 오른쪽 위에 전원 스위치가 있다.
+ * 기기 타일. 홈 앱처럼
+ *  - 조명·환풍기: 타일을 누르면 켜고 끈다, 오른쪽 아래 … 로 상세
+ *  - 인덕션·정수기: 조회 전용 — 누르면 상세
+ *  - 연결 끊김: 누르면 상세(다시 연결)
  */
-export function DeviceTile({ device, onOpen, showRoom = true }: { device: Device; onOpen: () => void; showRoom?: boolean }) {
+export function DeviceTile({ device: d, onOpen, wide = false, big = false, className }: {
+  device: Device
+  onOpen: () => void
+  wide?: boolean
+  big?: boolean
+  className?: string
+}) {
   const { controlDevice } = useHome()
-  const { elderly } = usePreferences()
-  const s = summarize(device)
-  const switchable = isControllable(device) && device.online && (device.kind === 'fan' || device.kind === 'light')
-  const on = device.kind === 'fan' || device.kind === 'light' ? device.on : false
-  const danger = s.risk === 'danger'
+  const { Icon, on: glyph } = DEVICE_GLYPH[d.kind]
+  const s = summarize(d)
 
-  return (
-    <div className={cn('relative h-full rounded-3xl bg-surface', danger && 'ring-2 ring-danger')}>
-      <button
-        type="button"
-        onClick={onOpen}
-        className={cn('flex h-full w-full flex-col items-start rounded-3xl text-left transition-colors hover:bg-[#fafbfc]', elderly ? 'p-6' : 'px-5 py-4')}
-      >
-        <DeviceIcon kind={device.kind} active={s.active && device.online} size={elderly ? 'lg' : 'md'} />
-        <span className="mt-auto block w-full pt-3">
-          <span className={cn('block font-semibold text-ink-2', elderly ? 'text-lg' : 'text-[0.9375rem]')}>
-            {device.name}{showRoom && !elderly && <span className="font-normal text-ink-3"> · {ROOM_LABEL[device.room]}</span>}
-          </span>
-          <span className={cn('mt-0.5 flex items-center gap-1.5 font-bold', elderly ? 'text-2xl' : 'text-xl',
-            !device.online ? 'text-ink-3' : danger ? 'text-danger' : s.active ? 'text-ink' : 'text-ink-3')}>
-            {!device.online && <WifiOff className="h-4 w-4" aria-hidden="true" />}
-            {s.status}
-          </span>
-          {!elderly && <span className="mt-1 block truncate text-[0.8125rem] text-ink-3">{s.detail}</span>}
-        </span>
-      </button>
-      {switchable && (
-        <div className="absolute top-4 right-5">
-          <Toggle checked={on} label={`${device.name} ${on ? '끄기' : '켜기'}`} size={elderly ? 'lg' : 'md'}
-            onChange={(next) => controlDevice(device.id, { on: next })} />
-        </div>
-      )}
-    </div>
-  )
+  if (!d.online) {
+    return <Tile icon={Icon} name={d.name} state="응답 없음" tone="muted" onPress={onOpen} wide={wide} big={big} className={className} />
+  }
+  if (d.kind === 'fan' || d.kind === 'light') {
+    return (
+      <Tile icon={Icon} glyph={glyph} name={d.name} state={d.on ? s.status : '꺼짐'} on={d.on} wide={wide} big={big} className={className}
+        onPress={() => void controlDevice(d.id, { on: !d.on })} onMore={onOpen} moreLabel={`${d.name} 설정`} />
+    )
+  }
+  if (d.kind === 'induction') {
+    const hot = d.burner.deviceState === 'overheated'
+    const cooking = d.burner.deviceState === 'on'
+    return (
+      <Tile icon={Icon} glyph={glyph} name={d.name} state={s.status} on={cooking} tone={hot ? 'danger' : undefined}
+        value={wide ? `${Math.round(d.burner.temperature)}°` : undefined} onPress={onOpen} wide={wide} big={big} className={className} />
+    )
+  }
+  return <Tile icon={Icon} glyph={glyph} name={d.name} state={s.status} on={d.dispensing} onPress={onOpen} wide={wide} big={big} className={className} />
 }

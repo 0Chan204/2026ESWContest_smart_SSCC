@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from 'react'
-import { UserRound } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { formatPhone, maskPhone, normalizePhone } from '@/lib/phone'
 import type { Contact } from '@/types'
@@ -42,46 +41,56 @@ export function ContactForm({ title, description, contact, onSave, big }: {
     }
   }
 
-  const input = cn('w-full rounded-xl bg-sunken px-4 text-ink outline-none placeholder:text-ink-3 focus:ring-2 focus:ring-brand',
-    big ? 'min-h-14 text-xl' : 'min-h-12 text-base')
+  const input = cn('min-w-0 flex-1 bg-transparent text-right text-ink outline-none placeholder:text-ink-3', big ? 'text-xl' : 'text-[1rem]')
+  const row = cn('flex items-center gap-4 pl-4', big ? 'min-h-16' : 'min-h-[3.25rem]')
+  const label = cn('w-24 shrink-0 text-ink', big ? 'text-xl' : 'text-[1rem]')
 
   return (
-    <section className="rounded-3xl bg-surface p-6">
-      <h3 className={cn('font-semibold text-ink', big ? 'text-2xl' : 'text-[1.0625rem]')}>{title}</h3>
-      <p className={cn('mt-1 text-ink-2', big ? 'text-lg' : 'text-[0.875rem]')}>{description}</p>
-
+    <section>
+      <h3 className="mb-1.5 px-4 text-[0.8125rem] font-medium text-ink-3">{title}</h3>
       {!editing && contact ? (
-        <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl bg-sunken px-5 py-4">
-          <div className="flex items-center gap-3">
-            <UserRound className="h-6 w-6 text-ink-2" aria-hidden="true" />
-            <div>
-              <p className={cn('font-semibold text-ink', big ? 'text-xl' : 'text-base')}>{contact.name}</p>
-              <p className="tabular text-[0.9375rem] text-ink-2">{maskPhone(contact.phone)}</p>
-            </div>
+        <div className="inset-list overflow-hidden rounded-xl bg-surface">
+          <div className={row}>
+            <span className={label}>이름</span>
+            <span className={cn('row-sep flex flex-1 justify-end self-stretch items-center pr-4 text-ink-2', big ? 'text-xl' : 'text-[1rem]')}>{contact.name}</span>
           </div>
-          <Button size={big ? 'lg' : 'md'} onClick={() => { setEditing(true); setMessage(null) }}>변경</Button>
+          <div className={row}>
+            <span className={label}>휴대폰</span>
+            <span className={cn('tabular row-sep flex flex-1 justify-end self-stretch items-center pr-4 text-ink-2', big ? 'text-xl' : 'text-[1rem]')}>{maskPhone(contact.phone)}</span>
+          </div>
+          <button type="button" onClick={() => { setEditing(true); setMessage(null) }}
+            className={cn('press w-full pl-4 text-left text-brand-ink', big ? 'min-h-16 text-xl' : 'min-h-[3.25rem] text-[1rem]')}>
+            <span className="row-sep flex h-full items-center">번호 변경</span>
+          </button>
         </div>
       ) : (
-        <form onSubmit={submit} className="mt-4 space-y-3" noValidate>
-          <label className="block">
-            <span className="mb-1.5 block text-[0.875rem] font-semibold text-ink-2">이름</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} autoComplete="off" placeholder="예: 김보호" className={input} />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[0.875rem] font-semibold text-ink-2">휴대폰 번호</span>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" autoComplete="off" maxLength={13}
-              placeholder="010-0000-0000" className={cn(input, 'tabular')} />
-          </label>
-          {error && <p role="alert" className="text-[0.875rem] font-medium text-danger">{error}</p>}
-          <div className="flex gap-2 pt-1">
-            {contact && <Button size={big ? 'lg' : 'md'} onClick={() => { setEditing(false); setError(null) }}>취소</Button>}
-            <Button type="submit" variant="primary" size={big ? 'lg' : 'md'} disabled={busy} className="flex-1">
+        <form onSubmit={submit} noValidate>
+          <div className="inset-list overflow-hidden rounded-xl bg-surface">
+            <label className={row}>
+              <span className={label}>이름</span>
+              <span className="row-sep flex flex-1 self-stretch items-center pr-4">
+                <input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} autoComplete="off" placeholder="김보호" className={input} />
+              </span>
+            </label>
+            <label className={row}>
+              <span className={label}>휴대폰</span>
+              <span className="row-sep flex flex-1 self-stretch items-center pr-4">
+                <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" autoComplete="off" maxLength={13}
+                  placeholder="010-0000-0000" className={cn(input, 'tabular')} />
+              </span>
+            </label>
+          </div>
+          {error && <p role="alert" className="mt-1.5 px-4 text-[0.875rem] font-medium text-danger">{error}</p>}
+          <div className="mt-4 flex gap-2">
+            {contact && <Button size={big ? 'xl' : 'lg'} onClick={() => { setEditing(false); setError(null) }}>취소</Button>}
+            <Button type="submit" variant="primary" size={big ? 'xl' : 'lg'} disabled={busy} className="flex-1">
               {busy ? '저장 중…' : '저장하고 확인 문자 받기'}
             </Button>
           </div>
         </form>
       )}
-      {message && <p role="status" className="mt-3 text-[0.875rem] text-ok">{message}</p>}
+      <p className="mt-1.5 px-4 text-[0.8125rem] leading-snug text-ink-3">{description}</p>
+      {message && <p role="status" className="mt-2 px-4 text-[0.875rem] text-ok">{message}</p>}
     </section>
   )
 }

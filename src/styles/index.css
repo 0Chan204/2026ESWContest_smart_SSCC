@@ -1,24 +1,23 @@
 @import 'tailwindcss';
 
 /* ──────────────────────────────────────────────────────────────────────────
-   HomeVIS v2 Design Tokens
+   HomeVIS Design Tokens  (상세: docs/style-guide.md)
 
-   방향: 실제 가전 제조사 앱(One UI · ThinQ 계열)처럼
-   - 연회색 바탕 + 흰 카드, 테두리 대신 면 대비로 구분
-   - 색은 상태를 전달할 때만 쓴다 (평상시 화면은 거의 무채색)
-   - 그라데이션·글래스·장식용 아이콘 원·이모지 사용하지 않음
+   기준: Apple Human Interface Guidelines 의 시스템 색상·글자 체계와
+   iPad '홈' 앱의 타일 표현, 아파트 월패드의 큰 시계·방별 구성.
+   - 색 값은 Apple 시스템 색(다크/라이트 공식 값)을 쓰고, 본문 글자로 쓰는 색은
+     접근성 대비(4.5:1)를 맞춘 Apple '고대비' 변형을 쓴다.
+   - 상자는 타일·목록에만 쓰고, 나머지는 여백과 글자 크기로 구분한다.
+   - 켜진 기기 타일은 밝게 반전된다(홈 앱 방식). 꺼진 타일은 어둡다.
 
-   --spacing 을 px 로 고정해 어르신 모드 글자 확대가 레이아웃을 흔들지 않게 한다.
-   외부 폰트 CDN 미사용(요청 0건). Pretendard 를 쓰려면 public/fonts 에 넣고 주석 해제.
+   --spacing 을 px 로 고정해 어르신 모드 글자 확대가 배치를 흔들지 않게 한다.
+   외부 폰트 요청 없음 — 시스템 글꼴(Mac: SF · Apple SD Gothic Neo / Windows: Segoe UI · 맑은 고딕)을 쓴다.
    ────────────────────────────────────────────────────────────────────────── */
 
-/*
-@font-face {
-  font-family: 'Pretendard';
-  src: url('/fonts/Pretendard-Regular.subset.woff2') format('woff2');
-  font-weight: 400; font-style: normal; font-display: swap;
-}
-*/
+/* 월패드 배치: 가로가 넓고 세로도 충분할 때만 한 화면 고정(스크롤 없음) */
+@custom-variant wall (@media (min-width: 1180px) and (min-height: 660px));
+/* 세로가 짧은 월패드(1280×720 등) */
+@custom-variant short (@media (max-height: 760px));
 
 @theme {
   --spacing: 4px;
@@ -26,48 +25,125 @@
   --radius-sm: 8px;
   --radius-md: 10px;
   --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
-  --radius-3xl: 24px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
   --radius-full: 9999px;
 
+  /* Mac: SF + 애플 SD 고딕 Neo / Windows(시연 PC): 영문·숫자는 Segoe UI, 한글은 맑은 고딕 */
   --font-sans:
-    'Pretendard', 'Pretendard Variable', -apple-system, BlinkMacSystemFont,
-    'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Pretendard',
+    'Segoe UI Variable Text', 'Segoe UI', 'Malgun Gothic', 'Noto Sans KR', Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
-  /* 면 */
-  --color-canvas: #f2f3f5;
-  --color-surface: #ffffff;
-  --color-sunken: #f6f7f9;
-  --color-line: #e7e9ec;
+  /* ── 라이트 (iOS Light) ─────────────────────────────── */
+  --color-canvas: #f2f2f7;          /* systemGroupedBackground */
+  --color-surface: #ffffff;         /* secondarySystemGroupedBackground */
+  --color-sunken: #f2f2f7;          /* 칸 안 입력·바탕 (systemGray6) */
+  --color-raised: #ffffff;
+  --color-line: #e5e5ea;            /* separator (opaque) */
+  --color-track: #e9e9eb;           /* 꺼진 스위치 */
+  --color-fill: rgba(118, 118, 128, 0.12);  /* systemFill — 회색 버튼·세그먼트 바탕 */
+  --color-thumb: #ffffff;           /* 세그먼트 선택 */
 
-  /* 글자 */
-  --color-ink: #17191c;
-  --color-ink-2: #5c6169;
-  --color-ink-3: #8b9098;
+  --color-ink: #1d1d1f;
+  --color-ink-2: #515154;
+  --color-ink-3: #6e6e73;
 
-  /* 포인트 (선택 상태·링크·켜짐) */
-  --color-brand: #2f6bed;
-  --color-brand-dark: #2556c7;
-  --color-brand-soft: #eaf0fd;
+  --color-brand: #0071e3;           /* 흰 글자를 올리는 채움 */
+  --color-brand-dark: #0062c4;
+  --color-brand-soft: #e8f1fc;
+  --color-brand-ink: #0066cc;       /* 링크·선택 글자 */
+  --color-switch: #34c759;          /* systemGreen — 스위치 켜짐 */
 
-  /* 상태 */
-  --color-ok: #1b9a59;
-  --color-ok-soft: #e8f6ee;
-  --color-caution: #c98a00;
-  --color-caution-soft: #fff6dc;
-  --color-warn: #e0700b;
-  --color-warn-soft: #fff0e3;
-  --color-danger: #dc3a3a;
-  --color-danger-soft: #fdeceb;
-  --color-muted-soft: #eef0f2;
+  --color-ok: #248a3d;              /* systemGreen (고대비) */
+  --color-ok-soft: #e5f5ea;
+  --color-caution: #946200;
+  --color-caution-soft: #fff4d6;
+  --color-warn: #c93400;            /* systemOrange (고대비) */
+  --color-warn-soft: #ffede2;
+  --color-danger: #d70015;          /* systemRed (고대비) */
+  --color-danger-soft: #ffe9ea;
+  --color-danger-fill: #d70015;
+  --color-muted-soft: #ebebf0;
+
+  /* 홈 앱 타일 */
+  --color-tile-on: #ffffff;
+  --color-tile-on-ink: #1d1d1f;
+  --color-tile-on-ink-2: #6e6e73;
+  --color-tile-off: #e5e5ea;
+
+  /* 켜진 기기 아이콘 색 (홈 앱: 조명 노랑 · 환기 청록 · 물 파랑 · 화구 주황) */
+  --color-glyph-light: #e6a100;
+  --color-glyph-fan: #0a9fb8;
+  --color-glyph-water: #0a84ff;
+  --color-glyph-heat: #ff8a00;
+
+  /* iOS 설정 앱 아이콘 바탕 (두 테마 공통) */
+  --color-sym-blue: #007aff;
+  --color-sym-green: #34c759;
+  --color-sym-gray: #8e8e93;
+  --color-sym-red: #ff3b30;
+  --color-sym-orange: #ff9500;
+  --color-sym-indigo: #5856d6;
 }
 
 :root {
   --font-size-base: 16px;
+  --scrim: rgba(0, 0, 0, 0.32);
+  --shadow-pop: 0 10px 40px rgba(0, 0, 0, 0.18);
+  --shadow-tile: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-thumb: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
   color-scheme: light;
+}
+
+/* ── 다크 (iOS Dark · 플랫폼 샘플과 같은 어두운 대시보드) ─────────────────── */
+[data-theme='dark'] {
+  --color-canvas: #0b0b0c;
+  --color-surface: #1c1c1e;
+  --color-sunken: #2c2c2e;
+  --color-raised: #3a3a3c;
+  --color-line: #38383a;
+  --color-track: #39393d;
+  --color-fill: rgba(118, 118, 128, 0.24);
+  --color-thumb: #636366;
+
+  --color-ink: #f5f5f7;
+  --color-ink-2: #aeaeb2;
+  --color-ink-3: #8e8e93;
+
+  --color-brand: #0071e3;
+  --color-brand-dark: #0062c4;
+  --color-brand-soft: #0d2a4d;
+  --color-brand-ink: #409cff;
+  --color-switch: #30d158;
+
+  --color-ok: #30d158;
+  --color-ok-soft: #12301c;
+  --color-caution: #ffd60a;
+  --color-caution-soft: #352e0b;
+  --color-warn: #ff9f0a;
+  --color-warn-soft: #3a2808;
+  --color-danger: #ff453a;
+  --color-danger-soft: #3d1614;
+  --color-danger-fill: #d70015;
+  --color-muted-soft: #2c2c2e;
+
+  --color-tile-on: #f5f5f7;
+  --color-tile-on-ink: #1d1d1f;
+  --color-tile-on-ink-2: #6e6e73;
+  --color-tile-off: #1c1c1e;
+
+  --color-glyph-light: #e6a100;
+  --color-glyph-fan: #0a9fb8;
+  --color-glyph-water: #0a84ff;
+  --color-glyph-heat: #ff8a00;
+
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-tile: none;
+  --shadow-thumb: 0 3px 8px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
 }
 
 html {
@@ -82,7 +158,6 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  letter-spacing: -0.01em;
 }
 
 #root {
@@ -106,16 +181,32 @@ select,
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 터치했을 때 살짝 어두워지는 반응 (iOS 기본 버튼과 같은 방식) */
+.press {
+  transition: transform 140ms ease, opacity 140ms ease, background-color 160ms ease;
+}
+.press:active:not(:disabled) {
+  opacity: 0.72;
+  transform: scale(0.985);
+}
+
 .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-:focus-visible {
-  outline: 3px solid var(--color-brand);
-  outline-offset: 2px;
-  border-radius: 8px;
+/* iOS 목록: 두 번째 줄부터 위쪽에 얇은 구분선 (아이콘 뒤에서 시작) */
+.inset-list > * + * .row-sep,
+.inset-list [data-row] + [data-row] .row-sep {
+  border-top: 1px solid var(--color-line);
 }
-:focus:not(:focus-visible) {
+
+:focus-visible:not([tabindex='-1']) {
+  outline: 3px solid var(--color-brand-ink);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+:focus:not(:focus-visible),
+[tabindex='-1']:focus {
   outline: none;
 }
 
@@ -123,7 +214,12 @@ input[type='range'] {
   accent-color: var(--color-brand);
 }
 
-/* 위험 상태에서만 쓰는 느린 점멸 (시선 유도용, 과하지 않게) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-track) transparent;
+}
+
+/* 위험 상태에서만 쓰는 느린 점멸 */
 @keyframes soft-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
@@ -131,6 +227,40 @@ input[type='range'] {
 .soft-pulse {
   animation: soft-pulse 1.6s ease-in-out infinite;
 }
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+.spin-slow {
+  animation: spin-slow 0.9s linear infinite;
+}
+
+/* 현재 위치 표시 — 은은하게 퍼지는 원 */
+@keyframes locate {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+.locate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: locate 2.2s ease-out infinite;
+}
+
+/* 음성 입력 막대 */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+.wave > span {
+  animation: wave 1s ease-in-out infinite;
+  transform-origin: center;
+}
+.wave > span:nth-child(2) { animation-delay: 0.15s; }
+.wave > span:nth-child(3) { animation-delay: 0.3s; }
+.wave > span:nth-child(4) { animation-delay: 0.45s; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

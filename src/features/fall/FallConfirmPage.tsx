@@ -1,3 +1,4 @@
+import { useApplyTheme } from '@/hooks/useApplyTheme'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import { CheckCircle2, Phone, ShieldAlert, TriangleAlert } from 'lucide-react'
@@ -24,6 +25,7 @@ const POLL_MS = 5000
  * 토큰은 메모리에만 두므로 새로고침하면 문자의 링크를 다시 눌러야 한다.
  */
 export function FallConfirmPage() {
+  useApplyTheme('light')   // 보호자 휴대폰: 야외에서도 잘 보이도록 항상 라이트
   const { incidentId = '' } = useParams()
   const api = useMemo(createFallApi, [])
   const tokenRef = useRef<string | null>(null)
@@ -113,7 +115,7 @@ export function FallConfirmPage() {
               <button type="button" disabled={busy} onClick={() => setConfirm(null)}
                 className="min-h-14 flex-1 rounded-2xl bg-sunken text-lg font-semibold text-ink">취소</button>
               <button type="button" disabled={busy} onClick={() => act(confirm)}
-                className={cn('min-h-14 flex-1 rounded-2xl text-lg font-bold text-white disabled:opacity-50', confirm === 'resolve' ? 'bg-ink' : 'bg-danger')}>
+                className={cn('min-h-14 flex-1 rounded-2xl text-lg font-bold text-white disabled:opacity-50', confirm === 'resolve' ? 'bg-brand' : 'bg-danger-fill')}>
                 {busy ? '처리 중…' : confirm === 'resolve' ? '괜찮아요' : '신고 요청'}
               </button>
             </div>
@@ -134,7 +136,7 @@ function Incident({ incident, now, busy, onAsk }: {
 
   return (
     <div className="mb-6 space-y-4">
-      <section className={cn('rounded-3xl p-6', pending ? 'bg-danger text-white' : 'bg-surface text-ink')}>
+      <section className={cn('rounded-2xl p-6', pending ? 'bg-danger-fill text-white' : 'bg-surface text-ink')}>
         <TriangleAlert className={cn('h-9 w-9', pending ? 'soft-pulse' : 'text-danger')} aria-hidden="true" />
         <h1 className="mt-3 text-[1.75rem] leading-tight font-bold">{ROOM_LABEL[incident.room]}에서 낙상이 감지됐어요</h1>
         <p className={cn('mt-2 text-[1rem]', pending ? 'text-white/85' : 'text-ink-2')}>
@@ -144,7 +146,7 @@ function Incident({ incident, now, busy, onAsk }: {
 
       {pending ? (
         <>
-          <section className="rounded-3xl bg-surface p-6">
+          <section className="rounded-2xl bg-surface p-6">
             <p className="text-[1rem] text-ink-2">응답이 없으면 자동으로 신고돼요</p>
             <p className="tabular mt-1 text-[2.75rem] leading-none font-bold text-ink">{formatCountdown(left)}</p>
             <div className="mt-4 h-2 overflow-hidden rounded-full bg-sunken" role="progressbar"
@@ -157,13 +159,13 @@ function Incident({ incident, now, busy, onAsk }: {
           </section>
           <div className="space-y-2.5">
             <button type="button" disabled={busy} onClick={() => onAsk('report')}
-              className="min-h-16 w-full rounded-2xl bg-danger text-xl font-bold text-white disabled:opacity-50">도움이 필요해요 · 신고 요청</button>
+              className="min-h-16 w-full rounded-2xl bg-danger-fill text-xl font-bold text-white disabled:opacity-50">도움이 필요해요 · 신고 요청</button>
             <button type="button" disabled={busy} onClick={() => onAsk('resolve')}
               className="min-h-16 w-full rounded-2xl bg-surface text-xl font-bold text-ink disabled:opacity-50">괜찮아요 · 확인했어요</button>
           </div>
         </>
       ) : (
-        <section className="rounded-3xl bg-surface p-6">
+        <section className="rounded-2xl bg-surface p-6">
           <CheckCircle2 className={cn('h-9 w-9', incident.status === 'resolved' ? 'text-ok' : 'text-danger')} aria-hidden="true" />
           <h2 className="mt-3 text-2xl font-bold text-ink">
             {incident.status === 'resolved' && '괜찮다고 확인됐어요'}
@@ -183,7 +185,7 @@ function Incident({ incident, now, busy, onAsk }: {
 
 function Message({ title, body }: { title: string; body: string }) {
   return (
-    <section className="mb-6 rounded-3xl bg-surface p-6">
+    <section className="mb-6 rounded-2xl bg-surface p-6">
       <h1 className="text-2xl font-bold text-ink">{title}</h1>
       <p className="mt-2 text-[1rem] leading-relaxed text-ink-2">{body}</p>
     </section>

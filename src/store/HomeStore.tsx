@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, type ReactNode,
+  createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode,
 } from 'react'
 import { toast } from 'sonner'
 import { createDataSource, type DataSource, type DeviceControl, type Snapshot, type StreamMessage } from '@/data/source'
@@ -153,18 +153,31 @@ interface HomeValue extends HomeState {
   saveFallPolicy: (p: FallPolicy) => Promise<void>
   dismissNotice: () => void
   setFallAlert: (open: boolean) => void
+  /** 기기 상태를 서버에서 다시 받아온다 (플랫폼 샘플의 '검색' 버튼에 해당) */
+  refresh: () => Promise<void>
+  /** 끊긴 기기 다시 연결 시도. 시연 모드에서는 연결 복구를 흉내 낸다 */
+  reconnect: (deviceId: string) => Promise<boolean>
+  /** 마지막으로 상태를 확인한 시각 (ISO) */
+  checkedAt: string | null
 }
 
 const HomeContext = createContext<HomeValue | null>(null)
 
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
 export function HomeStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initial)
   const sourceRef = useRef<DataSource>(createDataSource())
+  const [checkedAt, setCheckedAt] = useState<string | null>(null)
 
   useEffect(() => {
     const source = sourceRef.current
     let alive = true
-    source.loadSnapshot().then((snapshot) => { if (alive) dispatch({ type: 'init', snapshot }) })
+    source.loadSnapshot().then((snapshot) => {
+      if (!alive) return
+      dispatch({ type: 'init', snapshot })
+      setCheckedAt(new Date().toISOString())
+    })
     const off = source.subscribe((message) => dispatch({ type: 'message', message }))
     return () => { alive = false; off() }
   }, [])
@@ -193,6 +206,27 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'fallPolicy', policy: await sourceRef.current.saveFallPolicy(p) })
   }, [])
 
+  const refresh = useCallback(async () => {
+    // 너무 빨리 끝나면 눌렀는지 알 수 없으므로 최소 표시 시간을 둔다
+    const [snapshot] = await Promise.all([sourceRef.current.loadSnapshot(), wait(900)])
+    dispatch({ type: 'init', snapshot })
+    setCheckedAt(new Date().toISOString())
+  }, [])
+
+  const reconnect = useCallback(async (deviceId: string) => {
+    const source = sourceRef.current
+    await wait(1400)
+    if (source.demo) {
+      source.demo.toggleOffline(deviceId)
+      return true
+    }
+    // 실제 연결은 기기·게이트웨이가 다시 붙어야 하므로, 여기서는 상태를 다시 확인만 한다
+    const snapshot = await source.loadSnapshot()
+    dispatch({ type: 'init', snapshot })
+    setCheckedAt(new Date().toISOString())
+    return snapshot.devices.find((d) => d.id === deviceId)?.online ?? false
+  }, [])
+
   const dismissNotice = useCallback(() => dispatch({ type: 'dismissNotice' }), [])
   const setFallAlert = useCallback((open: boolean) => dispatch({ type: 'setFallAlert', open }), [])
 
@@ -211,8 +245,10 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
       kitchenPhase, kitchenRisk, bathroomRisk, overallRisk: maxRisk(kitchenRisk, bathroomRisk),
       onlineCount: state.devices.filter((d) => d.online).length,
       controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, dismissNotice, setFallAlert,
+      refresh, reconnect, checkedAt,
     }
-  }, [state, controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, dismissNotice, setFallAlert])
+  }, [state, controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, dismissNotice, setFallAlert,
+    refresh, reconnect, checkedAt])
 
   return <HomeContext.Provider value={value}>{children}</HomeContext.Provider>
 }

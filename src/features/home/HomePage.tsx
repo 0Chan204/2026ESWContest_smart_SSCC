@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Bath, ChevronRight, MapPin, ShieldAlert, ShieldCheck, UserRound, UtensilsCrossed } from 'lucide-react'
+import { Bath, ChevronRight, MapPin, Phone, PersonStanding, Radar, ShieldAlert, ShieldCheck, UtensilsCrossed, Wifi, WifiOff } from 'lucide-react'
 import { PageHeader } from '@/app/PageHeader'
-import { Card, CardTitle } from '@/components/ui/Card'
-import { StatusText } from '@/components/ui/StatusDot'
+import { Card, SectionTitle } from '@/components/ui/Card'
+import { Chip } from '@/components/ui/Chip'
+import { Tile } from '@/components/ui/Tile'
+import { ListGroup } from '@/components/ui/List'
+import { FitList } from '@/components/ui/FitList'
 import { DeviceTile } from '@/features/devices/DeviceTile'
 import { DeviceSheet } from '@/features/devices/DeviceSheet'
 import { EventRow } from '@/features/history/EventRow'
@@ -11,9 +14,11 @@ import { EventDetailSheet } from '@/features/history/EventDetailSheet'
 import { HomeMap } from './HomeMap'
 import { useHome } from '@/store/HomeStore'
 import { usePreferences } from '@/store/PreferencesContext'
-import { HERO_TITLE, describeBathroom, describeKitchen } from '@/lib/rooms'
-import { LOCATION_LABEL, RISK_TONE, isRecord } from '@/lib/labels'
-import { maskPhone } from '@/lib/phone'
+import { useNow } from '@/hooks/useNow'
+import { describeBathroom, describeKitchen } from '@/lib/rooms'
+import { LOCATION_LABEL, RISK_LABEL, isRecord } from '@/lib/labels'
+import { formatCountdown, formatDuration } from '@/lib/format'
+import type { Presence, Risk } from '@/types'
 import { cn } from '@/lib/cn'
 
 export function HomePage() {
@@ -21,74 +26,111 @@ export function HomePage() {
   return elderly ? <HomeElderly /> : <HomeNormal />
 }
 
-function useRoomLines() {
-  const { kitchenPhase, induction, presence, fall } = useHome()
-  return { kitchen: describeKitchen(kitchenPhase, induction, presence.kitchen), bathroom: describeBathroom(fall, presence.bathroom) }
+const riskTone = (r: Risk) => (r === 'danger' ? 'danger' : r === 'warning' || r === 'caution' ? 'warn' : r === 'uncertain' ? 'muted' : undefined)
+
+/** 맨 위 요약 칩 줄 — 전체 상태 · 위치 · 기기 연결 · 보호자 */
+function SummaryChips({ big = false }: { big?: boolean }) {
+  const navigate = useNavigate()
+  const { overallRisk, kitchenRisk, location, devices, onlineCount, contacts, refresh } = useHome()
+  const [checking, setChecking] = useState(false)
+  const safe = overallRisk === 'normal'
+  const allOnline = onlineCount === devices.length
+  const check = async () => {
+    setChecking(true)
+    try { await refresh() } finally { setChecking(false) }
+  }
+  const chipTone = overallRisk === 'danger' ? 'danger' : overallRisk === 'warning' ? 'warn' : overallRisk === 'caution' ? 'caution' : 'muted'
+  return (
+    <div className="-mx-5 flex shrink-0 gap-2 overflow-x-auto px-5 pb-1 md:-mx-8 md:px-8 [scrollbar-width:none]">
+      {safe
+        ? <Chip big={big} icon={ShieldCheck} tone="ok" label="모두 안전" />
+        : <Chip big={big} icon={ShieldAlert} tone={chipTone} alert label={RISK_LABEL[overallRisk]}
+            value={kitchenRisk !== 'normal' ? '주방' : '욕실'} onClick={() => navigate(kitchenRisk !== 'normal' ? '/kitchen' : '/bathroom')} />}
+      <Chip big={big} icon={MapPin} tone="brand" label="위치" value={LOCATION_LABEL[location]} />
+      <Chip big={big} icon={allOnline ? Wifi : WifiOff} tone={allOnline ? 'muted' : 'warn'} alert={!allOnline} label="기기"
+        value={checking ? '확인 중…' : `${onlineCount}/${devices.length} 연결`} onClick={checking ? undefined : check} />
+      <Chip big={big} icon={Phone} tone={contacts.guardian ? 'muted' : 'warn'} alert={!contacts.guardian} label="보호자"
+        value={contacts.guardian ? contacts.guardian.name : '등록 필요'} onClick={() => navigate('/settings?section=contacts')} />
+    </div>
+  )
 }
 
-/* ── 일반 모드 ──────────────────────────────────────────────────────────── */
+function presenceText(p: Presence | undefined) {
+  if (!p) return '확인 중'
+  return p.present ? '사람 있음' : `비어 있음${p.absentSec > 0 ? ` · ${formatDuration(p.absentSec)}` : ''}`
+}
+
+/* ── 일반 모드 ──────────────────────────────────────────────────────────────
+   왼쪽: 방별 기기 타일 (iPad 홈 앱) / 오른쪽: 평면도 위치 · 최근 기록.
+   월패드에서는 한 화면 고정, 그보다 작은 화면에서는 위에서부터 쌓는다.
+   ───────────────────────────────────────────────────────────────────────── */
 function HomeNormal() {
   const navigate = useNavigate()
-  const { overallRisk, devices, events, contacts, location } = useHome()
-  // 상단 상태 배너가 떠 있으면(위험·연결 끊김) 세로 공간이 줄어드므로 기록을 2건만 보여준다
-  const bannerShown = overallRisk !== 'normal' || devices.some((d) => !d.online)
-  const lines = useRoomLines()
+  const { devices, events, presence, fall, setFallAlert } = useHome()
+  const now = useNow()
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [eventId, setEventId] = useState<string | null>(null)
-  const records = events.filter(isRecord).slice(0, bannerShown ? 2 : 3)
-  const safe = overallRisk === 'normal'
-  const HeroIcon = safe ? ShieldCheck : ShieldAlert
+  const records = events.filter(isRecord).slice(0, 6)
+  const kitchen = devices.filter((d) => d.room === 'kitchen')
+  const bath = devices.filter((d) => d.room === 'bathroom')
+  const pending = fall?.status === 'pending'
+  const bp = presence.bathroom
+
+  const grid = 'grid grid-cols-2 gap-3 auto-rows-[136px] md:grid-cols-4 wall:min-h-0 wall:flex-1 wall:grid-rows-[minmax(0,1fr)] wall:auto-rows-auto'
 
   return (
-    <div className="flex h-full flex-col">
-      <PageHeader title="우리 집" subtitle={safe ? '모든 공간과 기기가 정상이에요' : '확인이 필요한 공간이 있어요'} />
+    <div className="flex flex-col wall:h-full">
+      <PageHeader title="우리 집" />
+      <div className="px-5 pt-4 md:px-8 wall:short:pt-3"><SummaryChips /></div>
 
-      <div className="grid min-h-0 flex-1 gap-4 px-8 pt-5 pb-7" style={{ gridTemplateRows: 'minmax(172px,1fr) auto auto' }}>
-        {/* 1행: 전체 상태 + 지금 위치 */}
-        <div className="grid min-h-0 grid-cols-12 gap-5">
-          <Card className={cn('col-span-7 flex min-h-0 flex-col justify-between px-7 py-6', !safe && RISK_TONE[overallRisk].soft)}>
-            <div className="flex items-center gap-4">
-              <span className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl', safe ? 'bg-ok-soft' : 'bg-surface')}>
-                <HeroIcon className={cn('h-6 w-6', RISK_TONE[overallRisk].text)} aria-hidden="true" />
-              </span>
-              <h2 className="text-[1.75rem] leading-tight font-bold text-ink">{HERO_TITLE[overallRisk]}</h2>
+      <div className={cn(
+        'grid grid-cols-1 gap-6 px-5 pt-5 pb-6 md:px-8',
+        'wall:min-h-0 wall:flex-1 wall:grid-cols-12 wall:gap-6 wall:pb-7 wall:short:gap-4 wall:short:pt-3.5 wall:short:pb-5',
+      )}>
+        <div className="flex flex-col gap-6 wall:col-span-8 wall:min-h-0 wall:short:gap-4">
+          <section className="flex flex-col wall:min-h-0 wall:flex-1">
+            <SectionTitle action={<RoomLink onClick={() => navigate('/kitchen')} />}>주방</SectionTitle>
+            <div className={grid}>
+              {kitchen.map((d) => <DeviceTile key={d.id} device={d} wide={d.kind === 'induction'} onOpen={() => setDeviceId(d.id)} />)}
             </div>
-            <ul className="mt-3">
-              <RoomLine Icon={UtensilsCrossed} name="주방" text={lines.kitchen.text} risk={lines.kitchen.risk} onClick={() => navigate('/kitchen')} />
-              <RoomLine Icon={Bath} name="욕실" text={lines.bathroom.text} risk={lines.bathroom.risk} onClick={() => navigate('/bathroom')} />
-            </ul>
-          </Card>
-
-          <Card className="col-span-5 flex min-h-0 flex-col px-6 py-5">
-            <CardTitle title="지금 위치" action={
-              <span className="flex items-center gap-1 text-[0.9375rem] font-semibold text-brand">
-                <MapPin className="h-4 w-4" aria-hidden="true" />{LOCATION_LABEL[location]}
-              </span>
-            } />
-            <div className="flex min-h-0 flex-1 flex-col justify-center"><HomeMap height={112} /></div>
-          </Card>
+          </section>
+          <section className="flex flex-col wall:min-h-0 wall:flex-1">
+            <SectionTitle action={<RoomLink onClick={() => navigate('/bathroom')} />}>욕실</SectionTitle>
+            <div className={grid}>
+              {bath.map((d) => <DeviceTile key={d.id} device={d} onOpen={() => setDeviceId(d.id)} />)}
+              <Tile icon={Radar} glyph="text-brand-ink" name="재실 감지" state={presenceText(bp)} on={!!bp?.present} onPress={() => navigate('/bathroom')} />
+              <Tile icon={PersonStanding} glyph="text-ok" name="낙상 감지" wide on={!pending}
+                tone={pending ? 'danger' : undefined}
+                state={pending ? '보호자 응답 대기 중' : '감시 중 · 이상 없음'}
+                value={pending ? formatCountdown((new Date(fall!.autoReportAt).getTime() - now) / 1000) : undefined}
+                onPress={() => (pending ? setFallAlert(true) : navigate('/bathroom'))} />
+            </div>
+          </section>
         </div>
 
-        {/* 2행: 기기 */}
-        <section>
-          <h2 className="mb-2.5 text-[0.9375rem] font-semibold text-ink">기기 <span className="font-normal text-ink-3">{devices.length}</span></h2>
-          <div className="grid grid-cols-4 gap-4" style={{ gridAutoRows: '158px' }}>
-            {devices.map((d) => <DeviceTile key={d.id} device={d} onOpen={() => setDeviceId(d.id)} />)}
-          </div>
-        </section>
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 wall:col-span-4 wall:flex wall:min-h-0 wall:flex-col wall:short:gap-4">
+          <section className="flex flex-col">
+            <SectionTitle>위치</SectionTitle>
+            <Card className="p-3">
+              <HomeMap className="h-40 wall:h-[150px] wall:short:h-[118px]" />
+              <dl className="mt-2.5 grid grid-cols-2 gap-x-3 px-1 text-[0.8125rem]">
+                <div><dt className="text-ink-3">주방 재실</dt><dd className="truncate font-medium text-ink">{presenceText(presence.kitchen)}</dd></div>
+                <div><dt className="text-ink-3">욕실 재실</dt><dd className="truncate font-medium text-ink">{presenceText(bp)}</dd></div>
+              </dl>
+            </Card>
+          </section>
 
-        {/* 3행: 최근 안전 기록 + 보호자 알림 */}
-        <div className="grid grid-cols-12 gap-5">
-          <Card className="col-span-8 px-3 py-2.5">
-            <div className="flex items-center justify-between px-3 pt-1 pb-1">
-              <h2 className="text-[0.9375rem] font-semibold text-ink">최근 안전 기록</h2>
-              <button type="button" onClick={() => navigate('/history')} className="flex items-center text-sm font-semibold text-brand">
-                전체 보기<ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-            {records.map((e) => <EventRow key={e.eventId} event={e} compact onClick={() => setEventId(e.eventId)} />)}
-          </Card>
-          <GuardianCard className="col-span-4" guardian={contacts.guardian} onRegister={() => navigate('/settings?section=contacts')} />
+          <section className="flex flex-col wall:min-h-0 wall:flex-1">
+            <SectionTitle action={
+              <button type="button" onClick={() => navigate('/history')} className="press text-[0.9375rem] text-brand-ink">전체 보기</button>
+            }>최근 기록</SectionTitle>
+            <ListGroup className="flex flex-col wall:min-h-0 wall:flex-1" bodyClassName="wall:min-h-0 wall:flex-1">
+              <FitList className="wall:h-full" items={records} getKey={(e) => e.eventId}
+                render={(e) => <EventRow event={e} compact onClick={() => setEventId(e.eventId)} />}
+                empty={<p className="px-4 py-4 text-[0.9375rem] text-ink-3">기록 없음</p>}
+                none={<button type="button" onClick={() => navigate('/history')} className="w-full px-4 py-3 text-left text-[0.9375rem] text-brand-ink">기록 {records.length}건 보기</button>} />
+            </ListGroup>
+          </section>
         </div>
       </div>
 
@@ -98,90 +140,30 @@ function HomeNormal() {
   )
 }
 
-function RoomLine({ Icon, name, text, risk, onClick }: {
-  Icon: typeof Bath; name: string; text: string; risk: Parameters<typeof StatusText>[0]['risk']; onClick: () => void
-}) {
+function RoomLink({ onClick }: { onClick: () => void }) {
   return (
-    <li>
-      <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-xl py-1.5 text-left hover:opacity-80">
-        <Icon className="h-5 w-5 shrink-0 text-ink-2" aria-hidden="true" />
-        <span className="w-12 shrink-0 text-[1.0625rem] font-semibold text-ink">{name}</span>
-        <StatusText risk={risk} className="min-w-0 flex-1 truncate text-[1rem]">{text}</StatusText>
-        <ChevronRight className="h-4 w-4 shrink-0 text-ink-3" aria-hidden="true" />
-      </button>
-    </li>
+    <button type="button" onClick={onClick} className="press flex items-center text-[0.9375rem] text-brand-ink">
+      자세히<ChevronRight className="h-4 w-4" strokeWidth={2.4} aria-hidden="true" />
+    </button>
   )
 }
 
-function GuardianCard({ guardian, onRegister, className }: {
-  guardian: { name: string; phone: string } | null; onRegister: () => void; className?: string
-}) {
-  if (!guardian) {
-    return (
-      <Card className={cn('flex flex-col justify-between bg-warn-soft p-6', className)}>
-        <div>
-          <p className="text-[0.9375rem] font-semibold text-[#9a4a00]">보호자 연락처가 없어요</p>
-          <p className="mt-1 text-[0.875rem] leading-relaxed text-[#9a4a00]/85">등록하면 낙상이 감지될 때 보호자에게 바로 문자로 알려드려요.</p>
-        </div>
-        <button type="button" onClick={onRegister}
-          className="mt-4 min-h-11 rounded-xl bg-surface text-[0.9375rem] font-semibold text-ink hover:bg-sunken">
-          보호자 등록하기
-        </button>
-      </Card>
-    )
-  }
-  return (
-    <Card className={cn('flex flex-col justify-between p-6', className)}>
-      <p className="text-[0.9375rem] font-semibold text-ink">위급할 때 알림</p>
-      <div className="mt-3 flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-sunken"><UserRound className="h-5 w-5 text-ink-2" aria-hidden="true" /></span>
-        <div>
-          <p className="text-[1rem] font-semibold text-ink">보호자 {guardian.name}</p>
-          <p className="tabular text-[0.875rem] text-ink-2">{maskPhone(guardian.phone)}</p>
-        </div>
-      </div>
-      <p className="mt-3 text-[0.8125rem] text-ink-3">낙상이 감지되면 이 번호로 확인 문자를 보내요.</p>
-    </Card>
-  )
-}
-
-/* ── 어르신 모드: 정보는 줄이고 크게 ───────────────────────────────────── */
+/* ── 어르신 모드: 큰 타일 네 개 ─────────────────────────────────────────── */
 function HomeElderly() {
   const navigate = useNavigate()
-  const { overallRisk, location, contacts } = useHome()
-  const lines = useRoomLines()
-  const safe = overallRisk === 'normal'
-
-  const cards = [
-    { key: 'kitchen', Icon: UtensilsCrossed, name: '주방', short: lines.kitchen.short, risk: lines.kitchen.risk, to: '/kitchen' },
-    { key: 'bathroom', Icon: Bath, name: '욕실', short: lines.bathroom.short, risk: lines.bathroom.risk, to: '/bathroom' },
-    { key: 'where', Icon: MapPin, name: '지금 위치', short: LOCATION_LABEL[location], risk: 'normal' as const, to: '/home' },
-  ]
-
+  const { kitchenPhase, induction, presence, fall, location, contacts } = useHome()
+  const k = describeKitchen(kitchenPhase, induction, presence.kitchen)
+  const b = describeBathroom(fall, presence.bathroom)
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-col wall:h-full">
       <PageHeader title="우리 집" />
-      <div className="flex min-h-0 flex-1 flex-col gap-5 px-8 pt-5 pb-7">
-        <Card className={cn('flex shrink-0 items-center gap-5 px-8 py-7', !safe && RISK_TONE[overallRisk].soft)}>
-          {safe ? <ShieldCheck className="h-12 w-12 text-ok" aria-hidden="true" /> : <ShieldAlert className={cn('h-12 w-12', RISK_TONE[overallRisk].text)} aria-hidden="true" />}
-          <p className="text-4xl font-bold text-ink">{safe ? '✓ ' : '! '}{HERO_TITLE[overallRisk]}</p>
-        </Card>
-        <div className="grid min-h-0 flex-1 grid-cols-3 gap-5">
-          {cards.map(({ key, Icon, name, short, risk, to }) => (
-            <button key={key} type="button" onClick={() => navigate(to)}
-              className={cn('flex flex-col items-center justify-center gap-4 rounded-3xl p-6 text-center', risk === 'normal' ? 'bg-surface' : RISK_TONE[risk].soft)}>
-              <Icon className="h-14 w-14 text-ink-2" strokeWidth={1.6} aria-hidden="true" />
-              <span className="text-3xl font-bold text-ink">{name}</span>
-              <StatusText risk={risk} className="text-2xl">{short}</StatusText>
-            </button>
-          ))}
-        </div>
-        {!contacts.guardian && (
-          <button type="button" onClick={() => navigate('/settings?section=contacts')}
-            className="flex min-h-16 shrink-0 items-center justify-between rounded-3xl bg-warn-soft px-7 text-xl font-semibold text-[#9a4a00]">
-            보호자 연락처를 등록해 주세요<ChevronRight className="h-6 w-6" aria-hidden="true" />
-          </button>
-        )}
+      <div className="px-5 pt-4 md:px-8"><SummaryChips big /></div>
+      <div className="grid grid-cols-1 gap-4 px-5 pt-5 pb-7 auto-rows-[180px] md:grid-cols-2 md:px-8 wall:min-h-0 wall:flex-1 wall:auto-rows-auto wall:grid-rows-2">
+        <Tile big icon={UtensilsCrossed} glyph="text-glyph-heat" name="주방" state={k.short} on={k.risk === 'normal'} tone={riskTone(k.risk)} onPress={() => navigate('/kitchen')} />
+        <Tile big icon={Bath} glyph="text-glyph-water" name="욕실" state={b.short} on={b.risk === 'normal'} tone={riskTone(b.risk)} onPress={() => navigate('/bathroom')} />
+        <Tile big icon={MapPin} glyph="text-brand-ink" name="지금 위치" state={LOCATION_LABEL[location]} on />
+        <Tile big icon={Phone} glyph="text-ok" name="보호자" state={contacts.guardian ? contacts.guardian.name : '등록해 주세요'}
+          on={!!contacts.guardian} tone={contacts.guardian ? undefined : 'warn'} onPress={() => navigate('/settings?section=contacts')} />
       </div>
     </div>
   )
