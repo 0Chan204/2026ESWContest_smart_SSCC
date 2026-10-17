@@ -17,7 +17,10 @@ PREFIX = settings.API_PREFIX
 STOVE = settings.INDUCTION_DEVICE_ID
 BURNER = settings.BURNER_ID
 LIGHT = "light-01"
+TOILET_LIGHT = "light-00"
 WATER = "water-01"
+KITCHEN_FAN = "fan-01"
+TOILET_FAN = "fan-02"
 
 
 def _decision(decision_id: str, scenario: str, actions: list[dict], **extra) -> dict:
@@ -53,7 +56,10 @@ def test_device_states_list_every_device(client):
     assert [(d["device"], d["deviceId"]) for d in items] == [
         ("stove", STOVE),
         ("light", LIGHT),
+        ("light", TOILET_LIGHT),
         ("water_purifier", WATER),
+        ("fan", KITCHEN_FAN),
+        ("fan", TOILET_FAN),
     ]
     assert all(d["online"] is False and d["is_on"] is False for d in items)
 
@@ -252,8 +258,8 @@ def test_fall_decision_runs_fall_flow(client, published):
     assert [c["type"] for c in published] == ["turn_off", "blink"]
     incident = client.get(f"{PREFIX}/fall-incidents/{res['fallIncidentId']}").json()
     assert incident["room"] == "toilet"
-    # 화장실에는 전등이 없어서 첫 번째 전등을 깜빡인다
-    assert incident["lightDeviceId"] == "light-01"
+    # 낙상 구역(화장실)의 전등을 깜빡인다
+    assert incident["lightDeviceId"] == TOILET_LIGHT
 
     # fall_detected 이벤트가 판단에 연결되어, 피드백이 판단 기록에도 남는다
     assert res["eventId"] == incident["eventId"]
@@ -306,7 +312,7 @@ def test_dashboard_device_commands(client, published):
 
 def test_snapshot_includes_all_devices(client):
     devices = client.get(f"{PREFIX}/snapshot").json()["devices"]
-    assert {d["deviceId"] for d in devices} == {STOVE, LIGHT, WATER}
+    assert {d["deviceId"] for d in devices} == {STOVE, LIGHT, TOILET_LIGHT, WATER, KITCHEN_FAN, TOILET_FAN}
 
 
 # ---------------------------------------------------------------------------

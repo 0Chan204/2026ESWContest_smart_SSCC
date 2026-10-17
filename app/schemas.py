@@ -34,8 +34,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DeviceState = Literal["off", "on", "overheated", "cooling"]
 
-# v0.3: 가전 종류 (app/device_registry.py 참고)
-DeviceType = Literal["stove", "light", "water_purifier"]
+# v0.3: 가전 종류 (app/device_registry.py 참고). v0.5: 환풍기(fan) 추가
+DeviceType = Literal["stove", "light", "water_purifier", "fan"]
+
+# v0.5: 환풍기 풍량 (약 / 중 / 강)
+FanSpeed = Literal["low", "mid", "high"]
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +114,8 @@ class CommandRecord(BaseModel):
 
     commandId: str
     status: Literal["pending", "sent", "acked", "rejected", "failed", "timeout"]
-    # turn_on/turn_off/set_level: 인덕션, on/off/blink: 전등, dispense: 정수기
-    type: Literal["turn_on", "turn_off", "set_level", "on", "off", "blink", "dispense"]
+    # turn_on/turn_off/set_level: 인덕션, on/off/blink/fadeout: 전등, dispense: 정수기, on/off/set_speed: 환풍기
+    type: Literal["turn_on", "turn_off", "set_level", "on", "off", "blink", "fadeout", "dispense", "set_speed"]
     level: Optional[int] = None
     # user: 사용자(대시보드), system: 서버 자체 조치(낙상 비상 차단 등), ai: AI 중앙 판정 엔진의 판단
     actor: Literal["user", "system", "ai"]
@@ -125,6 +128,9 @@ class CommandRecord(BaseModel):
     durationSec: Optional[int] = None
     amountMl: Optional[int] = None
     decisionId: Optional[str] = None
+    # v0.5 추가
+    brightness: Optional[int] = None
+    speed: Optional[FanSpeed] = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +142,19 @@ class LightState(BaseModel):
 
     reportedAt: str
     power: Literal["on", "off"]
-    mode: Literal["steady", "blink"] = "steady"
+    # v0.5: 밝기(%). 예전 전등처럼 보내지 않으면 power가 on일 때 100으로 봅니다.
+    brightness: Optional[int] = Field(default=None, ge=0, le=100, description="밝기(%) 0~100")
+    # steady: 일정한 밝기, blink: 깜빡임, fadeout(v0.5): 절전 밝기로 서서히 낮추는 중(또는 낮춘 상태)
+    mode: Literal["steady", "blink", "fadeout"] = "steady"
+    lastControl: Optional[LastControl] = None
+
+
+class FanState(BaseModel):
+    """환풍기 -> 서버 state 토픽 메시지 (v0.5)"""
+
+    reportedAt: str
+    power: Literal["on", "off"]
+    speed: Optional[FanSpeed] = Field(default=None, description="풍량 low(약) / mid(중) / high(강)")
     lastControl: Optional[LastControl] = None
 
 
@@ -149,15 +167,18 @@ class WaterPurifierState(BaseModel):
     lastControl: Optional[LastControl] = None
 
 
-HomeDeviceCommandType = Literal["on", "off", "blink", "dispense"]
+HomeDeviceCommandType = Literal["on", "off", "blink", "fadeout", "dispense", "set_speed"]
 
 
 class HomeDeviceCommandRequest(BaseModel):
-    """전등·정수기 제어 요청 (대시보드 REST, AI 판단 실행에 공통 사용)"""
+    """전등·정수기·환풍기 제어 요청 (대시보드 REST, AI 판단 실행에 공통 사용)"""
 
     type: HomeDeviceCommandType
-    durationSec: Optional[int] = Field(default=None, ge=1, le=600, description="blink 시간(초). 없으면 기본 10초")
+    durationSec: Optional[int] = Field(
+        default=None, ge=1, le=600, description="blink 시간(초, 기본 10초) / fadeout에 걸리는 시간(초, 기본 LIGHT_FADE_SEC)"
+    )
     amountMl: Optional[int] = Field(default=None, ge=1, le=2000, description="dispense 출수량(ml). 필수")
+    speed: Optional[FanSpeed] = Field(default=None, description="set_speed 풍량 low / mid / high. 필수")
 
 
 class HomeDeviceCommandOut(BaseModel):
@@ -169,10 +190,12 @@ class HomeDeviceCommandOut(BaseModel):
     type: HomeDeviceCommandType
     durationSec: Optional[int] = None
     amountMl: Optional[int] = None
+    brightness: Optional[int] = Field(default=None, description="on: 100, fadeout: 절전 밝기(기본 20)")
+    speed: Optional[FanSpeed] = None
 
 
 class HomeDeviceAck(BaseModel):
-    """전등·정수기 -> 서버 ack 토픽 메시지. state는 처리 후 기기 상태(LightState/WaterPurifierState 형식)"""
+    """전등·정수기·환풍기 -> 서버 ack 토픽 메시지. state는 처리 후 기기 상태(LightState/WaterPurifierState/FanState 형식)"""
 
     commandId: str
     result: Literal["applied", "rejected", "failed"]
@@ -531,7 +554,9 @@ class FallPolicy(BaseModel):
 # 모든 판단은 AI 중앙 판정 엔진이 하고, 서버는 결과를 받아 가전을 제어하고 기록합니다.
 # ---------------------------------------------------------------------------
 
-AiActionName = Literal["turn_on", "turn_off", "set_level", "restore_power", "on", "off", "blink", "dispense"]
+AiActionName = Literal[
+    "turn_on", "turn_off", "set_level", "restore_power", "on", "off", "blink", "fadeout", "dispense", "set_speed"
+]
 
 
 class AiAction(BaseModel):
@@ -543,11 +568,15 @@ class AiAction(BaseModel):
     level: Optional[int] = Field(default=None, ge=1, le=9, description="set_level 화력")
     durationSec: Optional[int] = Field(default=None, ge=1, le=600, description="blink 시간(초). 없으면 기본 10초")
     amountMl: Optional[int] = Field(default=None, ge=1, le=2000, description="dispense 출수량(ml). 필수")
+    speed: Optional[FanSpeed] = Field(default=None, description="환풍기 set_speed 풍량 low / mid / high. 필수")
 
 
 class AiDecisionRequest(BaseModel):
     decisionId: str = Field(..., min_length=1, max_length=100, description="판단 id. 같은 id로 다시 보내면 다시 실행하지 않음")
-    scenario: str = Field(..., description="bedtime_light_off / stove_absence / fall_detected / water_dispense 등")
+    scenario: str = Field(
+        ...,
+        description="bedtime_light_off / stove_absence / fall_detected / water_dispense / power_saving / power_saving_end 등",
+    )
     confidence: float = Field(..., ge=0.0, le=1.0)
     reason: Optional[str] = None
     timestamp: str

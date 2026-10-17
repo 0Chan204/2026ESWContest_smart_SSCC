@@ -11,7 +11,7 @@
     python tests/simulate_edge_nodes.py --room kitchen      # 사람이 있는 구역 (기본 kitchen)
 
 동작:
-- 노드 r3(방) / r2(부엌) / r4(화장실) 3개를 흉내 냅니다.
+- 노드 r1(방) / r2(부엌) / r3(화장실) 3개를 흉내 냅니다.
 - 토픽: home/{구역}/edge/{노드ID}/features, 1초마다 보냅니다.
 - --room으로 정한 구역은 특징값이 높게(사람이 있는 것처럼), 나머지는 낮게 나옵니다.
   (값 자체는 의미 없는 가짜 숫자입니다)
@@ -25,7 +25,7 @@ import time
 
 import paho.mqtt.client as mqtt
 
-NODES = {"r3": "room", "r2": "kitchen", "r4": "toilet"}
+NODES = {"r1": "room", "r2": "kitchen", "r3": "toilet"}
 FEATURE_COUNT = 19
 CFG = "sim00001"
 

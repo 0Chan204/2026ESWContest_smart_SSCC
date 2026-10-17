@@ -32,13 +32,15 @@ class Settings:
     BURNER_ID: str = os.getenv("BURNER_ID", "burner-1")
     KITCHEN_ROOM: str = os.getenv("KITCHEN_ROOM", "kitchen")
 
-    # --- 인덕션 외 가전 목록 (v0.3: 전등·정수기 추가) ---
-    # 비워 두면 기본값(시연용 전등 1개 + 정수기 1개, app/device_registry.py)을 씁니다.
-    # 바꾸려면 .env에 JSON 배열로 넣습니다. 예)
-    # HOMEVIS_DEVICES=[{"deviceId":"light-01","type":"light","room":"room"},{"deviceId":"water-01","type":"water_purifier","room":"kitchen"}]
+    # --- 인덕션 외 가전 목록 (v0.3: 전등·정수기, v0.5: 환풍기) ---
+    # .env에 JSON 배열로 넣습니다. 비우면 기본 구성(app/device_registry.py DEFAULT_HOME_DEVICES)을 씁니다. 값을 넣으면 기본 구성 전체를 대신합니다.
+    # HOMEVIS_DEVICES=[{"deviceId":"light-01","type":"light","room":"room"},{"deviceId":"fan-01","type":"fan","room":"kitchen"}]
     HOMEVIS_DEVICES: str = os.getenv("HOMEVIS_DEVICES", "")
     # 전등 깜빡임(blink) 명령에 시간이 없을 때 쓰는 기본 깜빡임 시간(초)
     LIGHT_BLINK_SEC: int = int(os.getenv("LIGHT_BLINK_SEC", "10"))
+    # v0.5: 사람이 없을 때(power_saving) 전등을 낮출 절전 밝기(%)와, 그 밝기까지 서서히 낮추는 시간(초)
+    LIGHT_SAVING_BRIGHTNESS: int = 20
+    LIGHT_FADE_SEC: int = int(os.getenv("LIGHT_FADE_SEC", "3"))
 
     # --- MQTT 토픽 규칙 ---
     # 토픽명은 기존 그대로 유지하기로 팀에서 확정함 (변경 없음)

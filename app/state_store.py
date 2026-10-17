@@ -101,6 +101,9 @@ _device_last_seen: dict[str, datetime] = {}
 # --- v0.3: HomeVIS가 끄거나 낮추기 직전의 인덕션 화력 (deviceId -> level, restore_power용) ---
 _restore_levels: dict[str, int] = {}
 
+# --- v0.5: 절전(power_saving)으로 밝기를 낮춘 전등 (power_saving_end 때 이 전등만 100%로 되돌림) ---
+_power_saving_lights: set[str] = set()
+
 # --- v0.3.2: 마지막으로 받아 둔 날씨 (인터넷이 끊겨도 안내할 수 있도록 DB에도 저장) ---
 _weather: Optional[WeatherSnapshot] = None
 
@@ -122,6 +125,7 @@ _CONTACT_GUARDIAN = "guardian"
 _STATE_ACTIVE_SESSIONS = "active_sessions"
 _STATE_ABSENCE_STAGES = "absence_stages"
 _STATE_RESTORE_LEVELS = "restore_levels"
+_STATE_POWER_SAVING_LIGHTS = "power_saving_lights"
 _STATE_WEATHER = "weather"
 
 
@@ -153,6 +157,7 @@ def reset_memory() -> None:
             _device_states,
             _device_last_seen,
             _restore_levels,
+            _power_saving_lights,
             _ai_decisions,
             _ai_decision_seq,
         ):
@@ -262,6 +267,8 @@ def load_from_db() -> None:
                 _absence_stage_by_room.update(doc.get("values", {}))
             elif doc["_id"] == _STATE_RESTORE_LEVELS:
                 _restore_levels.update(doc.get("values", {}))
+            elif doc["_id"] == _STATE_POWER_SAVING_LIGHTS:
+                _power_saving_lights.update(doc.get("values", []))
             elif doc["_id"] == _STATE_WEATHER and doc.get("value"):
                 _weather = WeatherSnapshot.model_validate(doc["value"])
 
@@ -660,6 +667,28 @@ def set_restore_level(device_id: str, level: Optional[int]) -> None:
             _restore_levels[device_id] = level
         snapshot = dict(_restore_levels)
     db.upsert(db.RUNTIME_STATE, _STATE_RESTORE_LEVELS, {"values": snapshot})
+
+
+# ---------------------------------------------------------------------------
+# v0.5: 절전으로 밝기를 낮춘 전등
+# ---------------------------------------------------------------------------
+
+def is_power_saving_light(device_id: str) -> bool:
+    with _lock:
+        return device_id in _power_saving_lights
+
+
+def set_power_saving_light(device_id: str, saving: bool) -> None:
+    """saving=True면 절전 중으로 표시, False면 해제. 바뀐 게 없으면 DB에 다시 쓰지 않습니다."""
+    with _lock:
+        if (device_id in _power_saving_lights) == saving:
+            return
+        if saving:
+            _power_saving_lights.add(device_id)
+        else:
+            _power_saving_lights.discard(device_id)
+        snapshot = sorted(_power_saving_lights)
+    db.upsert(db.RUNTIME_STATE, _STATE_POWER_SAVING_LIGHTS, {"values": snapshot})
 
 
 # ---------------------------------------------------------------------------

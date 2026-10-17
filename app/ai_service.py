@@ -12,6 +12,8 @@ AI 중앙 판정 엔진과 연동하는 서비스입니다. (v0.3)
 
 시나리오별 처리:
 - fall_detected  : 낙상 처리 흐름(인덕션 비상 차단 + 전등 깜빡임 -> 사용자 -> 보호자 -> 자동 신고)을 실행
+- power_saving   : (v0.5) room에 사람이 없다는 판단. 그 구역에서 켜져 있는 전등을 절전 밝기(20%)로 서서히 낮춤(fadeout)
+- power_saving_end: (v0.5) room에 사람이 다시 들어왔다는 판단. 절전으로 낮췄던 전등만 100%로 되돌림
 - 그 외          : actions에 적힌 제어를 순서대로 실행 (bedtime_light_off, stove_absence, water_dispense 등)
 - restore_power  : HomeVIS가 인덕션을 끄거나 낮추기 직전 화력으로 다시 켭니다.
 - weatherBriefing: true면 미리 받아 둔 날씨로 안내를 만들어 대시보드(weather.briefing)와 응답(weather)에 담습니다.
@@ -54,6 +56,8 @@ from app.schemas import (
 logger = logging.getLogger("induction.ai")
 
 FALL_SCENARIO = "fall_detected"
+POWER_SAVING_SCENARIO = "power_saving"
+POWER_SAVING_END_SCENARIO = "power_saving_end"
 STOVE_ACTIONS = ("turn_on", "turn_off", "set_level", "restore_power")
 # 낙상 처리 흐름이 직접 실행하는 제어 (판단 결과의 actions에 같이 와도 중복 실행하지 않음)
 FALL_BUILTIN_ACTIONS = {("stove", "turn_off"), ("light", "blink")}
@@ -105,20 +109,32 @@ def get_device_info(device: device_registry.Device) -> DeviceInfo:
     last_control = None
     if state and state.get("lastControl"):
         last_control = LastControl.model_validate(state["lastControl"])
-    if device.type == device_registry.LIGHT:
-        is_on = bool(state) and state.get("power") == "on"
-    else:
+    current_state = {k: v for k, v in state.items() if k != "lastControl"} if state else None
+    if device.type == device_registry.WATER_PURIFIER:
         is_on = bool(state) and state.get("status") == "dispensing"
+    else:  # 전등, 환풍기
+        is_on = bool(state) and state.get("power") == "on"
+    if device.type == device_registry.LIGHT and current_state is not None:
+        # 밝기를 보내지 않는 전등은 켜져 있으면 100%로 봅니다. 절전으로 낮춘 상태인지도 같이 알려줍니다.
+        current_state["brightness"] = _light_brightness(state)
+        current_state["powerSaving"] = state_store.is_power_saving_light(device.deviceId)
     return DeviceInfo(
         device=device.type,
         deviceId=device.deviceId,
         room=device.room,
         online=state_store.is_device_online(device.deviceId),
         is_on=is_on,
-        current_state={k: v for k, v in state.items() if k != "lastControl"} if state else None,
+        current_state=current_state,
         control_state=_control_state(last_control),
         updatedAt=_iso(state_store.get_device_last_seen(device.deviceId)),
     )
+
+
+def _light_brightness(state: Optional[dict]) -> int:
+    if not state or state.get("power") != "on":
+        return 0
+    brightness = state.get("brightness")
+    return 100 if brightness is None else brightness
 
 
 def get_device_states() -> list[DeviceInfo]:
@@ -207,6 +223,11 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
                 )
             )
 
+    if request.scenario == POWER_SAVING_SCENARIO:
+        results.extend(_run_power_saving(request))
+    elif request.scenario == POWER_SAVING_END_SCENARIO:
+        results.extend(_run_power_saving_end(request))
+
     for action in request.actions:
         if request.scenario == FALL_SCENARIO and (action.device, action.action) in FALL_BUILTIN_ACTIONS:
             continue  # 낙상 처리 흐름이 이미 실행한 제어라 두 번 보내지 않습니다.
@@ -278,6 +299,59 @@ def _emit_decision_event(request: AiDecisionRequest, results: list[AiActionResul
     )
 
 
+# ---------------------------------------------------------------------------
+# v0.5: 절전 (사람이 없으면 전등 20%, 다시 들어오면 100%)
+# ---------------------------------------------------------------------------
+
+def _dispatch_light(device: device_registry.Device, action: str, request: AiDecisionRequest) -> AiActionResult:
+    try:
+        record = home_device_service.dispatch(
+            device.deviceId,
+            HomeDeviceCommandRequest(type=action),
+            actor="ai",
+            reason=f"ai:{request.scenario}",
+            decision_id=request.decisionId,
+        )
+    except Exception:
+        logger.exception("절전 전등 제어 실패 (decisionId=%s, device=%s)", request.decisionId, device.deviceId)
+        return AiActionResult(
+            device="light", deviceId=device.deviceId, action=action, status="failed",
+            message="명령 전송 실패 (기기 통신 상태 확인 필요)",
+        )
+    return AiActionResult(device="light", deviceId=device.deviceId, action=action, status="sent", commandId=record.commandId)
+
+
+def _run_power_saving(request: AiDecisionRequest) -> list[AiActionResult]:
+    """그 구역에서 켜져 있고 절전 밝기보다 밝은 전등을 절전 밝기로 서서히 낮춥니다. power는 on 그대로입니다."""
+    if request.room is None:
+        return [AiActionResult(device="light", action="fadeout", status="rejected", message="절전할 구역(room)이 필요합니다.")]
+    results = []
+    for device in device_registry.devices_in_room(device_registry.LIGHT, request.room):
+        state = state_store.get_device_state(device.deviceId)
+        if _light_brightness(state) <= settings.LIGHT_SAVING_BRIGHTNESS:
+            continue  # 꺼져 있거나(상태를 모르는 경우 포함) 이미 절전 밝기 이하
+        if state_store.is_power_saving_light(device.deviceId):
+            continue  # 이미 절전 명령을 보낸 전등
+        results.append(_dispatch_light(device, "fadeout", request))
+    return results
+
+
+def _run_power_saving_end(request: AiDecisionRequest) -> list[AiActionResult]:
+    """절전으로 낮췄던 전등만 100%로 되돌립니다. 그 사이 꺼진 전등은 다시 켜지 않습니다."""
+    if request.room is None:
+        return [AiActionResult(device="light", action="on", status="rejected", message="복귀할 구역(room)이 필요합니다.")]
+    results = []
+    for device in device_registry.devices_in_room(device_registry.LIGHT, request.room):
+        if not state_store.is_power_saving_light(device.deviceId):
+            continue
+        state = state_store.get_device_state(device.deviceId)
+        if not state or state.get("power") != "on":
+            state_store.set_power_saving_light(device.deviceId, False)
+            continue
+        results.append(_dispatch_light(device, "on", request))
+    return results
+
+
 def _result(action: AiAction, device_id: Optional[str], status: str, **extra) -> AiActionResult:
     return AiActionResult(device=action.device, deviceId=device_id, action=action.action, status=status, **extra)
 
@@ -300,7 +374,7 @@ def _execute(action: AiAction, request: AiDecisionRequest) -> AiActionResult:
         else:
             try:
                 command = HomeDeviceCommandRequest(
-                    type=action.action, durationSec=action.durationSec, amountMl=action.amountMl
+                    type=action.action, durationSec=action.durationSec, amountMl=action.amountMl, speed=action.speed
                 )
             except ValidationError:
                 return _result(action, device.deviceId, "rejected", message=f"{device.type}에 쓸 수 없는 동작입니다.")

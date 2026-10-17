@@ -219,12 +219,15 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 ```json
 { "_id": "active_sessions", "values": { "induction-01": "session-1a2b3c4d5e6f" } }
 { "_id": "restore_levels", "values": { "induction-01": 6 } }
+{ "_id": "power_saving_lights", "values": ["light-01"] }
 { "_id": "weather", "value": { "location": "서울", "fetchedAt": "2026-10-16T12:45:00+00:00", "temperature": 18.3, "condition": "맑음", "...": "..." } }
 ```
 
 재시작 후에도 진행 중인 조리 세션과 복구용 화력을 이어가기 위한 내부 상태입니다.
 `restore_levels`는 HomeVIS(AI 판단)가 인덕션을 끄거나 낮추기 직전 화력이며, `restore_power`로 복구하거나
 사용자가 직접 조작하면 지워집니다. (v0.3부터 `absence_stages`는 쓰지 않습니다.)
+`power_saving_lights`는 절전(`power_saving`)으로 밝기를 20%로 낮춘 전등 목록입니다 (v0.5). 사람이 돌아오면
+(`power_saving_end`) 이 전등만 100%로 되돌리고, 누가 직접 켜거나 끄면 목록에서 빠집니다.
 `weather`는 마지막으로 받아 온 날씨입니다 (v0.3.2). 인터넷이 끊긴 상태로 서버를 다시 켜도 이 값으로 날씨 안내를 합니다.
 
 ### device_states (v0.3)

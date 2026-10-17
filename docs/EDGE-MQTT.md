@@ -1,4 +1,4 @@
-# 엣지 노드 · 최종 재실 판단 MQTT 명세 (v0.4)
+# 엣지 노드 · 최종 재실 판단 MQTT 명세 (v0.5)
 
 각 구역의 라즈베리파이(엣지 노드)가 보낸 특징값(features) 메시지를 서버가 하나로 합쳐 재실 판단 담당에게 전달하고,
 재실 판단 담당이 만든 최종 결과를 서버가 저장하는 MQTT 규칙입니다.
@@ -34,9 +34,9 @@
 
 | 구역 | 노드ID | 노드 토픽 |
 | --- | --- | --- |
-| `room` (방) | `r3` | `home/room/edge/r3/features` |
+| `room` (방) | `r1` | `home/room/edge/r1/features` |
 | `kitchen` (부엌) | `r2` | `home/kitchen/edge/r2/features` |
-| `toilet` (화장실) | `r4` | `home/toilet/edge/r4/features` |
+| `toilet` (화장실) | `r3` | `home/toilet/edge/r3/features` |
 
 - 노드 상태는 메시지 안의 `status`로 알리므로 별도 상태 토픽은 없습니다.
 - 서버 최종 상태 토픽은 두지 않습니다. 최종 판단은 AI 중앙 판정 엔진이 백엔드 API(`POST /api/v1/ai/decisions`)로 보내고,
@@ -47,11 +47,11 @@
 
 ```
 home/room/light/light-01/{state|command|ack}             전등
-home/room/edge/r3/features                               방 엣지 노드
+home/room/edge/r1/features                               방 엣지 노드
 home/kitchen/induction/induction-01/{state|command|ack}  인덕션
 home/kitchen/water_purifier/water-01/{state|command|ack} 정수기
 home/kitchen/edge/r2/features                            부엌 엣지 노드
-home/toilet/edge/r4/features                             화장실 엣지 노드
+home/toilet/edge/r3/features                             화장실 엣지 노드
 home/edge/combined                                       서버 → 재실 판단 담당 (합친 메시지)
 home/edge/result                                         재실 판단 담당 → 서버 (최종 결과)
 ```
@@ -95,7 +95,7 @@ home/edge/result                                         재실 판단 담당 �
   "seq": 1905,
   "publishedAt": "2026-10-17T05:43:58.245+00:00",
   "locations": {
-    "room":    { "node": { "v": 1, "node": "r3", "t_end": 1792215837, "status": "ok", "features": ["..."], "quality": {"...": "..."}, "cfg": "67a75326" } },
+    "room":    { "node": { "v": 1, "node": "r1", "t_end": 1792215837, "status": "ok", "features": ["..."], "quality": {"...": "..."}, "cfg": "67a75326" } },
     "kitchen": { "node": { "v": 1, "node": "r2", "t_end": 1792215837, "status": "ok", "features": ["..."], "quality": {"...": "..."}, "cfg": "67a75326" } },
     "toilet":  { "node": null }
   }

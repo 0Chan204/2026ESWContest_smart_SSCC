@@ -46,7 +46,7 @@ def _result(result_id: str | None = "res-1", observed: str = "2026-10-17T12:00:0
 
 def test_parse_node_topic():
     assert edge_service.parse_node_topic("home/kitchen/edge/r2/features") == ("kitchen", "r2", "features")
-    assert edge_service.parse_node_topic("home/room/edge/r3/features") == ("room", "r3", "features")
+    assert edge_service.parse_node_topic("home/room/edge/r1/features") == ("room", "r1", "features")
     # 규칙에 안 맞는 토픽
     assert edge_service.parse_node_topic("home/kitchen/light/light-01/state") is None
     assert edge_service.parse_node_topic("home/kitchen/edge/r2") is None
@@ -67,11 +67,11 @@ def test_combined_format_matches_request():
 def test_combined_keeps_latest_original_message():
     _node("kitchen", "r2", _features("r2", t_end=100, base=-4.0))
     _node("kitchen", "r2", _features("r2", t_end=101, base=-1.0))
-    _node("room", "r3", _features("r3", t_end=100))
+    _node("room", "r1", _features("r1", t_end=100))
 
     locations = edge_service.build_combined()["locations"]
     assert locations["kitchen"] == {"node": _features("r2", t_end=101, base=-1.0)}  # 원본 그대로, 최신값
-    assert locations["room"]["node"]["node"] == "r3"
+    assert locations["room"]["node"]["node"] == "r1"
     assert locations["toilet"] == {"node": None}
 
 
@@ -93,8 +93,8 @@ def test_duplicate_and_old_messages_are_dropped():
 
 def test_server_does_not_judge_messages():
     """status가 ok가 아니거나 품질이 나빠도 판단 없이 그대로 전달한다."""
-    bad = {**_features("r4", t_end=300, status="sensor_error"), "quality": {"rate_hz": 0.0, "rssi": -99.0}}
-    _node("toilet", "r4", bad)
+    bad = {**_features("r3", t_end=300, status="sensor_error"), "quality": {"rate_hz": 0.0, "rssi": -99.0}}
+    _node("toilet", "r3", bad)
     assert edge_service.build_combined()["locations"]["toilet"] == {"node": bad}
 
 
@@ -247,14 +247,14 @@ def test_fusion_simulator_rule():
     import simulate_fusion
 
     _node("kitchen", "r2", _features("r2", base=-1.5))
-    _node("room", "r3", _features("r3", base=-4.3))
-    _node("toilet", "r4", _features("r4", base=-4.4))
+    _node("room", "r1", _features("r1", base=-4.3))
+    _node("toilet", "r3", _features("r3", base=-4.4))
     result = simulate_fusion.decide(edge_service.build_combined())
     assert (result["room"], result["present"]) == ("kitchen", True)
 
     # status가 ok가 아닌 노드는 제외, 모두 낮으면 아무도 없음
     edge_service.reset()
     _node("kitchen", "r2", _features("r2", base=-1.5, status="sensor_error"))
-    _node("room", "r3", _features("r3", base=-4.3))
+    _node("room", "r1", _features("r1", base=-4.3))
     empty = simulate_fusion.decide(edge_service.build_combined())
     assert (empty["room"], empty["present"]) == (None, False)

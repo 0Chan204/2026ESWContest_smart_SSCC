@@ -150,7 +150,7 @@ def publish_command(device_id: str, payload: dict) -> None:
 
 
 def publish_device_command(device_id: str, payload: dict) -> None:
-    """전등·정수기 제어 명령을 해당 기기의 command 토픽으로 발행합니다. (v0.3)"""
+    """전등·정수기·환풍기 제어 명령을 해당 기기의 command 토픽으로 발행합니다. (v0.3, v0.5 환풍기)"""
     device = device_registry.get_device(device_id)
     if device is None:
         raise ValueError(f"등록되지 않은 기기: {device_id}")

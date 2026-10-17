@@ -1,14 +1,16 @@
 """
-실제 전등·정수기가 준비되지 않았을 때 그 자리를 대신하는 "가짜 전등·정수기" 스크립트입니다. (v0.3)
+실제 전등·정수기·환풍기가 준비되지 않았을 때 그 자리를 대신하는 "가짜 가전" 스크립트입니다. (v0.3, v0.5: 환풍기·밝기)
 
 실행 방법:
     python tests/simulate_home_devices.py
 
-app/device_registry.py의 가전 목록(기본: light-01, water-01)을 그대로 사용합니다.
+app/device_registry.py의 가전 목록(기본: light-01, light-00, water-01, fan-01, fan-02)을 그대로 사용합니다.
 - 각 기기는 5초마다, 그리고 상태가 바뀔 때마다 state 토픽으로 상태를 보냅니다.
 - command 토픽으로 명령을 받으면 적용하고 ack 토픽으로 결과를 보냅니다.
-  전등: on / off / blink(durationSec 동안 깜빡인 뒤 원래 상태로)
+  전등: on(100%) / off / blink(durationSec 동안 깜빡인 뒤 원래 상태로)
+        fadeout(brightness까지 durationSec 동안 서서히 낮춤. power는 on, 다 낮추면 mode는 steady)
   정수기: dispense(amountMl만큼, 초당 50ml로 출수한 뒤 idle)
+  환풍기: on(지난 풍량, 처음이면 mid) / off / set_speed(low·mid·high)
 """
 
 import json
@@ -39,9 +41,12 @@ def now_iso() -> str:
 
 
 def initial_state(device) -> dict:
+    no_control = {"publisher": "user", "commandId": None}
     if device.type == device_registry.LIGHT:
-        return {"power": "off", "mode": "steady", "lastControl": {"publisher": "user", "commandId": None}}
-    return {"status": "idle", "lastDispensedMl": None, "lastControl": {"publisher": "user", "commandId": None}}
+        return {"power": "off", "brightness": 0, "mode": "steady", "lastControl": no_control}
+    if device.type == device_registry.FAN:
+        return {"power": "off", "speed": "mid", "lastControl": no_control}
+    return {"status": "idle", "lastDispensedMl": None, "lastControl": no_control}
 
 
 def state_payload(device_id: str) -> dict:
@@ -69,7 +74,15 @@ def apply_command(device, payload: dict) -> None:
     with _lock:
         state = _states[device.deviceId]
         if device.type == device_registry.LIGHT and cmd_type in ("on", "off"):
-            state.update(power=cmd_type, mode="steady", lastControl=control)
+            state.update(power=cmd_type, brightness=100 if cmd_type == "on" else 0, mode="steady", lastControl=control)
+        elif device.type == device_registry.LIGHT and cmd_type == "fadeout" and state["power"] == "on":
+            target = payload.get("brightness", 20)
+            state.update(mode="fadeout", lastControl=control)
+            threading.Timer(payload.get("durationSec") or 3, end_fadeout, args=(device, target)).start()
+        elif device.type == device_registry.FAN and cmd_type in ("on", "off"):
+            state.update(power=cmd_type, lastControl=control)
+        elif device.type == device_registry.FAN and cmd_type == "set_speed" and payload.get("speed"):
+            state.update(power="on", speed=payload["speed"], lastControl=control)
         elif device.type == device_registry.LIGHT and cmd_type == "blink":
             previous_power = state["power"]
             state.update(mode="blink", lastControl=control)
@@ -94,6 +107,13 @@ def end_blink(device, previous_power: str) -> None:
     publish_state(device)
 
 
+def end_fadeout(device, target: int) -> None:
+    with _lock:
+        _states[device.deviceId].update(brightness=target, mode="steady")
+    print(f"[가짜 {device.deviceId}] 절전 밝기 {target}%로 낮춤")
+    publish_state(device)
+
+
 def end_dispense(device, amount: int) -> None:
     with _lock:
         _states[device.deviceId].update(status="idle", lastDispensedMl=amount)
@@ -102,7 +122,7 @@ def end_dispense(device, amount: int) -> None:
 
 
 def on_connect(client: mqtt.Client, userdata, flags, rc: int) -> None:
-    print(f"[가짜 전등·정수기] 브로커 연결 성공: {[d.deviceId for d in DEVICES]}")
+    print(f"[가짜 가전] 브로커 연결 성공: {[d.deviceId for d in DEVICES]}")
     for device in DEVICES:
         client.subscribe(device_registry.topic(device, "command"), qos=1)
         publish_state(device)
@@ -137,7 +157,7 @@ def main() -> None:
             for device in DEVICES:
                 publish_state(device)
     except KeyboardInterrupt:
-        print("\n[가짜 전등·정수기] 종료합니다.")
+        print("\n[가짜 가전] 종료합니다.")
     finally:
         _client.loop_stop()
         _client.disconnect()
