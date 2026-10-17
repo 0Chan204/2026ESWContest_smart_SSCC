@@ -3,8 +3,9 @@
 
 가전 종류(type):
 - stove          인덕션. 기존 코드(app/device_service.py, commands_service.py)가 그대로 처리합니다.
-- light          전등. on / off / blink(깜빡임)
+- light          전등. on(100%) / off / blink(깜빡임) / fadeout(절전 밝기로 서서히, v0.5)
 - water_purifier 정수기. dispense(출수)
+- fan            환풍기. on / off / set_speed(low·mid·high = 약·중·강) (v0.5)
 
 MQTT 토픽은 모든 가전이 같은 규칙을 따릅니다.
     home/{구역}/{종류 토픽 이름}/{deviceId}/{state | command | ack}
@@ -24,16 +25,20 @@ logger = logging.getLogger("induction.registry")
 STOVE = "stove"
 LIGHT = "light"
 WATER_PURIFIER = "water_purifier"
-HOME_DEVICE_TYPES = (LIGHT, WATER_PURIFIER)
+FAN = "fan"
+HOME_DEVICE_TYPES = (LIGHT, WATER_PURIFIER, FAN)
 
 # 가전 종류 -> MQTT 토픽에 들어가는 이름
-TOPIC_SEGMENT = {STOVE: "induction", LIGHT: "light", WATER_PURIFIER: "water_purifier"}
+TOPIC_SEGMENT = {STOVE: "induction", LIGHT: "light", WATER_PURIFIER: "water_purifier", FAN: "fan"}
 _SEGMENT_TO_TYPE = {segment: device_type for device_type, segment in TOPIC_SEGMENT.items()}
 
-# 시연용 기본 구성 (팀 결정: 전등은 1개만, 나중에 늘릴 수 있음)
+# 시연용 기본 구성 (v0.5: 화장실 전등 light-00, 부엌·화장실 환풍기 추가)
 DEFAULT_HOME_DEVICES = [
     {"deviceId": "light-01", "type": LIGHT, "room": "room"},
+    {"deviceId": "light-00", "type": LIGHT, "room": "toilet"},
     {"deviceId": "water-01", "type": WATER_PURIFIER, "room": "kitchen"},
+    {"deviceId": "fan-01", "type": FAN, "room": "kitchen"},
+    {"deviceId": "fan-02", "type": FAN, "room": "toilet"},
 ]
 
 
@@ -74,6 +79,10 @@ def get_device(device_id: str) -> Optional[Device]:
     return next((d for d in list_devices() if d.deviceId == device_id), None)
 
 
+def devices_in_room(device_type: str, room: str) -> list[Device]:
+    return [d for d in list_devices() if d.type == device_type and d.room == room]
+
+
 def find_device(device_type: str, room: Optional[str] = None) -> Optional[Device]:
     """deviceId를 모를 때: 같은 구역의 그 종류 가전을 먼저, 없으면 그 종류의 첫 번째 가전을 돌려줍니다."""
     candidates = [d for d in list_devices() if d.type == device_type]
@@ -96,7 +105,7 @@ def topic(device: Device, kind: str) -> str:
 
 
 def home_device_subscriptions() -> list[str]:
-    """서버가 구독할 전등·정수기 토픽 (구역과 deviceId는 와일드카드)"""
+    """서버가 구독할 전등·정수기·환풍기 토픽 (구역과 deviceId는 와일드카드)"""
     return [f"home/+/{TOPIC_SEGMENT[t]}/+/{kind}" for t in HOME_DEVICE_TYPES for kind in ("state", "ack")]
 
 

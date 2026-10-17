@@ -279,11 +279,16 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 
 ---
 
-## 9-1. AI 중앙 판정 엔진 · 전등 · 정수기 연동 (v0.3)
+## 9-1. AI 중앙 판정 엔진 · 전등 · 정수기 · 환풍기 연동 (v0.3, v0.5)
 
 모든 제어 판단은 AI 중앙 판정 엔진이 하고, 백엔드는 판단 결과(`POST /api/v1/ai/decisions`)를 받아
-인덕션·전등·정수기를 제어하고 기록합니다. 판정 엔진용 API와 전등·정수기 MQTT 메시지 형식은
+인덕션·전등·정수기·환풍기를 제어하고 기록합니다. 판정 엔진용 API와 가전 MQTT 메시지 형식은
 `docs/AI-INTEGRATION.md`에 정리되어 있습니다. (v0.3부터 `POST /presence`는 저장·전달만 하고 직접 제어하지 않습니다.)
+
+- v0.5 환풍기: `fan-01`(부엌)·`fan-02`(화장실), 명령 `on` / `off` / `set_speed`(`low`·`mid`·`high` = 약·중·강)
+- v0.5 전등 밝기: `on` = 100%, `off`, `fadeout` = 20%로 서서히(전원은 켠 채)
+- v0.5 절전: 판정 엔진이 `power_saving`(구역에 사람 없음)을 보내면 그 구역의 켜진 전등을 20%로 낮추고,
+  `power_saving_end`(사람이 돌아옴)를 보내면 절전으로 낮췄던 전등만 100%로 되돌립니다.
 
 ## 9-2. 날씨 · 음성 안내 (v0.3.2, v0.4.1)
 
@@ -309,6 +314,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 - 서버는 노드 메시지를 판단하지 않고, 구역별 최신 메시지를 맵으로 합쳐 원본 그대로 전달합니다
   (`{"seq", "publishedAt", "locations": {구역: {"node": 원본 메시지}}}`, v0.4.2).
 - 재실 판단 담당이 보낸 최종 결과만 DB(`sensing_results`)에 저장하고, AI 판정 엔진이 HTTP로 꺼내 씁니다.
+- 노드 번호(v0.5): `r1`(방) / `r2`(부엌) / `r3`(화장실)
 - 토픽·메시지 형식: `docs/EDGE-MQTT.md`, 조회 API: `docs/AI-INTEGRATION.md`. 로직은 `app/edge_service.py`.
 - 테스트: `docker compose --profile sim up -d`로 가짜 엣지 노드·가짜 최종 판단까지 함께 띄울 수 있습니다.
 
