@@ -6,8 +6,9 @@
 "노드 -> 서버 -> 판단 -> 서버 저장 -> 조회" 전체 흐름을 확인하는 용도입니다.
 
 단순 규칙 (실제 모델 아님):
-- 재실 확률(pOccupied)이 가장 높은 구역이 0.5 이상이면 그 구역에 있다고 봄, 아니면 아무도 없음
-- 그 구역의 행동 확률(probs)에서 가장 높은 행동을 고름
+- 구역마다 특징값(features)의 평균을 구해, 가장 높은 구역이 THRESHOLD 이상이면 그 구역에 있다고 봄
+- 노드 status가 "ok"가 아닌 구역은 제외
+- 행동(activity)은 판단하지 않음 (null)
 
 사용 방법 (맥, 저장소 폴더에서):
     source venv/bin/activate
@@ -25,7 +26,7 @@ import paho.mqtt.client as mqtt
 
 COMBINED_TOPIC = "home/edge/combined"
 RESULT_TOPIC = "home/edge/result"
-THRESHOLD = 0.5
+THRESHOLD = -3.0
 
 
 def new_client(client_id: str) -> mqtt.Client:
@@ -35,34 +36,25 @@ def new_client(client_id: str) -> mqtt.Client:
         return mqtt.Client(client_id=client_id)  # paho-mqtt 1.x
 
 
-def _message(entry: dict, kind: str) -> dict:
-    cell = (entry or {}).get(kind) or {}
-    return cell.get("message") or {}
-
-
 def decide(combined: dict) -> dict:
-    best_room, best_p = None, 0.0
-    for room, entry in combined.get("rooms", {}).items():
-        p = _message(entry, "occupancy").get("pOccupied")
-        if isinstance(p, (int, float)) and p > best_p:
-            best_room, best_p = room, float(p)
+    best_room, best_score = None, None
+    for room, entry in combined.get("locations", {}).items():
+        node = (entry or {}).get("node") or {}
+        features = node.get("features") or []
+        if node.get("status") != "ok" or not features:
+            continue
+        score = sum(features) / len(features)
+        if best_score is None or score > best_score:
+            best_room, best_score = room, score
 
-    present = best_p >= THRESHOLD
-    activity, activity_p = None, None
-    if present:
-        probs = _message(combined["rooms"][best_room], "activity").get("probs") or {}
-        if probs:
-            activity = max(probs, key=probs.get)
-            activity_p = round(float(probs[activity]), 3)
-
+    present = best_score is not None and best_score >= THRESHOLD
     return {
         "resultId": f"sim-{uuid.uuid4().hex[:12]}",
         "observedAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
         "room": best_room if present else None,
         "present": present,
-        "confidence": round(best_p if present else 1.0 - best_p, 3),
-        "activity": activity,
-        "activityConfidence": activity_p,
+        "confidence": None,
+        "activity": None,
         "modelVersion": "fusion-sim",
         "validSec": 5,
         "combinedSeq": combined.get("seq"),
@@ -89,7 +81,7 @@ def main() -> None:
         result = decide(combined)
         c.publish(RESULT_TOPIC, json.dumps(result, ensure_ascii=False), qos=1)
         where = result["room"] or "없음"
-        print(f"[가짜 최종 판단] seq={combined.get('seq')} 위치={where} 행동={result['activity']} 신뢰도={result['confidence']}")
+        print(f"[가짜 최종 판단] seq={combined.get('seq')} 위치={where}")
 
     client.on_connect = on_connect
     client.on_message = on_message

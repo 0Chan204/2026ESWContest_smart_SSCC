@@ -38,7 +38,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `ai_decisions` | 판단 ID | AI 중앙 판정 엔진의 판단과 실행 결과, 피드백 (v0.3) | AI 중앙 제어 |
 | `sensing_results` | 결과 ID | 재실 판단 담당이 보낸 최종 재실 판단 결과 (v0.4, 자동 삭제) | AI 중앙 제어 |
 
-엣지 노드가 보내는 원본 메시지(occupancy / activity / status)는 저장하지 않고, 서버 메모리에서 합쳐 전달만 합니다
+엣지 노드가 보내는 원본 메시지(features)는 저장하지 않고, 서버 메모리에서 합쳐 전달만 합니다
 (`docs/EDGE-MQTT.md`).
 
 ## 문서 예시
