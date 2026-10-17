@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from math import isfinite
 from typing import Any
 
+from src.control.identifiers import canonical_room, device_target
+
 
 @dataclass(frozen=True)
 class AutomationAction:
@@ -16,6 +18,12 @@ class AutomationAction:
     device: str
     action: str
     reason: dict[str, float]
+    room: str | None = None
+
+    def __post_init__(self) -> None:
+        device, room = device_target(self.device, self.room)
+        object.__setattr__(self, "device", device)
+        object.__setattr__(self, "room", room)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -58,6 +66,7 @@ class LightContext:
     def __post_init__(self) -> None:
         if not self.room or not isinstance(self.room, str):
             raise ValueError("room must be a non-empty string")
+        object.__setattr__(self, "room", canonical_room(self.room))
         for name in ("light_on", "user_present"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be boolean")

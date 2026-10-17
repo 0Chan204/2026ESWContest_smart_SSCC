@@ -16,7 +16,8 @@ from src.control.scenario_models import DeviceCommand, ScenarioAction
 from src.integration import IntegrationConfig, IntegrationRuntime
 from src.integration.backend_client import BackendClient, BackendError, HTTPResult
 from src.integration.decision_mapper import DecisionMapper
-from src.integration.mock_backend import MockBackend, sample_devices
+# Readiness fixtures use a separate synthetic field; status=idle is never readiness.
+from src.integration.mock_backend import MockBackend, ready_sample_devices as sample_devices
 from src.integration.outbox import Outbox
 from src.integration.schemas import ContractError, decision_payload, decision_response, device_items, iso_time, measured_time
 from src.integration.sensing import BehaviorObservation, join_behavior, location_observation
@@ -36,7 +37,7 @@ def setup_runtime(tmp_path):
 
     def make(**overrides):
         config = IntegrationConfig(data_dir=tmp_path / str(len(runtimes)), allowed_lateness=0,
-                                   room_is_bedroom=True, **overrides)
+                                   **overrides)
         clock = FakeClock(BASE)
         backend = MockBackend(clock, allow_null_confidence=config.rule_confidence_policy == "null")
         runtime = IntegrationRuntime(config, BackendClient(config, backend), clock=clock)
@@ -64,7 +65,7 @@ def ready_water(runtime, backend, clock):
     return runtime.outbox.rows()[-1]
 
 
-@pytest.mark.parametrize("raw,expected", [("kitchen", "kitchen"), ("toilet", "bathroom")])
+@pytest.mark.parametrize("raw,expected", [("room", "room"), ("kitchen", "kitchen"), ("toilet", "toilet")])
 def test_final_location_mapping(raw, expected):
     item = location_observation(loc(BASE, raw), BASE + 2, IntegrationConfig())
     assert item.sample.location == expected
@@ -75,7 +76,7 @@ def test_final_location_mapping(raw, expected):
     assert item.sample.motion_state is None and item.sample.fall_detected is None
 
 
-@pytest.mark.parametrize("raw", ["empty", "unknown", "r2", "r3", "r4", "living_room", "outside", "room"])
+@pytest.mark.parametrize("raw", ["empty", "unknown", "r2", "r3", "r4", "living_room", "outside"])
 def test_unconfirmed_locations_never_become_outside(raw):
     item = location_observation(loc(BASE, raw, None), BASE, IntegrationConfig())
     assert not item.valid
@@ -84,11 +85,14 @@ def test_unconfirmed_locations_never_become_outside(raw):
     assert item.sample.confidence == 0 and not item.sample.detected
 
 
-def test_room_requires_explicit_bedroom_configuration():
-    assert location_observation(loc(BASE, "room"), BASE, IntegrationConfig(room_is_bedroom=True)).sample.location == "bedroom"
-    assert IntegrationConfig().backend_room("bathroom") == "toilet"
+def test_room_is_the_default_sleep_wake_room():
+    for config in (IntegrationConfig(), IntegrationConfig(room_is_bedroom=True),
+                   IntegrationConfig(room_is_bedroom=False)):
+        assert location_observation(loc(BASE, "room"), BASE, config).sample.location == "room"
+        assert config.backend_room("room") == "room"
+        assert config.backend_room("toilet") == "toilet"
     with pytest.raises(ValueError, match="unmapped_room"):
-        IntegrationConfig().backend_room("bedroom")
+        IntegrationConfig().backend_room("outside")
 
 
 @pytest.mark.parametrize("reason", ["node_offline:r3", "config_mismatch", "future_reason:detail"])
@@ -152,7 +156,7 @@ def test_sensing_and_ai_confirmation_delays_add_without_removing_guards(setup_ru
     before = observe(r, backend, clock, delay + 4, "toilet")
     assert before.user_location == "unknown"
     confirmed = observe(r, backend, clock, delay + 5, "toilet")
-    assert confirmed.user_location == "bathroom"
+    assert confirmed.user_location == "toilet"
     assert confirmed.timestamp - BASE == delay + 5
     assert r.controller.realtime_engine.config.RETURN_CONFIRM_TIME == 5
 
@@ -188,7 +192,7 @@ def test_behavior_join_requires_real_confidence_matching_time_room_and_expiry():
     joined = join_behavior(location, behavior, 1)
     assert joined.activity == "walking" and joined.activity_confidence == .7
     assert joined.activity_timestamp == BASE and joined.activity_valid_until == BASE + 2
-    for bad in (replace(behavior, confidence=None), replace(behavior, location="bedroom"),
+    for bad in (replace(behavior, confidence=None), replace(behavior, location="room"),
                 replace(behavior, valid=False), replace(behavior, measured_at=BASE + 1),
                 replace(behavior, measured_at=BASE - 3, valid_until=BASE - 1)):
         assert join_behavior(location, bad, 1).activity_observed is False
@@ -197,7 +201,7 @@ def test_behavior_join_requires_real_confidence_matching_time_room_and_expiry():
 def test_behavior_expiry_prevents_tick_only_bedtime_action(setup_runtime):
     r, backend, clock = setup_runtime()
     r.controller.bedtime_light.config = ScenarioConfig(BEDTIME_LYING_SECONDS=3)
-    behavior = BehaviorObservation(BASE, BASE + 2, "bedroom", .9, "lying")
+    behavior = BehaviorObservation(BASE, BASE + 2, "room", .9, "lying")
     observe(r, backend, clock, 0, "room", behavior)
     clock.now += 3
     r.advance()
@@ -224,11 +228,11 @@ def test_water_readiness_requires_policy_and_not_is_on():
     item = sample_devices(BASE)["items"][2]
     default = StateMapper(IntegrationConfig())
     assert not default.water_ready(default.map(item, BASE), BASE)
-    configured = StateMapper(IntegrationConfig(water_ready_states=("idle",)))
+    configured = StateMapper(IntegrationConfig(water_ready_field="mock_readiness", water_ready_states=("ready",)))
     assert configured.water_ready(configured.map(item, BASE), BASE)
     for status in ("busy", "error"):
         raw = deepcopy(item)
-        raw["current_state"]["status"] = status
+        raw["current_state"]["mock_readiness"] = status
         assert not configured.water_ready(configured.map(raw, BASE), BASE)
 
 
@@ -283,15 +287,15 @@ def test_conflicting_same_measurement_invalidates_until_newer(setup_runtime):
     assert observe(r, backend, clock, 6).observation_valid
 
 
-def test_rules_without_confidence_are_blocked_and_automation_preserves_explanation(setup_runtime):
-    r, backend, clock = setup_runtime()
+def test_explicit_rule_block_opt_out_preserves_automation_explanation(setup_runtime):
+    r, backend, clock = setup_runtime(rule_confidence_policy="block")
     r.controller.device_commands.append(DeviceCommand(BASE, 180))
-    action = r.controller.evaluate_light(LightContext("bedroom", False, True, BASE, presence_duration=5)).action
+    action = r.controller.evaluate_light(LightContext("room", False, True, BASE, presence_duration=5)).action
     assert action is not None
     r.collect_outputs(BASE)
     rows = r.outbox.rows()
     assert len(rows) == 2 and not r.controller.peek_outputs()
-    assert any(row["diagnostic"] == "rule_confidence_contract_unconfirmed" for row in rows)
+    assert any(row["diagnostic"] == "rule_confidence_policy_blocked" for row in rows)
     automation = next(row for row in rows if row["source_id"].startswith("automation:"))
     assert automation["source"]["confidence"] == action.confidence
     assert automation["source"]["explanation"]["contributions"]
@@ -300,15 +304,15 @@ def test_rules_without_confidence_are_blocked_and_automation_preserves_explanati
 
 def test_explicit_automation_route_preserves_action_and_confidence(setup_runtime):
     r, backend, clock = setup_runtime(action_routes={
-        ("light_auto_on", "turn_on"): ("test_light", "light", "turn_on", "bedroom")})
-    action = r.controller.evaluate_light(LightContext("bedroom", False, True, BASE, presence_duration=5)).action
+        ("light_auto_on", "turn_on"): ("test_light", "light", "turn_on", "room")})
+    action = r.controller.evaluate_light(LightContext("room", False, True, BASE, presence_duration=5)).action
     r.collect_outputs(BASE)
     payload = r.outbox.rows()[0]["payload"]
     assert payload["confidence"] == action.confidence
     assert "contributions=" in payload["reason"]
     assert payload["room"] == "room" and payload["actions"][0]["action"] == "turn_on"
     bad = replace(r.config, action_routes={
-        ("light_auto_on", "turn_on"): ("test_light", "light", "turn_off", "bedroom")})
+        ("light_auto_on", "turn_on"): ("test_light", "light", "turn_off", "room")})
     assert DecisionMapper(bad, r.controller.decision_history).map(action).diagnostic == "action_semantics_mismatch"
 
 
@@ -327,7 +331,7 @@ def test_outbox_failure_does_not_drain_any_outputs(setup_runtime, monkeypatch):
 
 
 def test_water_wire_payload_uses_amount_reason_and_weather(setup_runtime):
-    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_states=("idle",))
+    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_field="mock_readiness", water_ready_states=("ready",))
     row = ready_water(r, backend, clock)
     body = row["payload"]
     assert body["confidence"] is None
@@ -345,7 +349,7 @@ def test_water_wire_payload_uses_amount_reason_and_weather(setup_runtime):
 
 
 def test_timeout_retries_same_id_body_and_handles_duplicate_acceptance(setup_runtime):
-    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_states=("idle",))
+    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_field="mock_readiness", water_ready_states=("ready",))
     first = ready_water(r, backend, clock)
     backend.fail_after_accept = True
     r.dispatch_mock_once()
@@ -362,7 +366,7 @@ def test_timeout_retries_same_id_body_and_handles_duplicate_acceptance(setup_run
 
 @pytest.mark.parametrize("status", ["rejected", "failed"])
 def test_partial_failure_is_not_replayed_as_new_decision(setup_runtime, status):
-    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_states=("idle",))
+    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_field="mock_readiness", water_ready_states=("ready",))
     ready_water(r, backend, clock)
     backend.action_status = status
     r.dispatch_mock_once()
@@ -375,7 +379,7 @@ def test_partial_failure_is_not_replayed_as_new_decision(setup_runtime, status):
 
 
 def test_response_identity_and_per_action_status_validation(setup_runtime):
-    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_states=("idle",))
+    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_field="mock_readiness", water_ready_states=("ready",))
     row = ready_water(r, backend, clock)
     response = r.client.post_decision(row["payload"])
     assert decision_response(202, response.body, row["payload"])["eventId"]
@@ -387,7 +391,7 @@ def test_response_identity_and_per_action_status_validation(setup_runtime):
 
 
 def test_old_commands_expire_and_revalidation_checks_current_location(setup_runtime):
-    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_states=("idle",))
+    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_field="mock_readiness", water_ready_states=("ready",))
     ready_water(r, backend, clock)
     observe(r, backend, clock, 6, "toilet")
     r.dispatch_mock_once()
@@ -434,7 +438,7 @@ def test_mock_live_outbox_separation(tmp_path):
 def test_fall_backend_stages_are_recorded_but_not_sent_and_restore_suppressed(setup_runtime):
     r, backend, clock = setup_runtime(rule_confidence_policy="null")
     for offset in (0, 5, 10, 30):
-        behavior = BehaviorObservation(BASE + offset, BASE + offset + 10, "bathroom", .95,
+        behavior = BehaviorObservation(BASE + offset, BASE + offset + 10, "toilet", .95,
                                        "lying", "still", True)
         observe(r, backend, clock, offset, "toilet", behavior)
     assert r.outbox.fall_incident()["started_at"] == BASE
@@ -536,8 +540,8 @@ def test_kitchen_thresholds_use_event_time_with_default_reordering(tmp_path, abs
 @pytest.mark.parametrize("legacy_amount", [180, 250])
 @pytest.mark.parametrize("saved_status", ["pending", "sending"])
 def test_new_default_preserves_old_water_request_on_restart(tmp_path, legacy_amount, saved_status):
-    config = IntegrationConfig(data_dir=tmp_path, allowed_lateness=0, room_is_bedroom=True,
-                               water_ready_states=("idle",), rule_confidence_policy="null")
+    config = IntegrationConfig(data_dir=tmp_path, allowed_lateness=0,
+                               water_ready_field="mock_readiness", water_ready_states=("ready",), rule_confidence_policy="null")
     clock = FakeClock(BASE)
     backend = MockBackend(clock, allow_null_confidence=True)
     client = BackendClient(config, backend)
@@ -551,7 +555,7 @@ def test_new_default_preserves_old_water_request_on_restart(tmp_path, legacy_amo
                                        (6, "room", "standing"), (7, "kitchen", "walking"),
                                        (12, "kitchen", "walking")):
             at = BASE + offset
-            behavior = BehaviorObservation(at, at + 10, "bedroom" if room == "room" else room,
+            behavior = BehaviorObservation(at, at + 10, room,
                                            confidence=.95, activity=activity)
             observe(runtime, backend, clock, offset, room, behavior)
         original = runtime.outbox.rows()[-1]
@@ -626,7 +630,7 @@ def test_default_reordering_delay_adds_to_confirmation(tmp_path):
             runtime.ingest_location(loc(clock.now, "toilet"))
             assert runtime.advance().user_location == "unknown"
         clock.now = BASE + 10
-        assert runtime.advance().user_location == "bathroom"
+        assert runtime.advance().user_location == "toilet"
         assert runtime.last_decision.timestamp == BASE + 8
         assert runtime.outbox.audits("location_applied")[-1]["processed_at"] == BASE + 10
     finally:
@@ -656,7 +660,7 @@ def test_mixed_action_response_preserves_partial_results_and_weather():
 
 
 def test_retry_limit_does_not_generate_another_id(setup_runtime, monkeypatch):
-    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_states=("idle",), max_attempts=2)
+    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_field="mock_readiness", water_ready_states=("ready",), max_attempts=2)
     original = ready_water(r, backend, clock)["payload"]
     calls = []
 
@@ -676,7 +680,7 @@ def test_behavior_validity_gap_does_not_count_as_continuous_lying(setup_runtime)
     r, backend, clock = setup_runtime()
     r.controller.bedtime_light.config = ScenarioConfig(BEDTIME_LYING_SECONDS=3)
     for offset in (0, 4):
-        behavior = BehaviorObservation(BASE + offset, BASE + offset + 2, "bedroom", .9, "lying")
+        behavior = BehaviorObservation(BASE + offset, BASE + offset + 2, "room", .9, "lying")
         observe(r, backend, clock, offset, "room", behavior)
     assert not any(row["source"].get("scenario") == "bedtime_light_off" for row in r.outbox.rows())
 
@@ -684,7 +688,7 @@ def test_behavior_validity_gap_does_not_count_as_continuous_lying(setup_runtime)
 def test_invalid_result_interrupts_sleep_and_active_fall_without_clearing_risk(setup_runtime):
     r, backend, clock = setup_runtime()
     for offset in (0, 5):
-        behavior = BehaviorObservation(BASE + offset, BASE + offset + 10, "bathroom", .95,
+        behavior = BehaviorObservation(BASE + offset, BASE + offset + 10, "toilet", .95,
                                        "lying", "still", True)
         observe(r, backend, clock, offset, "toilet", behavior)
     assert r.controller.bathroom_decision.state == "FALL_CONFIRMED"
@@ -694,7 +698,7 @@ def test_invalid_result_interrupts_sleep_and_active_fall_without_clearing_risk(s
 
 
 def test_unprocessed_new_location_blocks_queued_water(setup_runtime):
-    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_states=("idle",))
+    r, backend, clock = setup_runtime(rule_confidence_policy="null", water_ready_field="mock_readiness", water_ready_states=("ready",))
     ready_water(r, backend, clock)
     clock.now += 1
     r.ingest_location(loc(clock.now, "toilet"))

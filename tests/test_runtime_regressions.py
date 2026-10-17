@@ -8,7 +8,8 @@ from examples.backend_integration_demo import FakeClock
 from src.control import CentralController, ScenarioConfig
 from src.integration import IntegrationConfig, IntegrationRuntime
 from src.integration.backend_client import BackendClient
-from src.integration.mock_backend import MockBackend, sample_devices
+# Readiness fixtures use a separate synthetic field; status=idle is never readiness.
+from src.integration.mock_backend import MockBackend, ready_sample_devices as sample_devices
 from src.integration.schemas import iso_time
 from src.integration.sensing import BehaviorObservation
 
@@ -24,11 +25,11 @@ def make_runtime(tmp_path):
         # Names deliberately differ from internal scenarios. These are mock-only assumptions.
         config = IntegrationConfig(
             data_dir=tmp_path / str(len(runtimes)), allowed_lateness=lateness,
-            room_is_bedroom=True, water_ready_states=("idle",), rule_confidence_policy="null",
+            water_ready_field="mock_readiness", water_ready_states=("ready",), rule_confidence_policy="null",
             action_routes={
-                ("bedtime_light_off", "turn_off"): ("mock_sleep", "light", "turn_off", "bedroom"),
-                ("light_auto_off", "turn_off"): ("mock_absence", "light", "turn_off", "bedroom"),
-                ("light_auto_on", "turn_on"): ("mock_presence", "light", "turn_on", "bedroom"),
+                ("bedtime_light_off", "turn_off"): ("mock_sleep", "light", "turn_off", "room"),
+                ("light_auto_off", "turn_off"): ("mock_absence", "light", "turn_off", "room"),
+                ("light_auto_on", "turn_on"): ("mock_presence", "light", "turn_on", "room"),
             },
         )
         clock = FakeClock(BASE)
@@ -55,7 +56,7 @@ def feed(runtime, backend, clock, offset, *, room="room", activity="lying", ttl=
     payload = {"time": iso_time(clock.now), "location": room, "location_confidence": .95}
     behavior = None if activity is None else BehaviorObservation(
         clock.now - behavior_skew, clock.now - behavior_skew + ttl,
-        "bedroom" if room == "room" else room,
+        room,
         confidence=behavior_confidence, activity=activity, valid=behavior_valid)
 
     def sense():
@@ -82,7 +83,7 @@ def water_rows(runtime):
     return [row for row in runtime.outbox.rows() if row["source"]["type"] == "DeviceCommand"]
 
 
-def test_valid_bedtime_request_reaches_mock_while_user_stays_in_bedroom(make_runtime):
+def test_valid_bedtime_request_reaches_mock_while_user_stays_in_room(make_runtime):
     runtime, backend, clock = make_runtime(lateness=0)
     for offset in range(7):
         feed(runtime, backend, clock, offset)
@@ -320,7 +321,7 @@ def test_current_good_state_cannot_replace_historical_offline(make_runtime, kind
     if kind == "light":
         assert not any(row["source"]["timestamp"] == BASE + 8 for row in rows_for(runtime, "light_auto_on"))
     elif kind == "water_purifier":
-        assert runtime.controller.water_dispenser_available is False
+        assert runtime.controller.water_purifier_available is False
     else:
         assert runtime.controller.realtime_engine.appliance_invalid
 
@@ -345,7 +346,7 @@ def test_latest_device_fault_blocks_old_good_send_and_recovers_only_with_new_goo
     if fault == "offline":
         item["online"] = False
     elif fault in {"busy", "error"}:
-        item["current_state"]["status"] = fault
+        item["current_state"]["mock_readiness"] = fault
     elif fault == "missing":
         snapshot["items"].pop()
     elif fault == "malformed":
@@ -451,7 +452,7 @@ def test_past_water_qualification_survives_current_fault_but_sending_does_not(ma
     runtime.advance()
     row, = water_rows(runtime)
     assert row["source"]["timestamp"] == BASE + 12
-    assert runtime.controller.water_dispenser_available
+    assert runtime.controller.water_purifier_available
     assert runtime.evaluated_devices["water_purifier"].measured_at == BASE + 12
     runtime.dispatch_mock_once()
     assert not backend.accepted
@@ -526,7 +527,7 @@ def receive_bedtime(runtime, measured_offset, *, skew=1.0, ttl=3, activity="lyin
     return runtime.ingest_location(
         {"time": iso_time(measured), "location": "room", "location_confidence": .95},
         behavior=BehaviorObservation(measured - skew, measured - skew + ttl,
-                                     "bedroom", confidence=.95, activity=activity))
+                                     "room", confidence=.95, activity=activity))
 
 
 @pytest.mark.parametrize("skew", [0.0, 0.5, 1.0])

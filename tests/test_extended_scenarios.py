@@ -15,7 +15,7 @@ class ExtendedScenarioTest(unittest.TestCase):
     def make_controller(self, tmp: str, **config) -> CentralController:
         return CentralController(
             scenario_config=ScenarioConfig(**config),
-            water_dispenser_available=True,
+            water_purifier_available=True,
             confidence_data_dir=Path(tmp),
         )
 
@@ -26,9 +26,9 @@ class ExtendedScenarioTest(unittest.TestCase):
     @staticmethod
     def complete_wake(controller: CentralController, base: float) -> None:
         for offset, location, activity in (
-            (0, "bedroom", "lying"),
-            (1, "bedroom", "standing"),
-            (6, "bedroom", "standing"),
+            (0, "room", "lying"),
+            (1, "room", "standing"),
+            (6, "room", "standing"),
             (7, "living_room", "walking"),
             (8, "kitchen", "standing"),
             (13, "kitchen", "standing"),
@@ -39,28 +39,28 @@ class ExtendedScenarioTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             controller = self.make_controller(tmp, BEDTIME_LYING_SECONDS=10)
             base = self.at(15, 22)
-            controller.update_sensing(SensingUpdate("bedroom", base, activity="lying"))
-            controller.update_sensing(SensingUpdate("bedroom", base + 9, activity="lying"))
+            controller.update_sensing(SensingUpdate("room", base, activity="lying"))
+            controller.update_sensing(SensingUpdate("room", base + 9, activity="lying"))
             self.assertEqual(controller.drain_scenario_actions(), [])
-            controller.update_sensing(SensingUpdate("bedroom", base + 10, activity="lying"))
+            controller.update_sensing(SensingUpdate("room", base + 10, activity="lying"))
             actions = controller.drain_scenario_actions()
             self.assertEqual([(action.action, action.target) for action in actions], [
-                ("turn_off", "bedroom_light")
+                ("turn_off", "light")
             ])
-            controller.update_sensing(SensingUpdate("bedroom", base + 11, activity="lying"))
+            controller.update_sensing(SensingUpdate("room", base + 11, activity="lying"))
             self.assertEqual(controller.drain_scenario_actions(), [])
 
     def test_bedtime_timer_resets_when_lying_is_interrupted(self):
         with tempfile.TemporaryDirectory() as tmp:
             controller = self.make_controller(tmp, BEDTIME_LYING_SECONDS=10)
             base = self.at(15, 22)
-            controller.update_sensing(SensingUpdate("bedroom", base, activity="lying"))
-            controller.update_sensing(SensingUpdate("bedroom", base + 8, activity="standing"))
-            controller.update_sensing(SensingUpdate("bedroom", base + 9, activity="lying"))
-            controller.update_sensing(SensingUpdate("bedroom", base + 18, activity="lying"))
+            controller.update_sensing(SensingUpdate("room", base, activity="lying"))
+            controller.update_sensing(SensingUpdate("room", base + 8, activity="standing"))
+            controller.update_sensing(SensingUpdate("room", base + 9, activity="lying"))
+            controller.update_sensing(SensingUpdate("room", base + 18, activity="lying"))
             self.assertEqual(controller.drain_scenario_actions(), [])
-            controller.update_sensing(SensingUpdate("bedroom", base + 19, activity="lying"))
-            self.assertEqual(controller.drain_scenario_actions()[0].target, "bedroom_light")
+            controller.update_sensing(SensingUpdate("room", base + 19, activity="lying"))
+            self.assertEqual(controller.drain_scenario_actions()[0].target, "light")
 
     def test_fall_emits_device_safety_and_staged_backend_requests(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -75,28 +75,28 @@ class ExtendedScenarioTest(unittest.TestCase):
             base = self.at(15, 10)
             controller.update_appliance(ApplianceUpdate(True, base))
             controller.update_sensing(SensingUpdate(
-                "bathroom", base + 1, activity="lying",
+                "toilet", base + 1, activity="lying",
                 motion_state="still", fall_detected=True,
             ))
             start = controller.drain_scenario_actions()
             self.assertEqual({(item.action, item.target) for item in start}, {
-                ("turn_off", "induction"), ("blink", "bathroom_light")
+                ("turn_off", "stove"), ("blink", "light")
             })
 
             controller.update_sensing(SensingUpdate(
-                "bathroom", base + 3, activity="lying", motion_state="still"
+                "toilet", base + 3, activity="lying", motion_state="still"
             ))
             first = controller.drain_scenario_actions()
             self.assertEqual([item.event for item in first], ["fall_user_alert_requested"])
 
             controller.update_sensing(SensingUpdate(
-                "bathroom", base + 5, activity="lying", motion_state="still"
+                "toilet", base + 5, activity="lying", motion_state="still"
             ))
             second = controller.drain_scenario_actions()
             self.assertEqual([item.event for item in second], ["fall_caregiver_alert_requested"])
 
             controller.update_sensing(SensingUpdate(
-                "bathroom", base + 7, activity="lying", motion_state="still"
+                "toilet", base + 7, activity="lying", motion_state="still"
             ))
             self.assertEqual(controller.drain_scenario_actions(), [])
             controller.update_fall_backend_signal(FallBackendSignal(base + 7, True))
@@ -112,26 +112,26 @@ class ExtendedScenarioTest(unittest.TestCase):
                 base = self.at(15, 10)
                 controller.update_appliance(ApplianceUpdate(power_on, base))
                 controller.update_sensing(SensingUpdate(
-                    "bathroom", base + age, activity="lying",
+                    "toilet", base + age, activity="lying",
                     motion_state="still", fall_detected=True,
                 ))
                 targets = {item.target for item in controller.drain_scenario_actions()}
-                self.assertNotIn("induction", targets)
-                self.assertIn("bathroom_light", targets)
+                self.assertNotIn("stove", targets)
+                self.assertIn("light", targets)
 
     def test_fresh_induction_update_during_fall_requests_off(self):
         with tempfile.TemporaryDirectory() as tmp:
             controller = self.make_controller(tmp)
             base = self.at(15, 10)
             controller.update_sensing(SensingUpdate(
-                "bathroom", base, activity="lying",
+                "toilet", base, activity="lying",
                 motion_state="still", fall_detected=True,
             ))
             controller.drain_scenario_actions()
             controller.update_appliance(ApplianceUpdate(True, base))
             actions = controller.drain_scenario_actions()
             self.assertEqual([(item.action, item.target) for item in actions], [
-                ("turn_off", "induction")
+                ("turn_off", "stove")
             ])
 
     def test_water_command_requests_backend_weather_info(self):

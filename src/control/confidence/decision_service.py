@@ -30,6 +30,7 @@ class ConfidenceDecisionService:
         timestamp: float,
         device: str,
         action_name: str,
+        room: str | None = None,
         user_id: str = DEFAULT_USER_ID,
         guard_reason: str | None = None,
     ) -> AutomationDecision:
@@ -50,6 +51,7 @@ class ConfidenceDecisionService:
                 device=device,
                 action=action_name,
                 reason=dict(result["features"]),
+                room=room,
             )
         elif confidence >= self.config.MEDIUM_CONFIDENCE_THRESHOLD:
             outcome = "wait_for_more_evidence"

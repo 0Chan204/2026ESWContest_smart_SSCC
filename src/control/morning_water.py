@@ -173,10 +173,10 @@ class MorningWaterScenario:
                 self.state = State.IDLE
             return None
         if self._wake_time is None:
-            if sample.location == "bedroom" and sample.activity == "lying":
+            if sample.location == "room" and sample.activity == "lying":
                 self.state = State.SLEEPING
                 self._wake_candidate = None
-            elif (self.state == State.SLEEPING and sample.location == "bedroom"
+            elif (self.state == State.SLEEPING and sample.location == "room"
                   and sample.activity in {"sitting", "standing", "walking"}):
                 if self._wake_candidate is None:
                     self._wake_candidate = observed_at

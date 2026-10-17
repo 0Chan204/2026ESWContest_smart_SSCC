@@ -194,7 +194,7 @@ class RealtimeDecisionEngine:
             None if a is None else a.power_watts, None if a is None else a.temperature_c,
             None if stale else self._power_rate, None if stale else self._temperature_rate,
             None if confidence_decision is None else confidence_decision.to_dict(),
-            observation_valid, sensing_status,
+            observation_valid, sensing_status, level=None if a is None else a.level,
         )
 
     def _evaluate_automation(self, timestamp, *, sensor_uncertain, appliance_stale):
@@ -231,7 +231,7 @@ class RealtimeDecisionEngine:
                 guard = "user_override"
             decision = service.score(
                 scenario=scenario, features=features, timestamp=timestamp,
-                device="stove", action_name="restore_power", user_id=self.user_id,
+                device="stove", action_name="restore_power", room="kitchen", user_id=self.user_id,
                 guard_reason=guard,
             )
             if decision.action is not None:
@@ -268,7 +268,7 @@ class RealtimeDecisionEngine:
             guard = "already_reduced"
         decision = service.score(
             scenario=scenario, features=features, timestamp=timestamp,
-            device="stove", action_name="reduce_power", user_id=self.user_id,
+            device="stove", action_name="reduce_power", room="kitchen", user_id=self.user_id,
             guard_reason=guard,
         )
         if decision.action is not None:

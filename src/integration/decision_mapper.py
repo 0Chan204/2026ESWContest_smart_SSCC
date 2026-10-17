@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from src.control.automation_models import AutomationAction
 from src.control.scenario_models import DeviceCommand, ScenarioAction
+from src.control.identifiers import canonical_room, device_target
 from .config import IntegrationConfig
 from .schemas import decision_payload, iso_time
 
@@ -36,7 +37,7 @@ class DecisionMapper:
             return MappedDecision(identity, None, reason, source)
 
         if isinstance(output, ScenarioAction) and output.scenario == "bathroom_fall":
-            return blocked("backend_managed_fall:start_contract_unconfirmed;local_stage_not_sent")
+            return blocked("backend_managed_fall:local_stage_not_sent")
         if emergency and getattr(output, "action", None) == "restore_power":
             return blocked("emergency_active:restore_suppressed")
         if getattr(output, "action", None) == "restore_power":
@@ -54,10 +55,10 @@ class DecisionMapper:
         else:
             reason = output.reason
             if self.config.rule_confidence_policy == "block":
-                return blocked("rule_confidence_contract_unconfirmed")
+                return blocked("rule_confidence_policy_blocked")
         weather = False
         if isinstance(output, DeviceCommand):
-            if output.device != "water_dispenser" or output.command_type != "DISPENSE_WATER":
+            if output.device != "water_purifier" or output.command_type != "DISPENSE_WATER":
                 return blocked("unsupported_device_command")
             scenario, room = "water_dispense", "kitchen"
             actions = [{"device": "water_purifier", "action": "dispense", "amountMl": output.amount_ml}]
@@ -67,6 +68,7 @@ class DecisionMapper:
             if route is None:
                 return blocked("scenario_action_contract_unconfirmed")
             scenario, device, action, internal_room = route
+            internal_room = canonical_room(internal_room)
             # A configured route is not permission to change command semantics.
             if action != output.action:
                 return blocked("action_semantics_mismatch")
@@ -74,9 +76,12 @@ class DecisionMapper:
                 room = self.config.backend_room(internal_room)
             except ValueError as exc:
                 return blocked(str(exc))
-            expected_target = ("stove" if device == "stove" else f"{internal_room}_light")
             target = output.device if isinstance(output, AutomationAction) else output.target
-            if device not in self.config.device_ids or target != expected_target:
+            target, target_room = device_target(target, output.room)
+            if target == "stove" and target_room is None:
+                target_room = "kitchen"  # Compatibility with old stove actions.
+            if (device not in self.config.device_ids or target != device
+                    or target_room != internal_room):
                 return blocked("target_mapping_mismatch")
             actions = [{"device": device, "action": action}]
         body = decision_payload({

@@ -49,7 +49,7 @@ class CentralControllerTest(unittest.TestCase):
         risk = control.to_risk_decision()
         self.assertEqual(risk.risk_level, RiskLevel.HIGH)
         self.assertEqual(risk.user_state, "OUT")
-        self.assertEqual(risk.device, "induction")
+        self.assertEqual(risk.device, "stove")
         with tempfile.TemporaryDirectory() as tmp:
             service = AlertService(LLMMessageGenerator(llm=None), DryRunTTS(), tmp)
             output = service.handle(risk)

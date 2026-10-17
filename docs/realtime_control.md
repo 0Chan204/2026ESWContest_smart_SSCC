@@ -36,14 +36,15 @@ LLM adapter, message generator, prompts, TTS, AlertService, 기존 test_alert.py
 
 `SensingUpdate(location, timestamp, activity="unknown", confidence=1.0, detected=True)`
 
-- location: kitchen, living_room, bedroom, entrance, outside, unknown
+- location: room, kitchen, toilet; 기존 내부 상태 living_room, entrance, outside, unknown도 유지
 - activity: 행동 원문을 수용한다. 현재 위험 규칙에서는 행동별 추가 위험을 추정하지 않는다.
 - confidence: 0~1. MIN_CONFIDENCE 미만은 불확실한 관측이다.
 - detected=False: 센서가 정상적으로 보고한 사용자 미감지 신호이다. 통신 단절과 다르다.
 
-`ApplianceUpdate(power_on, timestamp, power_watts=None, temperature_c=None, operating=None, smoke=False, fire=False, abnormal=False)`
+`ApplianceUpdate(power_on, timestamp, power_watts=None, temperature_c=None, operating=None, smoke=False, fire=False, abnormal=False, ..., level=None)`
 
-- 원시 출력 단위는 W, 온도는 °C이다. 기기 출력이 %나 다른 단위라면 수신 어댑터에서 변환한다.
+- `power_watts`는 W, `temperature_c`는 °C가 확인된 측정만 받는다. 백엔드 `level`은 별도 정수 단계로 보존한다.
+  최대 단계나 level→W 관계를 가정하지 않으며 `temperature` 단위 미확정 시 °C 필드를 채우지 않는다.
 - active는 power_on이 True이고 operating이 False가 아닐 때이다. operating 생략 시 power_on을 따른다.
 - 정상 가스 불꽃과 화재는 다르다. fire에는 기기가 판정한 화재/비정상 불꽃 신호를 넣는다.
 - 수치 누락은 허용하지만 수치가 있으면 유한해야 하며 출력은 음수가 될 수 없다.
@@ -137,21 +138,21 @@ RAPID_TEMPERATURE_C_PER_SECOND=10 이상이면 즉시 DANGER이다. 누락된 �
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | kitchen | kitchen | ON | 800 / 90 | 0 | NORMAL | 정상 조리 | NONE |
 | kitchen | living_room | ON | 800 / 90 | 5 | TEMPORARY_ABSENCE | 짧은 이탈 | NONE |
-| kitchen | bedroom | ON | 800 / 90 | 19 | TEMPORARY_ABSENCE | 20초 미만 | NONE |
+| kitchen | room | ON | 800 / 90 | 19 | TEMPORARY_ABSENCE | 20초 미만 | NONE |
 | living_room | living_room | ON | 800 / 90 | 20 | CAUTION | 주의 기준 도달 | VOICE_WARNING |
-| living_room | bedroom | ON | 800 / 90 | 39 | CAUTION | 다른 방 이동도 누적 | VOICE_WARNING |
-| bedroom | bedroom | ON | 800 / 90 | 40 | WARNING | 경고 기준 도달 | VOICE_WARNING |
-| bedroom | bedroom | ON | 800 / 90 | 60 | DANGER | 위험 기준 도달 | EMERGENCY_WARNING |
+| living_room | room | ON | 800 / 90 | 39 | CAUTION | 다른 방 이동도 누적 | VOICE_WARNING |
+| room | room | ON | 800 / 90 | 40 | WARNING | 경고 기준 도달 | VOICE_WARNING |
+| room | room | ON | 800 / 90 | 60 | DANGER | 위험 기준 도달 | EMERGENCY_WARNING |
 | living_room | entrance | ON | 800 / 90 | 20 | WARNING | 현관 후보 10초 지속 | VOICE_WARNING |
 | kitchen | outside | ON | 800 / 90 | 10 | DANGER | 외출 후보 10초 지속 | EMERGENCY_WARNING |
 | kitchen | outside 후보 | ON | 800 / 90 | 0 | NORMAL | outside 2초 후 kitchen, 튐 무시 | NONE |
 | outside | kitchen | ON | 800 / 90 | 0 | RECOVERED | DANGER 후 복귀 5초 확인 | NONE |
 | kitchen | kitchen | ON | 800 / 90 | 0 | NORMAL | RECOVERED 다음 평가 | NONE |
-| bedroom | bedroom | OFF | 0 / 70 | 45 | RECOVERED | WARNING 중 기기 종료 | NONE |
+| room | room | OFF | 0 / 70 | 45 | RECOVERED | WARNING 중 기기 종료 | NONE |
 | kitchen | unknown | ON | 800 / 90 | 0 | NORMAL | unknown 19초, 기존 주방 유지 | NONE |
 | kitchen | unknown | ON | 800 / 90 | 0 | SENSOR_UNCERTAIN | unknown 20초 지속 | CHECK_SENSOR |
 | kitchen | unknown | ON | 2000 / 210 | 0 | WARNING | 센싱 불확실과 고출력 | VOICE_WARNING |
-| bedroom | bedroom | ON | 2000 / 150, +2°C/s | 40 | DANGER | 경고 시간과 높은 출력·상승 | EMERGENCY_WARNING |
+| room | room | ON | 2000 / 150, +2°C/s | 40 | DANGER | 경고 시간과 높은 출력·상승 | EMERGENCY_WARNING |
 | living_room | living_room | ON | 2000 / 150, +2°C/s | 20 | WARNING | 주의 시간과 높은 출력·상승 | VOICE_WARNING |
 | kitchen | kitchen | OFF+연기 | 0 / 100 | 0 | DANGER | 긴급 신호 우선 | EMERGENCY_WARNING |
 | kitchen | kitchen | ON | 800 / 150, +10°C/s | 0 | DANGER | 급격한 온도 상승 | EMERGENCY_WARNING |

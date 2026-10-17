@@ -10,10 +10,10 @@ from src.control import (
 
 controller = CentralController(
     scenario_config=ScenarioConfig(),
-    water_dispenser_available=True,  # Set only after checking device readiness.
+    water_purifier_available=True,  # Set only after checking device readiness.
 )
 kitchen_decision = controller.update_sensing(
-    SensingUpdate("bathroom", timestamp=1789423200,
+    SensingUpdate("toilet", timestamp=1789423200,
                   motion_state="still", fall_detected=True)
 )
 bathroom_decision = controller.bathroom_decision
@@ -40,40 +40,54 @@ their original amount, body and decision ID. Past `lastDispensedMl` is not rewri
 
 ScenarioConfig owns wake-pattern sampling, confirmation times, daily limit, amount,
 and UTC offset (default +9). Use Unix timestamps; date/window calculations do not
-depend on the machine timezone. A bedroom wake followed by confirmed kitchen entry
+depend on the machine timezone. A wake in `room` followed by confirmed kitchen entry
 is stored once per local date in `wake_times.jsonl`. The most recent
 `WAKE_PATTERN_HISTORY_SIZE` records define a median-centered range that includes
 the observed spread plus `WAKE_WINDOW_MARGIN_SECONDS`. The range is recalculated
 as old records leave the recent-data window. Until `WAKE_PATTERN_MIN_SAMPLES`
 exist, `MORNING_START`/`MORNING_END` are used only as a bootstrap range.
 
-Confirmed wake-up requires bedroom lying followed by sitting/standing/walking
+Confirmed wake-up requires lying in `room` followed by sitting/standing/walking
 for five seconds. Kitchen presence must then last five seconds before the
 30-minute wake deadline. Missing activity cannot establish wake-up. Intervening
 rooms are allowed. Uncertain samples and gaps at least UNKNOWN_TIMEOUT reset
 pending confirmations. Tick alone cannot confirm presence or issue a command.
 
-The dispenser is unavailable by default. Command generation reserves a daily
+The water purifier is unavailable by default. Command generation reserves a daily
 slot and sets morning_water_dispensed, preventing repeat requests even if the
 queue is drained. WATER_DISPENSE_REQUEST means a request was generated; hardware
-dispensing/completion is not claimed. Its serialized payload always includes
-`"event": "water_dispensed"` and `"request_weather_info": true`; this is only a
-backend signal and this module does not fetch or generate weather data. Direct-call daily counters
+dispensing/completion is not claimed. Its internal `DeviceCommand` serialization includes
+`"event": "water_dispensed"` and `"request_weather_info": true`; this is not the HTTP request schema.
+The mapper emits `scenario=water_dispense`, `device=water_purifier`, `action=dispense`,
+`amountMl=120` (or the configured amount), and `weatherBriefing=true`.
+This module does not fetch or generate weather data. Direct-call daily counters
 are in memory and reset on the next input/tick with a different local date.
 `IntegrationRuntime` adds a durable outbox reservation before command generation and
 restores it after restart; see [backend integration](backend_integration.md).
 Device readiness and completion acknowledgements still need an external contract;
+`status=idle` describes user activity, not dispensing readiness. Mock tests use an independent
+synthetic readiness field; they do not define a real backend field. Unscored rule results use null confidence,
+while scored AI results keep their original numeric confidence;
 no physical API is called by the scenario itself.
 
 ## Bedtime light off
 
-Reliable `bedroom + lying` observations start the bedtime timer. Once
-`BEDTIME_LYING_SECONDS` is reached, one `turn_off` request for `bedroom_light` is
+Reliable `room + lying` observations start the bedtime timer. Once
+`BEDTIME_LYING_SECONDS` is reached, one `turn_off` request for `light` with `room=room` is
 placed in the scenario-action queue. Standing, another room, low confidence, or a
 sensor gap resets the pending timer. Continued lying does not generate duplicate
 requests; a new lying episode may generate a new request.
 
 ## Bathroom fall
+
+The standard location is `toilet`. Existing `BathroomFallScenario`, `bathroom_decision`,
+and `bathroom_fall` history/config keys remain compatibility identifiers, not backend scenario enums.
+The existing AI scenario owns detection, state transitions and recovery decisions. HTTP integration delegates
+follow-up actions to the backend and does **not** send the local notification/report/blink requests described below.
+Fall state transmission and incident synchronization schemas are unprovided; only that transport contract is pending.
+No guessed endpoint or POST is created. The runtime records AI transitions, including RECOVERED, in the local
+`fall_state_changed` audit with measurement time. RECOVERED is not backend incident closure or cancellation of reports.
+The unresolved local incident latch continues to guard other automatic commands until a confirmed close contract exists.
 
 An explicit fall event or a fresh standing/walking-to-lying transition starts
 FALL_SUSPECTED. Stillness alone never starts an incident. Subsequent continuous
@@ -82,7 +96,7 @@ FALL_EMERGENCY at 30. At 60 seconds long_unresponsive is also set. Warning and
 emergency map to the existing HIGH alert risk. Recovery requires five seconds
 of moving samples without a current explicit fall event.
 
-The same three thresholds drive backend requests without changing the existing
+In the legacy direct-call interface, the same three thresholds create local requests without changing the existing
 risk decision: FALL_CONFIRMED requests a user notification, FALL_WARNING requests
 a caregiver notification, and FALL_EMERGENCY may request an emergency report.
 The last request is emitted only after the backend supplies an explicit gate:
@@ -94,8 +108,8 @@ controller.update_fall_backend_signal(
 requests = controller.drain_scenario_actions()
 ```
 
-At incident start, a fresh ON induction state adds an induction `turn_off`
-request and a bathroom-light `blink` request is always added. Every request is
+At incident start, a fresh ON stove state adds a `stove` (`room=kitchen`) `turn_off`
+request and a `light` (`room=toilet`) `blink` request is always added. Every request is
 emitted at most once per incident. These rule-only controls do not call an LLM.
 
 Missing/low-confidence sensing, leaving the bathroom, and stale sensing preserve

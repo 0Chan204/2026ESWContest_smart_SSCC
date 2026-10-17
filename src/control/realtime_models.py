@@ -3,6 +3,7 @@ from enum import Enum
 from math import isfinite
 
 from src.control.realtime_config import STATE_OUTPUT
+from src.control.identifiers import canonical_room
 from src.models import RiskDecision
 
 
@@ -38,7 +39,8 @@ class SensingUpdate:
     activity_timestamp: float | None = None
 
     def __post_init__(self):
-        if self.location not in {"kitchen", "bathroom", "living_room", "bedroom", "entrance", "outside", "unknown"}:
+        object.__setattr__(self, "location", canonical_room(self.location))
+        if self.location not in {"kitchen", "toilet", "living_room", "room", "entrance", "outside", "unknown"}:
             raise ValueError("Unsupported realtime location")
         finite("timestamp", self.timestamp)
         finite("confidence", self.confidence)
@@ -73,6 +75,7 @@ class ApplianceUpdate:
     fire: bool = False
     abnormal: bool = False
     control_state: str | None = None
+    level: int | None = None  # Backend stage value; no implied maximum or watts conversion.
 
     def __post_init__(self):
         finite("timestamp", self.timestamp)
@@ -83,6 +86,8 @@ class ApplianceUpdate:
             raise ValueError("operating must be boolean or None")
         if self.control_state not in {None, "NONE", "HOMEVIS_REDUCED", "USER_OVERRIDE"}:
             raise ValueError("Unsupported control_state")
+        if self.level is not None and type(self.level) is not int:
+            raise ValueError("level must be an integer or None")
         for name in ("power_watts", "temperature_c"):
             value = getattr(self, name)
             if value is not None:
@@ -115,6 +120,7 @@ class RealtimeDecision:
     confidence_decision: dict | None = None
     observation_valid: bool = False
     sensing_status: str = "unavailable"
+    level: int | None = None
 
     def to_dict(self):
         data = asdict(self)
@@ -130,7 +136,7 @@ class RealtimeDecision:
                 "UNKNOWN" if self.sensor_uncertain else "IN"
             ),
             user_location=self.user_location,
-            device="induction",
+            device="stove",
             duration=int(self.kitchen_absence_seconds),
             decision_context=self.to_dict(),
         )

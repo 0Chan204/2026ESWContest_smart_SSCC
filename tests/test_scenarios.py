@@ -11,17 +11,17 @@ from src.voice.tts import DryRunTTS
 
 class ScenarioTest(unittest.TestCase):
     def setUp(self):
-        self.c = CentralController(water_dispenser_available=True)
+        self.c = CentralController(water_purifier_available=True)
         self.base = datetime(2026, 9, 15, 7, tzinfo=timezone(timedelta(hours=9))).timestamp()
 
-    def sample(self, seconds, location="bathroom", activity="unknown", **kwargs):
+    def sample(self, seconds, location="toilet", activity="unknown", **kwargs):
         self.c.update_sensing(SensingUpdate(location, self.base + seconds, activity=activity, **kwargs))
         return self.c.bathroom_decision
 
     def wake(self, start=0):
-        self.sample(start, "bedroom", "lying")
-        self.sample(start + 1, "bedroom", "standing")
-        self.sample(start + 6, "bedroom", "standing")
+        self.sample(start, "room", "lying")
+        self.sample(start + 1, "room", "standing")
+        self.sample(start + 6, "room", "standing")
 
     def dispense(self):
         self.wake()
@@ -52,7 +52,7 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(self.c.device_commands, [])
 
     def test_no_wake_event(self):
-        self.sample(0, "bedroom")
+        self.sample(0, "room")
         self.sample(1, "kitchen")
         self.sample(6, "kitchen")
         self.assertEqual(self.c.device_commands, [])
@@ -78,7 +78,7 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(self.c.device_commands, [])
 
     def test_unavailable_device(self):
-        self.c.water_dispenser_available = False
+        self.c.water_purifier_available = False
         self.dispense()
         self.assertEqual(self.c.device_commands, [])
 
@@ -89,9 +89,9 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(len(self.c.device_commands), 2)
 
     def test_wake_glitch(self):
-        self.sample(0, "bedroom", "lying")
-        self.sample(1, "bedroom", "standing")
-        self.sample(2, "bedroom", "lying")
+        self.sample(0, "room", "lying")
+        self.sample(1, "room", "standing")
+        self.sample(2, "room", "lying")
         self.sample(6, "kitchen")
         self.sample(11, "kitchen")
         self.assertEqual(self.c.device_commands, [])
@@ -168,15 +168,15 @@ class ScenarioTest(unittest.TestCase):
         self.assertEqual(result.state, "FALL_EMERGENCY")
 
     def test_config_and_legacy_input(self):
-        self.assertIsNone(SensingUpdate("bathroom", 0).fall_detected)
+        self.assertIsNone(SensingUpdate("toilet", 0).fall_detected)
         with self.assertRaises(ValueError):
             ScenarioConfig(FALL_WARNING_SECONDS=40)
         with self.assertRaises(ValueError):
-            SensingUpdate("bathroom", 0, fall_detected=1)
+            SensingUpdate("toilet", 0, fall_detected=1)
 
     def test_custom_water_amount_and_confirmation(self):
         self.c = CentralController(scenario_config=ScenarioConfig(
-            MORNING_WATER_AMOUNT_ML=150, KITCHEN_CONFIRM_SECONDS=8), water_dispenser_available=True)
+            MORNING_WATER_AMOUNT_ML=150, KITCHEN_CONFIRM_SECONDS=8), water_purifier_available=True)
         self.dispense()
         self.assertEqual(self.c.device_commands, [])
         self.sample(16, "kitchen")
@@ -299,6 +299,6 @@ class ScenarioTest(unittest.TestCase):
     def test_water_command_prompt_contains_required_fields(self):
         command = DeviceCommand(timestamp=self.base, amount_ml=150, reason="test reason")
         prompt = build_device_command_user_prompt(command)
-        for value in ("morning_water", "DISPENSE_WATER", "water_dispenser",
+        for value in ("morning_water", "DISPENSE_WATER", "water_purifier",
                       "150", "room_temp", "test reason"):
             self.assertIn(value, prompt)

@@ -2,6 +2,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from math import isfinite
 
+from src.control.identifiers import DEVICES, ROOMS
+
 
 class ContractError(ValueError):
     pass
@@ -58,7 +60,7 @@ def device_items(payload: dict) -> list[dict]:
     return items
 
 
-def decision_payload(payload: dict, *, allow_null_confidence=False) -> dict:
+def decision_payload(payload: dict, *, allow_null_confidence=True) -> dict:
     if not isinstance(payload, dict):
         raise ContractError("decision must be an object")
     data = deepcopy(payload)
@@ -66,6 +68,8 @@ def decision_payload(payload: dict, *, allow_null_confidence=False) -> dict:
         if not isinstance(data.get(field), str) or not data[field]:
             raise ContractError(f"missing decision field:{field}")
     measured_time(data["timestamp"])
+    if data["room"] not in ROOMS:
+        raise ContractError("decision room must be room, kitchen or toilet")
     if "confidence" not in data:
         raise ContractError("missing decision confidence")
     number(data["confidence"], "confidence", nullable=allow_null_confidence, confidence=True)
@@ -78,8 +82,12 @@ def decision_payload(payload: dict, *, allow_null_confidence=False) -> dict:
                                                   for k in ("device", "action")):
             raise ContractError("invalid action")
         if action["action"] == "dispense":
+            if action["device"] != "water_purifier":
+                raise ContractError("dispense requires water_purifier")
             if type(action.get("amountMl")) is not int or action["amountMl"] <= 0:
                 raise ContractError("dispense requires a positive integer amountMl")
+        if action["device"] not in DEVICES:
+            raise ContractError("unsupported decision device")
     return data
 
 
@@ -89,8 +97,8 @@ def decision_response(status: int, payload: dict, request: dict) -> dict:
     data = deepcopy(payload)
     if data.get("decisionId") != request["decisionId"]:
         raise ContractError("response decisionId mismatch")
-    if type(data.get("duplicate")) is not bool or (status == 200 and not data["duplicate"]):
-        raise ContractError("HTTP 200 requires duplicate=true")
+    if type(data.get("duplicate")) is not bool or data["duplicate"] != (status == 200):
+        raise ContractError("HTTP 200 requires duplicate=true; HTTP 202 requires duplicate=false")
     if data.get("scenario") != request["scenario"] or data.get("confidence") != request["confidence"]:
         raise ContractError("response decision identity mismatch")
     measured_time(data.get("receivedAt"))

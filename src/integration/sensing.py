@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 
 from src.control.realtime_models import SensingUpdate
+from src.control.identifiers import canonical_room
 from .config import IntegrationConfig
 from .schemas import ContractError, measured_time, number
 
@@ -67,6 +68,7 @@ class BehaviorObservation:
     reason: str | None = None
 
     def __post_init__(self):
+        object.__setattr__(self, "location", canonical_room(self.location))
         number(self.measured_at, "behavior.measured_at")
         number(self.valid_until, "behavior.valid_until")
         number(self.confidence, "behavior.confidence", nullable=True, confidence=True)

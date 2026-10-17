@@ -2,8 +2,9 @@
 
 AI가 `GET /api/v1/ai/device-states`를 조회하고, 기존 중앙 판단 출력을
 `POST /api/v1/ai/decisions`로 전달하는 클라이언트 경로다. 제공된 JSON 계약을 기준으로 구현했다.
-`docs/AI-INTEGRATION.md`는 작업 공간에 제공되지 않았다. 출수 외 API 허용값이나
-실행 ACK·낙상 사건 동기화 API는 추측해서 추가하지 않았다.
+제공 자료는 요청·응답 예시와 후속 설명이며 OpenAPI/서버 모델은 포함되지 않았다.
+후속 합의에 따라 계산된 confidence는 유지하고, 점수가 없는 규칙 결과만 null을 전송한다. 출수 외 API 허용값, 실행 ACK·낙상 사건 동기화 API는
+추측해서 추가하지 않았다. 실제 직렬화와 대조하는 전체 Mock 요청·응답은 [README](../README.md)에 있다.
 
 ## 구성과 실행
 
@@ -47,8 +48,9 @@ Linux 명령은 실행 안내이며 이 작업 환경에서 직접 실행하지 
 
 기본 데모는 **위치만** 공급한다. 행동이 없으므로 출수·취침·낙상 기능을 실행하지 않는다.
 `--with-mock-behavior`는 별도 `BehaviorObservation` 가상 측정을 명시적으로 공급한다.
-이 데모에서만 `room=bedroom`, `idle=출수 준비`, 규칙 confidence의 `null` 표현을
-가정한 Mock 계약을 사용한다. 5회 상태 조회 후 기존 기상→주방 판단으로 120mL 요청을
+`room`은 모든 실행 모드에서 취침·기상 판단의 표준 공간이다. `idle`은 출수 준비 조건으로 사용하지 않는다.
+데모만 별도 가상 필드 `mock_readiness=ready`를 공급한다. 이 필드는 실제 백엔드 계약이 아니다.
+점수 없는 규칙 결과의 confidence=null은 Mock 전용 예외가 아니라 합의된 기본 전송 정책이다. 5회 상태 조회 후 기존 기상→주방 판단으로 120mL 요청을
 1회 접수한다. `202/accepted`, `actions[].status=sent`는 실제 출수 완료가 아니다.
 낙상 입력(motion/fall)은 이 데모에도 없으며, 누락으로 보고한다.
 기본 데모 데이터는 임시 디렉터리에 보관하고 종료 시 정리한다.
@@ -85,8 +87,9 @@ Pi의 `features` 배열은 거부한다. 노드 ID를 장소로 분류하지 않
 | 원본 location | 내부 location | 관측 처리 |
 | --- | --- | --- |
 | kitchen | kitchen | 유효한 수치 신뢰도가 있으면 후보 관측 |
-| toilet | bathroom | 동일 |
-| room | bedroom | `room_is_bedroom=True`일 때만 허용 |
+| toilet | toilet | 동일 |
+| room | room | 취침·기상 판단에 사용하는 방; 별도 매핑 설정 불필요 |
+| bedroom / bathroom | room / toilet | 이전 입력의 별칭; raw는 변경하지 않음 |
 | empty | unknown | empty 원문 보존; outside로 변환하지 않음 |
 | unknown | unknown | unknown 원문 보존; 위치 무효 |
 | r2/r3/r4 및 미등록 값 | unknown | 명시적 `unmapped_room` 진단 |
@@ -135,7 +138,16 @@ reason은 열거형으로 잘라내지 않는다. `node_offline:r3`, `config_mis
 motion 정보가 필요하다. 런타임의 `missing_inputs`가 이를 표시한다.
 전등의 일반적인 재실 제어는 위치를 사용할 수 있지만, 기기 상태 조회로 재실을 생성하지 않는다.
 
-향후 행동 입력 경계는 `BehaviorObservation(measured_at, valid_until, location, confidence, ...)`다.
+전체 기기는 단일 GET의 `items[]`를 `device`와 설정된 `deviceId`로 구분해 적용한다. 기기별 조회는 없다.
+사용자는 Wi-Fi 위치와 별도 실제 행동 측정을 `ingest_location(payload, behavior=...)`로 결합한다.
+실제 반영 필드는 `SensingUpdate.location/activity/motion_state/fall_detected`이며
+`activity_confidence/activity_timestamp/activity_valid_until/activity_observed`도 함께 보존한다.
+`idle → sitting → lying` 측정은 사용자 행동만 갱신한다. 기기 원본 `current_state.status`를 AI가 덮어쓰거나,
+status를 실제 행동 측정으로 복제하지 않는다. 전원·level·lastDispensedMl·updatedAt은 GET 원본 그대로다.
+`location_applied` 감사 기록의 `sample`에서 엔진에 적용한 사용자 상태를 확인할 수 있다.
+위치 전용 JSON에 없는 행동 필드나 센싱 API를 추측해 추가하지 않았다.
+
+현재 행동 입력 경계는 `BehaviorObservation(measured_at, valid_until, location, confidence, ...)`다.
 이것은 내부 입력 모델이며 실제 행동 API를 가정한 것이 아니다.
 별도 행동 신뢰도, 유효 표시, 같은 내부 공간, 위치 측정 이전의 행동 측정,
 최대 시각차(`behavior_max_skew`, 기본 1초), 만료 전 조건을 만족해야 결합한다.
@@ -155,13 +167,19 @@ motion 정보가 필요하다. 런타임의 `missing_inputs`가 이를 표시한
 ## 기기 변환 및 복구
 
 기본 기기 식별은 stove/induction-01, light/light-01, water_purifier/water-01이다.
-공간은 kitchen↔kitchen, bathroom↔toilet이며 bedroom↔room은 명시 설정이 필요하다.
-미등록 기기/공간은 진단을 남긴다. bathroom_light를 room의 light-01로 대체하지 않는다.
+공간은 `room/kitchen/toilet`, 기기는 `stove/light/water_purifier`로 통일한다.
+전등은 `device=light`와 별도의 `room`으로 구분한다. `room` 위치 관측과 같은 방의 전등 상태를
+취침·기상 및 재실 판단에 사용한다. 미등록 기기/공간은 진단을 남기며 toilet 전등을 room 전등으로 대체하지 않는다.
+`bedroom/bathroom/water_dispenser/induction/*_light`는 입력·저장 기록을 읽는 경계에서만 해석한다.
+이전 outbox의 source/payload/decisionId는 갱신하지 않고 재시도에도 원래 본문을 사용한다.
+기존 `room_is_bedroom` 인자는 호환 목적으로만 남으며 room의 의미를 바꾸지 않는다.
+외출·미감지·센싱 오류를 나타내는 내부 상태는 유지하고 백엔드의 세 구역으로 강제 변환하지 않는다.
 전송 직전에도 payload의 room과 실제 장비의 매핑을 비교한다.
 
 `level=5`는 W가 아니다. 기본 `power_watts=None`이며 `power_watts_unmeasured` 진단을 남긴다.
 검증한 `level_to_watts` 또는 실제 W 필드 이름 `watts_field`가 있을 때만 전력을 채운다.
 온도 단위도 제공 예시만으로 확정하지 않아 `temperature_is_celsius=True`로 확인한 경우에만 사용한다.
+`ApplianceUpdate.level`과 `RealtimeDecision.level`에 정수 단계를 그대로 전달한다. 최대 단계를 가정하지 않는다.
 raw current_state에는 level/temperature를 그대로 남긴다.
 기존 FeatureExtractor에서 미측정 전력은 stove_power feature=0이며, 기본 가중치의
 위치만 있는 장기 이탈 테스트에서 자동 화력 감소가 발생하지 않음을 검증한다.
@@ -187,8 +205,12 @@ raw current_state에는 level/temperature를 그대로 남긴다.
 
 정수기의 `is_on=false`만으로 출수 불가능하다고 보지 않는다.
 반대로 online=true만으로 준비됐다고 보지도 않는다.
-검증된 `water_ready_states`가 기본적으로 비어 있어 준비 상태 계약 미확정 시 출수를 허용하지 않는다.
-Mock에서만 명시적으로 idle을 허용한다. lastDispensedMl은 과거 상태로 보관하며 요청량으로 쓰지 않는다.
+`status=idle`은 사용자 상태 설명이며 출수 준비 근거가 아니다. sitting/lying 등 행동 값도 같은 원칙이다.
+준비 상태는 별도 확인된 `current_state` 필드(`water_ready_field`)와 허용값(`water_ready_states`)이 있어야 한다.
+두 설정의 기본값은 None/빈 tuple이므로 실제 준비 조건이 제공되기 전에는 출수를 보류한다.
+이전 `water_ready_states=("idle",)`만 지정해도 출수를 허용하지 않으며 `water_ready_field="status"`는 거부한다.
+Mock은 `mock_readiness=ready`라는 독립적인 가상 필드만 사용한다. 실제 서버의 필드를 주장한 것이 아니다.
+lastDispensedMl은 과거 상태로 보관하며 요청량으로 쓰지 않는다.
 
 ## 시간순 처리와 불확실 상태
 
@@ -233,7 +255,8 @@ offline 관측도 그대로 적용하고, 누락·잘못된 응답·조회 실�
 더 새로운 정상 관측까지 무효화하지 않는다.
 
 송신은 최신 offline, missing, malformed, conflict, HTTP 실패, stale, 정수기 busy/error를 별도로
-차단한다. 동일 `updatedAt`의 반복 조회는 freshness를 연장하지 않는다. 누락·조회 오류 등의
+차단한다. 이때 준비 신호의 busy/error는 별도 Mock 필드로 검증하며 사용자 status로 추정하지 않는다.
+동일 `updatedAt`의 반복 조회는 freshness를 연장하지 않는다. 누락·조회 오류 등의
 차단은 오류 전 관측보다 새로운 검증된 측정으로만 회복하며, 충돌은 그 측정 시각보다 새 관측이 필요하다.
 미래 측정 시각은 거부하고 해당 조회의 오류도 유지한다. 이때 잘못된 시각을 `now`로 바꾼 관측은 만들지 않는다.
 
@@ -245,9 +268,10 @@ outbox 트랜잭션 성공 후 `acknowledge_outputs()`로 해당 객체만 제�
 위험 RealtimeDecision은 로컬 평가 기록으로 남기며 action 문자열을 가전 명령으로 변환하지 않는다.
 
 출수는 water_dispense / water_purifier / dispense / amountMl / weatherBriefing으로 변환한다.
-amountMl과 reason은 기존 명령 값 그대로 사용한다. 규칙 출력에는 confidence가 없으므로
-기본 정책은 차단(`rule_confidence_contract_unconfirmed`)이다. `null`을 허용하기로 실제 합의된 뒤에만
-`rule_confidence_policy="null"`을 설정할 수 있다. 위험 점수나 위치 신뢰도를 대신 사용하지 않는다.
+amountMl과 reason은 기존 명령 값 그대로 사용한다. 규칙 출력에 별도 confidence가 없으면 null을 전송한다.
+기본 정책은 `rule_confidence_policy="null"`이며 기존 `"block"`은 명시적 배포 차단 옵션으로만 유지한다.
+위험 점수나 위치 신뢰도를 대신 사용하지 않으며 전송을 위한 새 점수 계산은 없다.
+이 정책 변경은 이미 저장된 blocked/pending/sending 요청의 ID·본문을 수정하거나 자동 재활성화하지 않는다.
 
 AutomationAction confidence는 보존한다. reason에는 실제 threshold와 기여값을 문자열로 담고,
 원래 features/weights/contributions와 action_id는 outbox source 및 기존 history에 보관한다.
@@ -276,7 +300,8 @@ timeout 또는 응답 유실로 예약을 되돌리지 않는다. 재시작해�
 ### 조명 시나리오별 송신 직전 재검증
 
 백엔드 `scenario` 이름이 내부 이름과 다를 수 있으므로 outbox `source`의 원래 시나리오와
-`target`/`device`를 사용한다. 실제 전등의 방, 백엔드 방, 원래 대상이 일치해야 한다.
+`target`/`device`와 별도 `room`을 사용한다. 이전 `bedroom_light` source도 읽기 경계에서 해석한다.
+실제 전등의 방, 백엔드 방, 원래 대상이 일치해야 하며 이미 요청한 ON/OFF 상태인 전등에는 송신하지 않는다.
 
 - `light_auto_off`: 유효하고 신선한 부재 근거가 필요하며 대상 방으로 돌아오면 차단한다.
   unknown·무효·stale 센싱이나 정렬 대기 중의 위치 변경도 허용 근거로 쓰지 않는다.
@@ -339,9 +364,18 @@ timeout 또는 응답 유실로 예약을 되돌리지 않는다. 재시작해�
 
 ## 낙상과 백엔드 역할
 
-통합 경로는 backend-managed 모드다. 기존 BathroomFallScenario와 단독 동작은 유지한다.
-발생한 즉시 차단/깜빡임/문자/신고 요청은 로컬에 기록하지만 통합 송신에서 억제한다.
-실제 낙상 시작 scenario/actions가 미제공이므로 시작 POST 자체도 만들지 않는다.
+낙상 시작·상태 전이·회복은 기존 `BathroomFallScenario`가 판단한다. 판단 로직과 임계시간은 변경하지 않는다.
+`fall_owner="backend"`는 후속 대응의 소유자를 뜻하며 AI의 판단을 백엔드에 위임하는 설정이 아니다.
+백엔드는 AI 결과를 받아 인덕션 차단·전등 깜빡임·문자·보호자 알림·신고 단계를 관리한다.
+기존 직접 호출용 차단/깜빡임/문자/신고 요청은 로컬에 기록하지만 통합 송신에서는 억제한다.
+낙상 상태용 scenario/action 및 사건 동기화 형식만 미확정이다. AI 낙상 판단이 미구현인 것은 아니다.
+전달 시 사용할 경로는 기존 POST /api/v1/ai/decisions이며 별도 엔드포인트를 추측하지 않는다.
+형식 확정 전에는 낙상 POST를 만들지 않는다.
+
+런타임은 `fall_state_changed` 감사 기록에 기존 AI 상태의 변화와 측정 시각, 처리 시각,
+local_incident_id를 저장한다. `RECOVERED`는 가전 action이 없어도 기록되며 평가 기록에도 `fall_decision`이 남는다.
+전달 상태는 `fall_state_contract_unconfirmed`, 백엔드 사건 상태는 미확인(null)으로 분리한다.
+AI RECOVERED로 사건 latch를 지우거나 신고 절차 중단을 요청하지 않는다. 이력은 재시작 후에도 보존한다.
 낙상 신호가 있으면 미해결 사건을 local_incident_id로 디스크에 고정한다.
 같은 잔여 신호나 재시작으로 새로운 시작 요청을 만들지 않는다.
 종료 API가 없으므로 움직임만으로 이 사건을 닫거나 신고 취소를 주장하지 않는다.
@@ -353,8 +387,12 @@ timeout 또는 응답 유실로 예약을 되돌리지 않는다. 재시작해�
 
 ## 검증 범위와 실전 연결 전 합의
 
-기존 기준 테스트 104개를 먼저 실행했다. 새 테스트는 실제 서버·GPU·음성 엔진 없이
-변환/입력 유효성/중복·지연/outbox/재시작/부재·낙상/Mock 요청·응답을 검증한다.
+최초 용어 계약 수정 전 기준은 266 passed, 이번 후속 설명 반영 전은 293 passed였다.
+`tests/test_backend_contract.py`는 표준 구역·기기,
+기기 상태 보존, room 취침·전등 연결, 이전 source의 동일 본문 재시도, README 전체 JSON 일치를 검증한다.
+로컬 HTTP 테스트 서버로 실제 urllib GET/POST 경로와 202/200 duplicate, sent/rejected/failed도 확인한다.
+이 로컬 HTTP 서버는 Mock이며 배포된 실제 백엔드 검증이 아니다. 기존 테스트의
+입력 유효성/중복·지연/outbox/재시작/부재·낙상/Mock 요청·응답 검증도 유지한다.
 LLM factory는 선택한 adapter만 import하도록 수정해 LLM=none에서 torch 등이 필요하지 않다.
 날씨는 백엔드 응답을 보관하며 stale 문구를 지우지 않는다. 날씨 자체를 조회하거나 추정하지 않는다.
 TTS의 로컬 WAV 경로를 음성 전송 계약으로 사용하지 않는다.
@@ -363,11 +401,11 @@ TTS의 로컬 WAV 경로를 음성 전송 계약으로 사용하지 않는다.
 MongoDB/MQTT/LG SDK 코드를 추가하지 않았다. 다음 계약이 필요하다.
 
 1. control_state와 명령 실행 이력/사용자 변경의 의미, 부재 차단 후 재가동 정책.
-2. level 범위/W 대응, 온도 단위, updatedAt·online의 갱신 기준.
-3. 정수기 idle/busy/error의 의미와 실제 출수 준비 조건.
-4. 규칙 판단 confidence 표현, 출수 외 scenario/action 허용값/필수 필드.
-5. room의 실제 용도, 기기별 room 매핑, 욕실 경고등 정책.
-6. 낙상 시작·종료·확인 상태 동기화와 미해결 사건의 재시작 해제 조건.
+2. temperature는 °C인가? level의 단위/범위 및 별도 W 측정 제공 여부, updatedAt·online 갱신 기준은 무엇인가?
+3. 사용자 상태와 별개로 실제 출수 준비를 확인할 기기 필드/조건은 무엇인가? idle은 준비 조건에서 제외했다.
+4. confidence 계약은 후속 합의 반영 완료: 계산값 보존, 점수 없는 규칙만 null. 추가 점수 규칙은 필요 없다.
+5. 출수 외 scenario/action 허용값과 필수 필드, 실제 기기별 room 매핑 및 toilet 경고등 정책은 무엇인가?
+6. AI 낙상 시작·RECOVERED 전달 필드와 사용자 확인·사건 처리 상태 동기화 형식, 미해결 사건 해제 조건.
 7. commandId 실행 ACK 및 부분 실패 재처리·전송 후 취소 계약.
 8. 피드백 스키마/전달 경로, 인증 방식과 확인된 base URL.
 9. 센싱 조회 방식, empty의 의미, 전환 확인 구간, 별도 행동 데이터의 측정/만료 계약.
@@ -375,6 +413,37 @@ MongoDB/MQTT/LG SDK 코드를 추가하지 않았다. 다음 계약이 필요하
 모든 명령은 기본 mock 저장소를 사용하며 live outbox 경로와 DB 모드 표식을 분리한다.
 설정 변경만으로 Mock 명령을 live에서 읽지 않는다. `.env.example`은 예시이고
 실제 인증 정보는 `IntegrationConfig.headers`에 외부에서 주입한다.
+
+### 후속 설명 반영 검증 (2026-10-17)
+
+- 전체 pytest: 301 passed (76.30초). 기존 293개와 신규 8개를 포함한다.
+- `python -m unittest discover -s tests -q`: 106 tests, OK (23.703초).
+- 신규 `tests/test_contract_clarifications.py`: 계산된 confidence·판단 이력·weight 보존, 규칙만 null,
+  전체 기기 단일 조회, 사용자 idle/sitting/lying 갱신과 기기 원본 분리, 반복 조회의 updatedAt 보존을 검증한다.
+- 기존 낙상 상태의 0/5/10/30초 전이와 5초 움직임 후 RECOVERED를 실제 런타임으로 확인했다.
+  AI 회복 기록은 재시작 후에도 남고 백엔드 사건 종료로 취급되지 않으며, 중복 후속 대응 POST는 없다.
+- 위치 전용 데모: GET 5회/POST 0건. 가상 행동·별도 가상 준비 신호 데모: GET 5회/120mL POST 1건 Mock 접수.
+  `weatherBriefing=true`, `execution_ack_not_provided`를 유지한다. 실제 서버·실가전 검증은 아니다.
+- README 전체 요청·응답 비교, 로컬 HTTP 계약 테스트, 기존 재시도·중복·회귀 테스트도 통과했다.
+
+### 이전 계약 수정 검증 (2026-10-17, 후속 설명 반영 전)
+
+Windows / Anaconda Python에서 실행했다. 테스트 개수는 서로 중복되는 실행 범위이며 합산하지 않는다.
+
+| 실행 | 결과 |
+| --- | --- |
+| 변경 전 `python -m pytest -q` | 266 passed |
+| 변경 후 `python -m pytest -q` | 293 passed (102.01초) |
+| `python -m pytest -q tests/test_backend_contract.py` | 27 passed (3.19초) |
+| `python -m unittest discover -s tests -v` | 106 tests, OK (46.048초) |
+| 위치 전용 데모 | GET 5회, POST 0건, 행동 입력 부족 표시 |
+| 별도 가상 행동 데모 | GET 5회, 120mL POST 1건 Mock 접수, `execution_ack_not_provided` |
+
+로컬 HTTP 테스트는 실제 클라이언트의 직렬화·고정 경로·202 및 200 중복 응답·동작 상태를 확인한다.
+당시에는 Mock에서 idle을 준비 상태로 가정하고 nullable confidence를 제한했다.
+이후 사용자 설명으로 두 해석을 수정했다: idle 준비 해석은 제거하고 규칙 confidence=null은 기본 정책으로 적용했다.
+실제 백엔드 서버 모델/OpenAPI·접속 URL·인증 정보가 없어 배포 서버 연동이나 실가전 실행은 검증하지 않았다.
+기존 판단 시간, confidence 가중치·임계값, 피드백 알고리즘 및 120mL 출수 정책은 변경하지 않았다.
 
 ### 과거 검증 기록: 3726303 기준 런타임 회귀 수정
 

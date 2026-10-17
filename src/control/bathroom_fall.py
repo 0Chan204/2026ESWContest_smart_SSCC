@@ -64,13 +64,13 @@ class BathroomFallScenario:
         if self._active and induction_on:
             self._emit_once(
                 "induction_off", timestamp,
-                event="fall_detected", action="turn_off", target="induction",
-                reason="Induction is on during an active bathroom fall incident",
+                event="fall_detected", action="turn_off", target="stove", room="kitchen",
+                reason="Stove is on during an active toilet fall incident",
             )
 
     def _emit_once(
         self, key: str, timestamp: float, *, event: str, action: str, target: str,
-        reason: str, details: dict | None = None,
+        reason: str, details: dict | None = None, room: str | None = None,
     ) -> None:
         if key in self._emitted:
             return
@@ -83,6 +83,7 @@ class BathroomFallScenario:
             target=target,
             reason=reason,
             details=details,
+            room=room,
         ))
 
     def _start_fall_actions(self, timestamp: float, induction_on: bool) -> None:
@@ -91,13 +92,13 @@ class BathroomFallScenario:
         if induction_on:
             self._emit_once(
                 "induction_off", timestamp,
-                event="fall_detected", action="turn_off", target="induction",
-                reason="Induction was on when a bathroom fall was detected",
+                event="fall_detected", action="turn_off", target="stove", room="kitchen",
+                reason="Stove was on when a toilet fall was detected",
             )
         self._emit_once(
             "light_blink", timestamp,
-            event="fall_detected", action="blink", target="bathroom_light",
-            reason="Make the fall alert visible in the bathroom",
+            event="fall_detected", action="blink", target="light", room="toilet",
+            reason="Make the fall alert visible in the toilet",
         )
 
     def _emit_staged_actions(self, timestamp: float) -> None:
@@ -136,7 +137,7 @@ class BathroomFallScenario:
                 or (sample.activity_confidence is not None
                     and sample.activity_confidence < self.sensing_config.MIN_CONFIDENCE)
                 or not sample.detected or sample.confidence < self.sensing_config.MIN_CONFIDENCE
-                or sample.location != "bathroom"):
+                or sample.location != "toilet"):
             self._interrupt()
             return self._decision(sample.timestamp)
         self._uncertain = False

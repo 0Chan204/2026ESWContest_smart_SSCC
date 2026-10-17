@@ -52,15 +52,15 @@ def show_confidence(timestamp: float, location: str, device_state: str, decision
 def main() -> None:
     output_dir = Path("output/manual_all_test") / f"run_{uuid4().hex[:8]}"
     controller = CentralController(
-        water_dispenser_available=True,
+        water_purifier_available=True,
         confidence_data_dir=output_dir,
         feedback_llm=DemoFeedbackLLM(),
     )
     base = datetime(2026, 9, 28, 7, 30, tzinfo=KST).timestamp()
 
-    title(1, "사용자 bedroom 및 기상")
+    title(1, "사용자 room 및 기상")
     for offset, activity in ((0, "lying"), (1, "standing"), (6, "standing")):
-        controller.update_sensing(SensingUpdate("bedroom", base + offset, activity=activity))
+        controller.update_sensing(SensingUpdate("room", base + offset, activity=activity))
         print(datetime.fromtimestamp(base + offset, KST).strftime("%H:%M:%S"), activity)
 
     title(2, "kitchen 이동")
@@ -158,10 +158,10 @@ def main() -> None:
     title(16, "욕실 낙상 시나리오")
     fall_time = stable_time + 10
     controller.update_sensing(SensingUpdate(
-        "bathroom", fall_time, activity="lying", motion_state="still", fall_detected=True
+        "toilet", fall_time, activity="lying", motion_state="still", fall_detected=True
     ))
     fall = controller.update_sensing(SensingUpdate(
-        "bathroom", fall_time + 10, activity="lying", motion_state="still", fall_detected=False
+        "toilet", fall_time + 10, activity="lying", motion_state="still", fall_detected=False
     ))
     print("욕실 판단 state    :", controller.bathroom_decision.state.value)
     print("욕실 판단 risk     :", controller.bathroom_decision.risk.value)

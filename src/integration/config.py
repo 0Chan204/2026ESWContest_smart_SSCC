@@ -3,6 +3,8 @@ from math import isfinite
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from src.control.identifiers import ROOMS, canonical_room
+
 
 @dataclass(frozen=True)
 class IntegrationConfig:
@@ -18,20 +20,24 @@ class IntegrationConfig:
     command_ttl: float = 15.0
     device_max_age: float = 20.0
     behavior_max_skew: float = 1.0
-    room_is_bedroom: bool = False
+    # Deprecated constructor option, retained for callers. room is always the sleep/wake room.
+    room_is_bedroom: bool | None = None
     # These settings require confirmation by the deployment contract.
     temperature_is_celsius: bool = False
     level_to_watts: dict[int, float] = field(default_factory=dict)
     watts_field: str | None = None
     water_ready_states: tuple[str, ...] = ()
-    rule_confidence_policy: str = "block"  # "null" only with an explicit contract
-    fall_owner: str = "backend"
+    # Agreed contract: keep computed AI scores; only unscored rule results use null.
+    rule_confidence_policy: str = "null"  # "block" remains an explicit deployment opt-out.
+    fall_owner: str = "backend"  # Follow-up response owner, NOT the fall/recovery decision maker.
     device_ids: dict[str, str] = field(default_factory=lambda: {
         "stove": "induction-01", "light": "light-01", "water_purifier": "water-01",
     })
     # (internal scenario, internal action) -> (backend scenario, device, action, room).
     # Empty until the full backend contract supplies approved names.
     action_routes: dict[tuple[str, str], tuple[str, str, str, str]] = field(default_factory=dict)
+    # A separate, confirmed device-readiness field; status/idle describes user activity.
+    water_ready_field: str | None = None
 
     def __post_init__(self):
         if self.mode not in {"mock", "live"}:
@@ -53,6 +59,10 @@ class IntegrationConfig:
             raise ValueError("max_attempts must be a positive integer")
         if self.rule_confidence_policy not in {"block", "null"}:
             raise ValueError("rule confidence must be blocked or explicitly nullable")
+        if self.water_ready_field is not None and (
+                not isinstance(self.water_ready_field, str) or not self.water_ready_field
+                or self.water_ready_field == "status"):
+            raise ValueError("water readiness needs a separate field; status is not readiness")
         if self.fall_owner != "backend":
             raise ValueError("integrated runtime supports backend-managed fall response only")
         if any(type(k) is not int or isinstance(v, bool) or not isfinite(v) or v < 0
@@ -64,17 +74,10 @@ class IntegrationConfig:
         return Path(self.data_dir) / self.mode / "outbox.sqlite3"
 
     def internal_room(self, room: str) -> str:
-        mapping = {"kitchen": "kitchen", "toilet": "bathroom"}
-        if self.room_is_bedroom:
-            mapping["room"] = "bedroom"
-        if room not in mapping:
+        normalized = canonical_room(room)
+        if normalized not in ROOMS:
             raise ValueError(f"unmapped_room:{room}")
-        return mapping[room]
+        return normalized
 
     def backend_room(self, room: str) -> str:
-        mapping = {"kitchen": "kitchen", "bathroom": "toilet"}
-        if self.room_is_bedroom:
-            mapping["bedroom"] = "room"
-        if room not in mapping:
-            raise ValueError(f"unmapped_room:{room}")
-        return mapping[room]
+        return self.internal_room(room)

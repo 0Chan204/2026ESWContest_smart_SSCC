@@ -40,7 +40,7 @@ def main():
 
     controller.update_sensing(
         SensingUpdate(
-            location="bathroom",
+            location="toilet",
             timestamp=base,
             activity="standing",
             motion_state="moving",
@@ -54,7 +54,7 @@ def main():
 
     controller.update_sensing(
         SensingUpdate(
-            location="bathroom",
+            location="toilet",
             timestamp=base + 1,
             activity="lying",
             motion_state="still",
@@ -75,7 +75,7 @@ def main():
 
     controller.update_sensing(
         SensingUpdate(
-            location="bathroom",
+            location="toilet",
             timestamp=base + 11,
             activity="lying",
             motion_state="still",

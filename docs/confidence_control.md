@@ -32,6 +32,7 @@ medium threshold, learning rate, weight 최소/최대, 각 feature 정규화 기
 
 욕실 낙상은 생명 안전 시나리오이므로 현재의 검증된 상태 머신과 LLM/TTS 경로를 유지한다.
 `bathroom_fall_alert` 설정은 향후 기존 경고를 대체하지 않고 보조 점수를 붙일 수 있도록 예약했다.
+이름은 기존 학습·저장 이력의 정책 키로 유지하며, 백엔드 scenario 허용값을 뜻하지 않는다.
 
 confidence는 모든 feature를 0~1로 제한한 뒤 다음처럼 계산한다.
 
@@ -57,9 +58,10 @@ high threshold 이상은 `execute`, medium 이상은 `wait_for_more_evidence`, �
 위치 confidence를 행동 confidence로 복제하지 않는다.
 `ApplianceUpdate.power_watts`와 선택적인 `control_state`를 전달한다.
 
-`control_state` 값은 `NONE`, `HOMEVIS_REDUCED`, `USER_OVERRIDE` 중 하나다. 백엔드는
-HomeVIS가 화력을 낮춘 뒤 원래 화력 수치를 보관해야 한다. AI 모듈은 복귀 시 수치 없이
-`restore_power`만 보낸다.
+내부 `control_state` 값은 `NONE`, `HOMEVIS_REDUCED`, `USER_OVERRIDE` 중 하나다.
+백엔드의 `user/homevis/null`은 제어 주체이며 이 내부 상태로 변환하지 않는다. HTTP 통합에서는 원본만
+보관하고 자동 복구를 차단한다. 기존 직접 호출은 감소 이력이 확인된 경우 `restore_power` 내부 출력을
+만들 수 있지만, HTTP 전송에는 별도 scenario/action·실행 이력 계약이 필요하다.
 
 ```python
 actions = controller.drain_automation_actions()
@@ -74,16 +76,24 @@ for action in actions:
   "scenario": "kitchen_leave_reduce_power",
   "confidence": 0.84,
   "device": "stove",
+  "room": "kitchen",
   "action": "reduce_power",
   "reason": {"location": 0.95, "duration": 1.0}
 }
 ```
 
+위 JSON은 내부 `AutomationAction`의 부분 예시이며 POST 전체 요청이 아니다. 실제 HTTP 전체 요청은
+[README](../README.md)의 계약 예시를 참조한다. 계산된 `AutomationAction.confidence`는 그대로 전송하고,
+별도 점수가 없는 규칙 출수·취침만 `null`을 사용한다. 백엔드는 confidence로 가전 제어를 재판단하지 않는다.
+AI 내부 threshold·FeedbackManager·WeightManager·판단 이력은 유지한다. 새 수식·고정값·위치 confidence 대입은 없다.
+전송 정책 기본값은 `rule_confidence_policy="null"`이며 명시적 배포 차단 옵션 `"block"`은 호환용으로 남긴다.
+
 전등은 현재 전등 상태가 기존 센싱 모델에 없으므로 명시적인 API를 사용한다.
+HTTP 런타임은 `GET /api/v1/ai/device-states`의 `light`와 해당 `room` 상태로 이 입력을 구성한다.
 
 ```python
 decision = controller.evaluate_light(LightContext(
-    room="bedroom",
+    room="room",
     light_on=True,
     user_present=False,
     timestamp=30,

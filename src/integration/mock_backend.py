@@ -19,10 +19,20 @@ def sample_devices(timestamp: float) -> dict:
     ]}
 
 
+def ready_sample_devices(timestamp: float) -> dict:
+    """TEST ONLY: an independent readiness signal, not a claimed backend field.
+
+    Keep the supplied status=idle unchanged. Production readiness is unconfirmed.
+    """
+    snapshot = sample_devices(timestamp)
+    snapshot["items"][2]["current_state"]["mock_readiness"] = "ready"
+    return snapshot
+
+
 class MockBackend:
     mock_only = True
 
-    def __init__(self, clock, *, allow_null_confidence=False):
+    def __init__(self, clock, *, allow_null_confidence=True):
         self.clock = clock
         self.allow_null_confidence = allow_null_confidence
         self.snapshot = sample_devices(clock())

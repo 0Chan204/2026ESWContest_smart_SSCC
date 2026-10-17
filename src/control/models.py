@@ -76,7 +76,7 @@ class ControlDecision:
             situation=self.situation.value,
             user_state=user_state,
             user_location=self.location.value,
-            device="induction",
+            device="stove",
             heat_level=self.heat_level,
             duration=self.away_duration,
         )

@@ -8,14 +8,14 @@ from src.llm.message_generator import LLMMessageGenerator
 def main() -> None:
     print("Qwen3-8B 로딩 중...")
     generator = LLMMessageGenerator(create_llm("qwen"))
-    controller = CentralController(water_dispenser_available=True)
+    controller = CentralController(water_purifier_available=True)
     kst = timezone(timedelta(hours=9))
     base = datetime(2026, 9, 15, 7, 0, 0, tzinfo=kst).timestamp()
 
     samples = (
-        SensingUpdate("bedroom", base, activity="lying"),
-        SensingUpdate("bedroom", base + 1, activity="standing"),
-        SensingUpdate("bedroom", base + 6, activity="standing"),
+        SensingUpdate("room", base, activity="lying"),
+        SensingUpdate("room", base + 1, activity="standing"),
+        SensingUpdate("room", base + 6, activity="standing"),
         SensingUpdate("living_room", base + 7, activity="walking"),
         SensingUpdate("kitchen", base + 8, activity="standing"),
         SensingUpdate("kitchen", base + 13, activity="standing"),

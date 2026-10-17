@@ -4,6 +4,7 @@ from math import isfinite
 from typing import Any
 
 from src.models import RiskDecision, RiskLevel
+from src.control.identifiers import canonical_device, device_target
 
 
 class MorningWaterState(str, Enum):
@@ -21,10 +22,13 @@ class DeviceCommand:
     amount_ml: int
     reason: str = "Confirmed morning wake-up and kitchen stay"
     command_type: str = "DISPENSE_WATER"
-    device: str = "water_dispenser"
+    device: str = "water_purifier"
     water_temperature: str = "room_temp"
     event: str = "water_dispensed"
     request_weather_info: bool = True
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "device", canonical_device(self.device))
 
     def to_dict(self):
         return asdict(self)
@@ -48,11 +52,19 @@ class ScenarioAction:
     target: str
     reason: str
     details: dict[str, Any] | None = None
+    room: str | None = None
+
+    def __post_init__(self) -> None:
+        target, room = device_target(self.target, self.room)
+        object.__setattr__(self, "target", target)
+        object.__setattr__(self, "room", room)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         if data["details"] is None:
             data.pop("details")
+        if data["room"] is None:
+            data.pop("room")
         return data
 
 
@@ -91,7 +103,7 @@ class BathroomFallDecision:
     def to_risk_decision(self) -> RiskDecision:
         return RiskDecision(
             risk_level=self.risk, situation=self.state.value,
-            user_location="bathroom", user_state="UNKNOWN" if self.sensor_uncertain else "IN",
+            user_location="toilet", user_state="UNKNOWN" if self.sensor_uncertain else "IN",
             duration=int(self.unresponsive_seconds),
             decision_context={"scenario": "bathroom_fall", "state": self.state.value,
                               "risk": self.risk.value, "timestamp": self.timestamp,

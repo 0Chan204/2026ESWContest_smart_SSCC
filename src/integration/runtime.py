@@ -7,6 +7,7 @@ import time
 
 from src.control.automation_models import LightContext
 from src.control.central_controller import CentralController
+from src.control.identifiers import canonical_device, device_target
 from .backend_client import BackendClient, BackendError
 from .config import IntegrationConfig
 from .decision_mapper import DecisionMapper
@@ -53,6 +54,7 @@ class IntegrationRuntime:
         self._last_advance = None
         self._backend_ok = False
         self._last_behavior_time = None
+        self._last_fall_state = None
         self._light_requested = set()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="homevis-http")
         self._poll_future = self._post_future = None
@@ -124,7 +126,7 @@ class IntegrationRuntime:
     def _bedtime_sample_valid(self, sample, at):
         minimum = self.controller.realtime_engine.config.MIN_CONFIDENCE
         return bool(sample is not None and sample.observation_valid is True and sample.detected
-                    and sample.location == "bedroom" and sample.confidence >= minimum
+                    and sample.location == "room" and sample.confidence >= minimum
                     and 0 <= at - sample.timestamp < self.controller.realtime_engine.config.UNKNOWN_TIMEOUT
                     and sample.activity_observed is True and sample.activity == "lying"
                     and sample.activity_confidence is not None and sample.activity_confidence >= minimum
@@ -191,7 +193,7 @@ class IntegrationRuntime:
         self._backend_ok = True
         present = set()
         for item in items:
-            kind = item["device"]
+            kind = canonical_device(item["device"])
             try:
                 observation = self.state_mapper.map(item, fetched_at)
             except (ValueError, TypeError) as exc:
@@ -258,7 +260,7 @@ class IntegrationRuntime:
                     continue
                 self.last_location = observation
                 self._restore_reservation(timestamp)
-                self.controller.water_dispenser_available = self.state_mapper.water_ready(
+                self.controller.water_purifier_available = self.state_mapper.water_ready(
                     self.evaluated_devices.get("water_purifier"), timestamp)
                 # Reusing a behavior result must not extend the observed activity duration.
                 if (sample.activity_observed and self._last_behavior_time is not None
@@ -307,7 +309,8 @@ class IntegrationRuntime:
         self._evaluate_light(watermark)
         self.collect_outputs(now)
         self.outbox.audit("evaluation", now, {**self.last_decision.to_dict(),
-                                             "sensing_health": self.sensing_health(now)})
+                                             "sensing_health": self.sensing_health(now),
+                                             "fall_decision": asdict(self.controller.bathroom_decision)})
         return self.last_decision
 
     def sensing_health(self, now=None):
@@ -361,7 +364,33 @@ class IntegrationRuntime:
         if result.action:
             self._light_requested.add(key)
 
+    def _record_fall_transition(self, now):
+        """Preserve AI state changes separately from backend incident/response stages.
+
+        This is a local audit, not an invented HTTP event or permission to close an incident.
+        Recovery emits no legacy ScenarioAction, so it must be observed independently.
+        """
+        decision = self.controller.bathroom_decision
+        if decision is None or decision.state == self._last_fall_state:
+            return
+        state = decision.state.value
+        if state == "NORMAL_BATHROOM_USE":
+            self._last_fall_state = state
+            return
+        if state.startswith("FALL_"):
+            self.outbox.latch_fall(decision.timestamp)
+        incident = self.outbox.fall_incident()
+        self.outbox.audit("fall_state_changed", now, {
+            "previous_state": self._last_fall_state,
+            "decision": asdict(decision), "measured_at": decision.timestamp, "processed_at": now,
+            "local_incident_id": None if incident is None else incident["local_incident_id"],
+            "backend_delivery": "fall_state_contract_unconfirmed",
+            "backend_incident_status": None,
+        })
+        self._last_fall_state = state
+
     def collect_outputs(self, now):
+        self._record_fall_transition(now)
         outputs = self.controller.peek_outputs()
         if not outputs:
             return
@@ -419,7 +448,12 @@ class IntegrationRuntime:
             elif action["device"] == "light":
                 target_room = observation.room
                 source = row["source"]
-                if source.get("target", source.get("device")) != f"{target_room}_light":
+                try:
+                    source_device, source_room = device_target(
+                        source.get("target", source.get("device", "")), source.get("room"))
+                except ValueError:
+                    return "light_target_mismatch"
+                if source_device != "light" or source_room != target_room:
                     return "light_target_mismatch"
                 scenario = source.get("scenario")
                 if scenario == "bedtime_light_off" and action["action"] == "turn_off":
@@ -434,10 +468,13 @@ class IntegrationRuntime:
                         return "user_left_light_room"
                 else:
                     return "unsupported_light_scenario"
+                if (action["action"] == "turn_off" and not observation.raw["is_on"]
+                        or action["action"] == "turn_on" and observation.raw["is_on"]):
+                    return "light_already_in_requested_state"
         return None
 
     def _revalidate_bedtime(self, source, target_room, now):
-        if (target_room != "bedroom" or source.get("type") != "ScenarioAction"
+        if (target_room != "room" or source.get("type") != "ScenarioAction"
                 or not self.controller.bedtime_light.matches_current_request(source)):
             return "bedtime_request_no_longer_current"
         start = source["timestamp"] - source["details"]["lying_seconds"]
@@ -448,7 +485,7 @@ class IntegrationRuntime:
         if not self._bedtime_sample_valid(self._latest_received_sample, now):
             return "bedtime_behavior_missing_or_expired"
         if self.controller.realtime_engine._sensing.location != target_room:
-            return "user_left_bedroom"
+            return "user_left_room"
         return None
 
     def _prepare_send(self, now):

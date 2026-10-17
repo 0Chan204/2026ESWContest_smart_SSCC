@@ -2,10 +2,11 @@ from src.control.realtime_config import RealtimeConfig
 from src.control.realtime_models import SensingUpdate
 from src.control.scenario_config import ScenarioConfig
 from src.control.scenario_models import BedtimeLightState as State, ScenarioAction
+from src.control.identifiers import device_target
 
 
 class BedtimeLightScenario:
-    """Request bedroom lights off once after a continuously observed lying period."""
+    """Request room lights off once after a continuously observed lying period."""
 
     def __init__(self, config: ScenarioConfig, sensing_config: RealtimeConfig) -> None:
         self.config = config
@@ -29,8 +30,16 @@ class BedtimeLightScenario:
         A reset invalidates the old request even if another lying period later qualifies.
         Do not tick here: a sender can be ahead of the event-time evaluation cursor.
         """
-        return bool(self._requested and self._lying_since is not None and self._request is not None
-                    and all(source.get(key) == value for key, value in self._request.to_dict().items()))
+        if not (self._requested and self._lying_since is not None and self._request is not None):
+            return False
+        # Compatibility view only: stored source, body and ID remain untouched.
+        normalized = dict(source)
+        try:
+            normalized["target"], normalized["room"] = device_target(
+                source.get("target", ""), source.get("room"))
+        except ValueError:
+            return False
+        return all(normalized.get(key) == value for key, value in self._request.to_dict().items())
 
     def tick(self, timestamp: float) -> ScenarioAction | None:
         if self._valid_until is not None and timestamp >= self._valid_until:
@@ -58,7 +67,7 @@ class BedtimeLightScenario:
                  or sample.activity_confidence >= self.sensing_config.MIN_CONFIDENCE)
             and sample.detected
             and sample.confidence >= self.sensing_config.MIN_CONFIDENCE
-            and sample.location == "bedroom"
+            and sample.location == "room"
             and sample.activity == "lying"
         )
         if not reliable:
@@ -83,8 +92,8 @@ class BedtimeLightScenario:
             scenario="bedtime_light_off",
             event="bedtime_detected",
             action="turn_off",
-            target="bedroom_light",
-            reason="Bedroom lying duration reached the configured bedtime threshold",
+            target="light", room="room",
+            reason="Room lying duration reached the configured bedtime threshold",
             details={"lying_seconds": timestamp - self._lying_since},
         )
         return self._request

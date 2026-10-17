@@ -20,9 +20,9 @@ HomeVIS는 Wi-Fi 센싱 추론 모듈의 최종 위치 결과와 가전 상태�
 | 안내·음성 | 판단 결과로 안내문과 WAV 생성, LLM 안내 생성 실패 시 기본 문구 사용 |
 | 백엔드 연동 | 기기 상태 조회, 판단 요청 전달, 송신 전 재검증, 제한된 재시도와 디스크 예약 |
 
-내부 요청 생성과 백엔드 전송은 별도 조건을 따릅니다. 통합 기본 설정에서 미확정 제어 라우트,
-규칙 confidence 표현, 정수기 준비 상태는 전송을 차단합니다. 자동 화력 복구와 낙상 요청도
-실제 제어 이력 및 API 계약이 필요합니다.
+내부 요청 생성과 백엔드 전송은 별도 조건을 따릅니다. 계산된 AI confidence는 그대로 전달하고,
+별도 점수가 없는 규칙 결과만 `null`로 보냅니다. 미확정 제어 라우트와 정수기 준비 조건은 계속 차단합니다.
+낙상 시작·회복은 AI가 판단하며, 상태 전달 규격·사건 동기화와 자동 화력 복구에는 추가 계약이 필요합니다.
 
 ## 처리 구조
 
@@ -81,8 +81,9 @@ python -m examples.backend_integration_demo --with-mock-behavior
 | 기본 | 위치만 공급. 기기 조회 5회, POST 0건. 행동이 필요한 기능은 `missing_inputs`에 표시 |
 | `--with-mock-behavior` | 별도 가상 행동 공급. 기기 조회 5회, 120mL 출수·날씨 안내 요청 1건을 Mock에 접수 |
 
-행동 데모는 명시적 침실 매핑, 정수기 `idle` 상태, 규칙 confidence의 `null` 표현을
-Mock 전용 계약으로 사용합니다. 출수량은 `ScenarioConfig`의 기본값을 사용합니다.
+`room`은 기본적으로 취침·기상 판단에 쓰는 방입니다. `idle`은 출수 준비 조건이 아닙니다.
+데모는 별도의 가상 기기 준비 필드 `mock_readiness=ready`를 사용하며, 이는 실제 백엔드 필드가 아닙니다.
+규칙 confidence의 `null`은 합의된 기본 전송 정책입니다. 출수량은 `ScenarioConfig`의 120mL 기본값을 사용합니다.
 낙상에 필요한 motion/fall 정보는 이 데모에도 없습니다.
 
 기본 데모 저장소는 임시 디렉터리입니다. `--data-dir output/demo`를 추가하면 outbox와 일일 예약을
@@ -142,8 +143,8 @@ Pi의 `features` 배열 대신 추론이 완료된 최종 위치 JSON을 입력�
 | 원본 위치 | 내부 처리 |
 | --- | --- |
 | `kitchen` | `kitchen` |
-| `toilet` | `bathroom` |
-| `room` | `room_is_bedroom=True`로 명시한 경우만 `bedroom` |
+| `toilet` | `toilet` |
+| `room` | `room`: 취침·기상 판단에 사용하는 방 |
 | `empty`, `unknown` | 내부 위치는 `unknown`, 원본 의미는 각각 보존. `outside`로 변환하지 않음 |
 | `r2/r3/r4` 등 미등록 값 | 장소로 해석하지 않고 무효 관측으로 진단 |
 
@@ -156,26 +157,107 @@ Pi의 `features` 배열 대신 추론이 완료된 최종 위치 JSON을 입력�
 실제 행동 입력이 별도로 있어야 하며, 미측정 행동의 confidence 기여도는 0입니다.
 [BehaviorObservation](src/integration/sensing.py)은 행동의 측정 시각·만료·공간·유효성을 검사하는
 입력 경계입니다. 실제 행동 수신 어댑터는 아직 연결되지 않았습니다.
+센싱 행동은 `ingest_location(..., behavior=...) → SensingUpdate.activity`로 반영됩니다.
+실제 `idle → sitting/lying` 측정이 들어오면 사용자 행동만 갱신하며 기기의 전원·level·출수 기록은 바꾸지 않습니다.
+위치만 있으면 행동은 `unknown`/미관측이며, GET 응답의 status를 행동 측정으로 복제하지 않습니다.
 
 사용하는 백엔드 API는 다음과 같습니다.
 
-- `GET /api/v1/ai/device-states`: 기기 상태 조회
+- `GET /api/v1/ai/device-states`: 전체 기기 상태를 `items` 배열 한 응답으로 조회 (`device`와 `deviceId`로 식별)
 - `POST /api/v1/ai/decisions`: 판단과 제어 요청 전달
 
 출수량은 `ScenarioConfig.MORNING_WATER_AMOUNT_ML` → `DeviceCommand.amount_ml` →
-`actions[].amountMl`로 전달됩니다. 기본 출수 요청의 주요 필드는 다음과 같습니다.
+`actions[].amountMl`로 전달됩니다. 기기 이름은 입력·판단·출력에서
+`stove`, `light`, `water_purifier`를 사용하고, 조명 대상 공간은 `room` 필드에 따로 저장합니다.
 
+GET 응답의 `items[]`에서 `device/deviceId/room/online/is_on/current_state/control_state/updatedAt`을
+읽습니다. `room` 관측은 취침·기상에 연결되고, 전등 상태와 공간은 조명 평가·송신 재검증에 사용합니다.
+인덕션 `level`은 모델과 판단 결과에 단계 값으로 보존합니다. 단계의 최대값이나 W 환산을 추정하지 않습니다.
+`temperature`는 원문을 보존하며 단위 확인 전에는 섭씨 판단에 사용하지 않습니다.
+백엔드의 `user/homevis/null`은 원본 제어 주체로 보존하고, 화력 감소·사용자 개입 상태로 임의 변환하지 않습니다.
+
+### 전체 요청과 서버 응답 예시
+
+아래는 부분 필드 예시가 아닌 **실제 Mock 데모가 직렬화한 전체 POST 본문**입니다.
+가상 시각을 `2026-10-17T07:00:00+09:00`로 고정한 별도 행동 데모에서 생성됩니다.
+합의된 confidence 정책에 따라 별도 점수가 없는 규칙 출수는 `null`입니다.
+기존 AI 점수가 있는 결과는 그 숫자를 유지합니다. 백엔드 제어용 새 점수나 고정값은 만들지 않습니다.
+아래 예시는 Mock 검증 결과이며, 실서버 검증을 수행했다는 뜻은 아닙니다.
+
+<!-- mock-water-request -->
 ```json
 {
-  "scenario": "water_dispense",
+  "actions": [
+    {
+      "action": "dispense",
+      "amountMl": 120,
+      "device": "water_purifier"
+    }
+  ],
+  "confidence": null,
+  "decisionId": "dec-decb4866358b7e4f69a9f1108dbdada0",
+  "reason": "Confirmed morning wake-up and kitchen stay",
   "room": "kitchen",
-  "actions": [{"device": "water_purifier", "action": "dispense", "amountMl": 120}],
+  "scenario": "water_dispense",
+  "timestamp": "2026-10-16T22:00:12+00:00",
   "weatherBriefing": true
 }
 ```
 
-위 예시는 요청의 일부 필드입니다. 전체 요청에는 `decisionId`, 측정 기반 `timestamp`, 판단 근거와
-confidence 표현도 필요합니다. Mock의 `accepted`와 `sent`는 접수·전송 상태이며 실기기 실행 완료가 아닙니다.
+다음은 위 요청에 대한 **Mock 서버의 전체 HTTP 202 응답**입니다. 식별자와 날씨는 테스트 값입니다.
+
+<!-- mock-water-response -->
+```json
+{
+  "actions": [
+    {
+      "action": "dispense",
+      "commandId": "mock-cmd-dec-decb4866358b7e4f69a9f1108dbdada0-0",
+      "device": "water_purifier",
+      "deviceId": "mock-device",
+      "message": null,
+      "status": "sent"
+    }
+  ],
+  "confidence": null,
+  "decisionId": "dec-decb4866358b7e4f69a9f1108dbdada0",
+  "duplicate": false,
+  "eventId": "mock-evt-dec-decb4866358b7e4f69a9f1108dbdada0",
+  "fallIncidentId": null,
+  "feedback": null,
+  "receivedAt": "2026-10-16T22:00:12+00:00",
+  "scenario": "water_dispense",
+  "weather": {
+    "available": true,
+    "stale": false,
+    "text": "Mock weather (not live)"
+  }
+}
+```
+
+동일한 ID와 본문을 다시 보내면 HTTP 200과 `duplicate: true`를 확인합니다.
+`sent`는 명령 전송 상태이며 실제 기기 실행 완료를 뜻하지 않습니다.
+`rejected/failed` 및 오류 메시지는 저장하며, 실패한 동작을 새 ID로 임의 재실행하지 않습니다.
+위 예시는 `tests/test_backend_contract.py`에서 데모의 전체 요청·응답과 일치하는지 검사합니다.
+
+### 제공된 명세로 확정된 범위와 확인할 사항
+
+| 항목 | 현재 처리와 필요한 확인 |
+| --- | --- |
+| 구역·기기 | `room/kitchen/toilet`, `stove/light/water_purifier`를 기준으로 사용 |
+| 출수 요청 | `water_dispense / water_purifier / dispense`, AI가 결정한 수량과 `weatherBriefing` 전달 |
+| 정수기 준비 상태 | `idle` 및 사용자 행동은 준비 조건이 아님. 별도의 실제 준비 필드·조건 미제공으로 기본 출수 보류 |
+| 온도·출력 | 온도 단위, level 범위 및 W 대응 미정. 원본 단계·온도를 보존하고 추정값을 만들지 않음 |
+| confidence | 계산된 값은 유지, 점수 없는 규칙 결과만 `null`. 기존 threshold·학습·이력 유지 |
+| 출수 외 제어 | 허용 scenario/action 목록 미제공. 기본 라우트는 비워 두며 서로 다른 동작을 대체하지 않음 |
+| 낙상 | AI가 시작·상태 전이·회복을 판단하고 기록. 전송 규격만 미확정. 후속 제어·문자·신고 및 사건 종료는 백엔드 담당 |
+
+기존 `bedroom/bathroom/water_dispenser` 입력은 경계에서 표준 이름으로 정규화합니다.
+이미 저장된 요청의 ID·본문·원본 source·과거 출수 기록은 변경하지 않습니다.
+`outside/unknown/entrance/living_room` 같은 내부 상태도 유지합니다.
+기존 `bathroom_fall` 시나리오·피드백 키와 클래스 이름은 이력 호환용이며 백엔드 API의 허용값을 의미하지 않습니다.
+낙상 `RECOVERED`도 `fall_state_changed` 로컬 기록에 측정 시각과 함께 남깁니다.
+이 판단만으로 백엔드 사건을 닫거나 신고 중단을 주장하지 않으며, 중복 후속 대응도 전송하지 않습니다.
 
 ```sh
 python -m src.integration --mode mock --duration 3
@@ -207,12 +289,14 @@ Mock과 Live 저장소는 분리되며, 재시도·재시작에서도 원본 ID�
 ```sh
 python -m pytest -q
 python -m unittest discover -s tests -v
-python -m pytest -q tests/test_backend_integration.py tests/test_runtime_regressions.py
+python -m pytest -q tests/test_backend_contract.py tests/test_backend_integration.py tests/test_runtime_regressions.py
 ```
 
 pytest는 unittest 클래스와 함수형 통합 테스트를 함께 실행합니다. unittest 명령만으로는 함수형 테스트가
 실행되지 않습니다. 자동 테스트는 가상 시계·MockBackend·임시 저장소로 시간 경계, 관측 유효성,
 출수량 전달, 취침 재검증, outbox 저장 실패, 재시도와 재시작 예약을 검증합니다.
+`test_backend_contract.py`는 실제 HTTP 클라이언트를 로컬 테스트 서버에 연결해 경로·본문·중복 응답을
+확인하고 README의 전체 JSON을 데모 결과와 대조합니다. 배포된 실제 백엔드나 실가전 검증은 아닙니다.
 `tests/manual_test.py`, `tests/manual_morning_water_test.py`는 로컬 모델을 사용하는 별도 수동 실행 파일입니다.
 
 - [실시간 판단](docs/realtime_control.md): 상태 전이, 시간 기준, 직접 호출 및 JSONL 재생
@@ -223,8 +307,9 @@ pytest는 unittest 클래스와 함수형 통합 테스트를 함께 실행합�
 ## 현재 연동 범위
 
 판단 엔진, 백엔드 HTTP 클라이언트와 Mock 경로는 구현되어 있습니다. 실제 연결에는 위치·행동 수신 방식,
-출수 외 제어 라우트, 규칙 confidence 표현, 정수기 준비 상태, 출력 단계와 W의 대응,
-자동 복구 제어 이력, 낙상 시작·확인·종료 API와 명령 실행 ACK 계약이 필요합니다.
+출수 외 제어 라우트, 별도의 정수기 준비 조건, 온도 단위와 updatedAt 갱신 기준,
+자동 복구 제어 이력, 낙상 상태 전달·사용자 확인·사건 동기화 형식과 명령 실행 ACK 계약이 필요합니다.
+AI 낙상 감지·회복 판단은 기존 상태 머신에 구현되어 있으며, 미정인 것은 백엔드 전달·동기화 규격입니다.
 기존 피드백 API는 사용할 수 있지만 백엔드 yes/no 피드백 자동 연결은 구현되어 있지 않습니다.
 
 백엔드 서버, 실제 Wi-Fi 추론, MQTT 제어, LG OS 전용 코드와 실가전 실행 검증은 이 저장소의 구현 범위에

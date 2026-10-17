@@ -123,14 +123,14 @@ class ConfidenceControlTest(unittest.TestCase):
 
     def test_negative_feedback_reduces_high_contributors_and_next_score(self):
         first = self.controller.evaluate_light(LightContext(
-            room="bedroom", light_on=True, user_present=False, timestamp=1,
+            room="room", light_on=True, user_present=False, timestamp=1,
             absence_duration=30, location_confidence=1,
             activity_confidence=1, sensor_consistency=1,
         ))
         self.assertEqual(first.outcome, "execute")
         feedback = self.controller.apply_feedback(first.action_id, "unnecessary")
         second = self.controller.evaluate_light(LightContext(
-            room="bedroom", light_on=True, user_present=False, timestamp=2,
+            room="room", light_on=True, user_present=False, timestamp=2,
             absence_duration=30, location_confidence=1,
             activity_confidence=1, sensor_consistency=1,
         ))
@@ -142,7 +142,7 @@ class ConfidenceControlTest(unittest.TestCase):
 
     def test_positive_feedback_increases_contributors_within_bounds(self):
         first = self.controller.evaluate_light(LightContext(
-            room="bedroom", light_on=True, user_present=False, timestamp=1,
+            room="room", light_on=True, user_present=False, timestamp=1,
             absence_duration=30, location_confidence=1,
             activity_confidence=1, sensor_consistency=1,
         ))
@@ -160,11 +160,11 @@ class ConfidenceControlTest(unittest.TestCase):
 
     def test_light_short_absence_waits_and_sustained_absence_turns_off(self):
         short = self.controller.evaluate_light(LightContext(
-            room="bedroom", light_on=True, user_present=False, timestamp=1,
+            room="room", light_on=True, user_present=False, timestamp=1,
             absence_duration=2, sensor_consistency=1,
         ))
         sustained = self.controller.evaluate_light(LightContext(
-            room="bedroom", light_on=True, user_present=False, timestamp=31,
+            room="room", light_on=True, user_present=False, timestamp=31,
             absence_duration=30, sensor_consistency=1,
         ))
         self.assertIsNone(short.action)
@@ -213,13 +213,13 @@ class ConfidenceControlTest(unittest.TestCase):
         self.assertEqual(self.controller.drain_automation_actions(), [])
 
     def test_routine_records_sensing_and_actions(self):
-        self.controller.update_sensing(SensingUpdate("bedroom", 1, activity="lying", confidence=0.9))
+        self.controller.update_sensing(SensingUpdate("room", 1, activity="lying", confidence=0.9))
         self.controller.evaluate_light(LightContext(
-            room="bedroom", light_on=False, user_present=True, timestamp=6,
+            room="room", light_on=False, user_present=True, timestamp=6,
             presence_duration=5,
         ))
         records = self.controller.routine_manager.storage.list_records()
-        self.assertEqual(records[0]["location"], "bedroom")
+        self.assertEqual(records[0]["location"], "room")
         self.assertEqual(records[0]["activity"], "lying")
         self.assertEqual(records[-1]["action"], "turn_on")
 

@@ -32,11 +32,12 @@ from src.llm.adapters.base import BaseLLMAdapter
 class CentralController:
     def __init__(self, engine: DecisionEngine | None = None, *, config: RealtimeConfig | None = None,
                  scenario_config: ScenarioConfig | None = None,
-                 water_dispenser_available: bool = False,
+                 water_purifier_available: bool | None = None,
                  confidence_config: ConfidenceConfig | None = None,
                  confidence_data_dir: str | Path | None = None,
                  feedback_llm: BaseLLMAdapter | None = None,
-                 user_id: str = DEFAULT_USER_ID) -> None:
+                 user_id: str = DEFAULT_USER_ID,
+                 water_dispenser_available: bool | None = None) -> None:
         self.engine = engine or RuleBasedDecisionEngine()
         self.user_id = user_id
         confidence_config = confidence_config or ConfidenceConfig()
@@ -78,7 +79,11 @@ class CentralController:
         self.bedtime_light = BedtimeLightScenario(scenarios, self.realtime_engine.config)
         self.bathroom_fall = BathroomFallScenario(scenarios, self.realtime_engine.config)
         self.bathroom_decision = None
-        self.water_dispenser_available = water_dispenser_available
+        if (water_purifier_available is not None and water_dispenser_available is not None
+                and water_purifier_available != water_dispenser_available):
+            raise ValueError("conflicting water readiness arguments")
+        self.water_purifier_available = bool(water_purifier_available if water_purifier_available is not None
+                                            else water_dispenser_available)
         self.device_commands: list[DeviceCommand] = []
         self.scenario_actions: list[ScenarioAction] = []
         self.automation_actions: list[AutomationAction] = []
@@ -86,6 +91,15 @@ class CentralController:
 
     def evaluate(self, sensing: SensingState, device: DeviceState) -> ControlDecision:
         return self.engine.predict(sensing, device)
+
+    @property
+    def water_dispenser_available(self):
+        """Compatibility alias for existing direct callers."""
+        return self.water_purifier_available
+
+    @water_dispenser_available.setter
+    def water_dispenser_available(self, value):
+        self.water_purifier_available = value
 
     def update_sensing(self, sample: SensingUpdate) -> RealtimeDecision:
         decision = self.realtime_engine.update_sensing(sample)
@@ -98,7 +112,7 @@ class CentralController:
                 user_id=self.user_id,
             )
         self._collect_automation(decision)
-        command = self.morning_water.update(sample, self.water_dispenser_available)
+        command = self.morning_water.update(sample, self.water_purifier_available)
         if command is not None:
             self.device_commands.append(command)
             self.routine_manager.record(
@@ -240,7 +254,8 @@ class CentralController:
             scenario=scenario,
             features=features,
             timestamp=context.timestamp,
-            device=f"{context.room}_light",
+            device="light",
+            room=context.room,
             action_name=device_action,
             user_id=target_user,
             guard_reason=guard,
