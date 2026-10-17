@@ -1,0 +1,3 @@
+# Wi-Fi + MQTT + console exceed the default 1 MiB app in debug builds.
+# This built-in layout fits devices with at least 2 MiB of flash.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
