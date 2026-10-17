@@ -26,6 +26,37 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 - `is_on`: 인덕션은 화구가 켜져 있으면, 전등은 켜져 있으면, 정수기는 출수 중이면 `true`
 - `control_state`: 마지막으로 상태를 바꾼 주체. `user`(사용자), `homevis`(HomeVIS 자동 제어), 기록 없으면 `null`
 
+### 최종 재실 판단 결과 조회: `GET /api/v1/sensing/results/latest`, `GET /api/v1/sensing/results` (v0.4)
+
+재실 판단 담당이 MQTT(`home/edge/result`)로 보낸 최종 결과를 서버가 저장해 두고, 판정 엔진은 HTTP로 꺼내 씁니다.
+서버는 값을 판단하지 않고 저장된 그대로 돌려줍니다. 결과가 오래됐는지는 `observedAt`, `validSec`으로 판정 엔진이 판단합니다.
+
+`GET /api/v1/sensing/results/latest` (아직 결과가 없으면 404)
+
+```json
+{
+  "resultId": "res-20261017-000123",
+  "observedAt": "2026-10-17T12:00:02+00:00",
+  "savedAt": "2026-10-17T12:00:02.150+00:00",
+  "room": "kitchen",
+  "present": true,
+  "confidence": 0.91,
+  "activity": "standing",
+  "activityConfidence": 0.80,
+  "modelVersion": "fusion-0.1",
+  "validSec": 5
+}
+```
+
+`GET /api/v1/sensing/results?since=2026-10-17T11:40:00%2B00:00&until=...&limit=500`
+
+- `observedAt` 기준으로 기간 안의 결과 중 최근 `limit`개(기본 500, 최대 5000)를 오래된 것부터 돌려줍니다 (`items`, `total`).
+- 예: "20분째 누워 있음" 같은 판단에 지난 결과가 필요할 때 사용합니다.
+- 서버 메모리의 최근 5000건(1초마다면 약 1시간 20분) 안에서 찾습니다.
+- 주소에 넣을 때 `+`는 `%2B`로 바꾸거나, `Z`(UTC)로 끝나는 시각을 쓰세요.
+
+결과 형식과 MQTT 규칙은 `docs/EDGE-MQTT.md` 7장 참고.
+
 ### 판단 결과 전송: `POST /api/v1/ai/decisions`
 
 ```json
@@ -189,6 +220,8 @@ LIGHT_BLINK_SEC=10
 ## 4. 테스트용 가짜 기기
 
 ```bash
-docker compose --profile sim up -d     # 가짜 인덕션 + 가짜 전등·정수기까지 실행
+docker compose --profile sim up -d     # 가짜 인덕션 + 전등·정수기 + 엣지 노드 + 최종 판단까지 실행
 python tests/simulate_home_devices.py  # Docker 없이 가짜 전등·정수기만 실행
+python tests/simulate_edge_nodes.py    # Docker 없이 가짜 엣지 노드만 실행
+python tests/simulate_fusion.py        # Docker 없이 가짜 최종 판단만 실행
 ```

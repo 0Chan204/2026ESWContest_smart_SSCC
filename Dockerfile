@@ -16,7 +16,7 @@ RUN pip install -r requirements.txt
 
 COPY app ./app
 # 가짜 인덕션(시뮬레이터)도 같은 이미지로 실행할 수 있게 함께 넣습니다.
-COPY tests/simulate_device.py tests/simulate_home_devices.py ./tests/
+COPY tests/simulate_device.py tests/simulate_home_devices.py tests/simulate_edge_nodes.py tests/simulate_fusion.py ./tests/
 
 # root가 아닌 계정으로 실행
 # 복사한 파일의 권한은 개발자 PC의 파일 권한을 그대로 따라오므로(예: 600), 실행 계정이 읽을 수 있게 맞춰 둡니다.

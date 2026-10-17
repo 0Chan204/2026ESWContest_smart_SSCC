@@ -21,3 +21,5 @@ README.md
 tests
 !tests/simulate_device.py
 !tests/simulate_home_devices.py
+!tests/simulate_edge_nodes.py
+!tests/simulate_fusion.py

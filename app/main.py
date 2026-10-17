@@ -14,13 +14,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app import db, fall_service, mqtt_client, state_store, weather_service, ws_hub
+from app import db, edge_service, fall_service, mqtt_client, state_store, weather_service, ws_hub
 from app.config import settings
-from app.routers import ai, dashboard, device, home_devices, stream, weather
+from app.routers import ai, dashboard, device, home_devices, sensing, stream, weather
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-API_VERSION = "0.3.2"
+API_VERSION = "0.4.0"
 
 # 태그 순서/설명: Swagger UI에서 이 순서 그대로 큰 섹션 헤더로 표시됩니다.
 # 각 엔드포인트의 태그는 app/routers/*.py 의 데코레이터(tags=[...])에서 지정합니다.
@@ -36,7 +36,7 @@ TAGS_METADATA = [
     },
     {
         "name": "AI 중앙 제어",
-        "description": "AI 중앙 판정 엔진 연동. 판단에 쓸 기기 상태 조회, 판단 결과 수신(서버가 가전 제어 실행), "
+        "description": "AI 중앙 판정 엔진 연동. 판단에 쓸 기기 상태·최종 재실 판단 결과 조회, 판단 결과 수신(서버가 가전 제어 실행), "
         "판단 기록과 사용자 피드백 조회. 취침 소등, 부재 시 화구 차단·화력 복구, 낙상, 물 출수 시나리오를 처리합니다.",
     },
     {
@@ -76,10 +76,14 @@ async def lifespan(app: FastAPI):
     weather_task = None
     if settings.WEATHER_ENABLED:             # 날씨를 주기적으로 미리 받아 캐시 (인터넷 불안정 대비)
         weather_task = asyncio.create_task(weather_service.run_refresh_loop())
+    edge_task = None
+    if settings.EDGE_COMBINED_ENABLED:       # 엣지 노드 메시지를 합쳐 주기적으로 발행 (재실 판단 담당 입력)
+        edge_task = asyncio.create_task(edge_service.run_combined_loop())
     yield
     # --- 서버가 종료될 때 ---
-    if weather_task is not None:
-        weather_task.cancel()
+    for task in (weather_task, edge_task):
+        if task is not None:
+            task.cancel()
     mqtt_client.stop()
     db.disconnect()                          # 아직 저장 안 된 쓰기를 마저 저장하고 연결 종료
 
@@ -96,6 +100,7 @@ app.include_router(device.router, prefix=settings.API_PREFIX)
 app.include_router(dashboard.router, prefix=settings.API_PREFIX)
 app.include_router(home_devices.router, prefix=settings.API_PREFIX)
 app.include_router(ai.router, prefix=settings.API_PREFIX)
+app.include_router(sensing.router, prefix=settings.API_PREFIX)
 app.include_router(weather.router, prefix=settings.API_PREFIX)
 app.include_router(stream.router, prefix=settings.API_PREFIX)
 

@@ -36,6 +36,10 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `runtime_state` | 고정 키 | 진행 중인 세션, 복구용 화력 | 내부용 |
 | `device_states` | 기기 ID | 전등·정수기의 최신 상태 (v0.3) | 전등·정수기 제어, AI 중앙 제어 |
 | `ai_decisions` | 판단 ID | AI 중앙 판정 엔진의 판단과 실행 결과, 피드백 (v0.3) | AI 중앙 제어 |
+| `sensing_results` | 결과 ID | 재실 판단 담당이 보낸 최종 재실 판단 결과 (v0.4, 자동 삭제) | AI 중앙 제어 |
+
+엣지 노드가 보내는 원본 메시지(occupancy / activity / status)는 저장하지 않고, 서버 메모리에서 합쳐 전달만 합니다
+(`docs/EDGE-MQTT.md`).
 
 ## 문서 예시
 
@@ -263,6 +267,25 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 
 판단으로 생긴 안전 이벤트(`ai_control`)에 사용자가 피드백을 남기면 `feedback`에도 복사됩니다.
 
+### sensing_results (v0.4)
+
+```json
+{
+  "_id": "res-20261017-000123",
+  "seq": 1,
+  "savedAtTime": "2026-10-17T12:00:02.150Z",
+  "resultId": "res-20261017-000123",
+  "observedAt": "2026-10-17T12:00:02+00:00",
+  "savedAt": "2026-10-17T12:00:02.150+00:00",
+  "room": "kitchen", "present": true, "confidence": 0.91,
+  "activity": "standing", "activityConfidence": 0.8,
+  "modelVersion": "fusion-0.1", "validSec": 5
+}
+```
+
+재실 판단 담당이 MQTT(`home/edge/result`)로 보낸 결과를 그대로 저장합니다. 형식이 확정되기 전이라 위에 없는 필드도
+함께 저장됩니다. `savedAtTime`은 자동 삭제(TTL)용 날짜 값이고 API 응답에는 포함되지 않습니다.
+
 ## 인덱스
 
 | 컬렉션 | 인덱스 | 용도 |
@@ -275,6 +298,8 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `fall_incidents` | `detectedAt` | 최근 사건 불러오기 |
 | `sms_logs` | `seq` | 발송 순서대로 불러오기 |
 | `ai_decisions` | `seq` | 받은 순서대로 불러오기 |
+| `sensing_results` | `seq` | 받은 순서대로 불러오기 |
+| `sensing_results` | `savedAtTime` (TTL) | 보관 기간(`SENSING_RESULT_TTL_DAYS`, 기본 7일)이 지난 결과 자동 삭제 |
 
 인덱스는 서버가 DB에 연결될 때 자동으로 만들어집니다.
 
@@ -290,8 +315,10 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | 낙상 사건 | 최근 200건 |
 | 문자 발송 이력 | 최근 200건 |
 | AI 판단 기록 | 최근 500건 |
+| 최종 재실 판단 결과 | 최근 5,000건 (1초마다 오면 약 1시간 20분) |
 
 ## 용량
 
 무료 등급은 512MB까지입니다. 가장 빨리 쌓이는 것은 `telemetry_logs`로, 3초 간격이면 하루 약 2만 9천 건입니다.
 7일 보관 기준으로 수십 MB 수준으로 예상되며(실측은 아님), 부족해지면 `TELEMETRY_LOG_TTL_DAYS`를 줄이면 됩니다.
+`sensing_results`도 1초 간격이면 하루 약 8만 6천 건이라, 부족해지면 `SENSING_RESULT_TTL_DAYS`를 줄이면 됩니다.

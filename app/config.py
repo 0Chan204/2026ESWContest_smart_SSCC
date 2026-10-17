@@ -98,6 +98,20 @@ class Settings:
     # 인덕션 상태 로그(3초마다 쌓임) 보관 기간. 지나면 MongoDB가 자동으로 지웁니다.
     TELEMETRY_LOG_TTL_DAYS: int = int(os.getenv("TELEMETRY_LOG_TTL_DAYS", "7"))
 
+    # --- 엣지 노드 · 최종 재실 판단 결과 (v0.4, docs/EDGE-MQTT.md) ---
+    # 노드(라즈베리파이)가 보내는 토픽: home/{구역}/edge/{노드ID}/{occupancy|activity|status}
+    # 서버는 구역별 최신 메시지를 하나로 합쳐 EDGE_COMBINED_TOPIC으로 주기적으로 보내고(재실 판단 담당 입력),
+    # 재실 판단 담당이 EDGE_RESULT_TOPIC으로 보낸 최종 결과를 저장합니다. 서버는 판단하지 않습니다.
+    EDGE_NODE_TOPIC: str = "home/+/edge/+/+"
+    EDGE_COMBINED_TOPIC: str = os.getenv("EDGE_COMBINED_TOPIC", "home/edge/combined")
+    EDGE_RESULT_TOPIC: str = os.getenv("EDGE_RESULT_TOPIC", "home/edge/result")
+    EDGE_COMBINED_ENABLED: bool = os.getenv("EDGE_COMBINED_ENABLED", "true").lower() in ("1", "true", "yes")
+    EDGE_COMBINED_INTERVAL_SEC: float = float(os.getenv("EDGE_COMBINED_INTERVAL_SEC", "1"))
+    # 합친 메시지에 항상 들어가는 구역 (아직 메시지가 없으면 null로 표시)
+    EDGE_ROOMS: str = os.getenv("EDGE_ROOMS", "room,kitchen,toilet")
+    # 최종 판단 결과 보관 기간(일). 지나면 MongoDB가 자동으로 지웁니다.
+    SENSING_RESULT_TTL_DAYS: int = int(os.getenv("SENSING_RESULT_TTL_DAYS", "7"))
+
     # --- 날씨 안내 (v0.3.2, Open-Meteo: API 키 불필요) ---
     # 대회장 인터넷이 불안정하므로 요청이 올 때 받지 않고, WEATHER_REFRESH_SEC마다 미리 받아 캐시합니다.
     # WEATHER_ENABLED=false면 날씨를 받으러 나가지 않습니다 (마지막으로 저장된 값만 사용).

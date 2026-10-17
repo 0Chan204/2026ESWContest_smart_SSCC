@@ -35,6 +35,7 @@ RUNTIME_STATE = "runtime_state"
 SMS_LOGS = "sms_logs"
 DEVICE_STATES = "device_states"   # v0.3: 전등·정수기의 최신 상태
 AI_DECISIONS = "ai_decisions"     # v0.3: AI 중앙 판정 엔진이 보낸 판단과 실행 결과
+SENSING_RESULTS = "sensing_results"  # v0.4: 재실 판단 담당이 보낸 최종 결과
 
 _client = None  # 이 모듈이 직접 만든 MongoClient (테스트에서 주입한 DB에는 없음)
 _database = None
@@ -107,6 +108,11 @@ def _ensure_indexes() -> None:
         _database[FALL_INCIDENTS].create_index("detectedAt")
         _database[SMS_LOGS].create_index("seq")
         _database[AI_DECISIONS].create_index("seq")
+        _database[SENSING_RESULTS].create_index("seq")
+        # 최종 판단 결과는 1초에 1건씩 쌓일 수 있어서 일정 기간이 지나면 자동으로 지웁니다.
+        _database[SENSING_RESULTS].create_index(
+            "savedAtTime", expireAfterSeconds=settings.SENSING_RESULT_TTL_DAYS * 24 * 3600
+        )
     except Exception:
         logger.exception("인덱스 생성 실패 (동작에는 지장 없음)")
 
