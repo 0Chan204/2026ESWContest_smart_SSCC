@@ -99,10 +99,12 @@ class Settings:
     TELEMETRY_LOG_TTL_DAYS: int = int(os.getenv("TELEMETRY_LOG_TTL_DAYS", "7"))
 
     # --- 엣지 노드 · 최종 재실 판단 결과 (v0.4, docs/EDGE-MQTT.md) ---
-    # 노드(라즈베리파이)가 보내는 토픽: home/{구역}/edge/{노드ID}/{occupancy|activity|status}
+    # 노드(라즈베리파이)가 보내는 토픽: home/{구역}/edge/{노드ID}/features (v0.4.2)
     # 서버는 구역별 최신 메시지를 하나로 합쳐 EDGE_COMBINED_TOPIC으로 주기적으로 보내고(재실 판단 담당 입력),
     # 재실 판단 담당이 EDGE_RESULT_TOPIC으로 보낸 최종 결과를 저장합니다. 서버는 판단하지 않습니다.
     EDGE_NODE_TOPIC: str = "home/+/edge/+/+"
+    # 합칠 노드 메시지 종류 (토픽 마지막 칸). 이 외의 종류는 무시합니다.
+    EDGE_NODE_KIND: str = os.getenv("EDGE_NODE_KIND", "features")
     EDGE_COMBINED_TOPIC: str = os.getenv("EDGE_COMBINED_TOPIC", "home/edge/combined")
     EDGE_RESULT_TOPIC: str = os.getenv("EDGE_RESULT_TOPIC", "home/edge/result")
     EDGE_COMBINED_ENABLED: bool = os.getenv("EDGE_COMBINED_ENABLED", "true").lower() in ("1", "true", "yes")

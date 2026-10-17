@@ -1,5 +1,5 @@
 """
-엣지 노드 메시지 합치기와 최종 재실 판단 결과 저장·조회(v0.4)를 검증하는 테스트입니다.
+엣지 노드 메시지 합치기(v0.4.2 형식)와 최종 재실 판단 결과 저장·조회(v0.4)를 검증하는 테스트입니다.
 실제 MQTT 브로커 없이, 메시지 처리 함수를 직접 호출합니다.
 """
 
@@ -15,13 +15,22 @@ from app.config import settings
 PREFIX = settings.API_PREFIX
 
 
-def _node(room: str, node: str, kind: str, message) -> bool:
+def _node(room: str, node: str, message, kind: str = "features") -> bool:
     raw = message if isinstance(message, bytes) else json.dumps(message).encode("utf-8")
     return edge_service.handle_node_message(room, node, kind, raw)
 
 
-def _occupancy(seq: int, p: float = 0.9, boot: str = "boot-a") -> dict:
-    return {"node": "edge-02", "room": "kitchen", "bootId": boot, "seq": seq, "pOccupied": p, "validSec": 5}
+def _features(node: str = "r2", t_end: int = 1792215837, status: str = "ok", base: float = -2.0) -> dict:
+    """영진님 노드가 보내는 메시지 형식 (지우님이 요청한 형식의 node 칸과 같음)"""
+    return {
+        "v": 1,
+        "node": node,
+        "t_end": t_end,
+        "status": status,
+        "features": [base] * 19,
+        "quality": {"rate_hz": 26.4, "rssi": -49.8, "proc_ms": 121.6},
+        "cfg": "67a75326",
+    }
 
 
 def _result(result_id: str | None = "res-1", observed: str = "2026-10-17T12:00:02+00:00", **extra) -> bytes:
@@ -36,40 +45,34 @@ def _result(result_id: str | None = "res-1", observed: str = "2026-10-17T12:00:0
 # ---------------------------------------------------------------------------
 
 def test_parse_node_topic():
-    assert edge_service.parse_node_topic("home/kitchen/edge/edge-02/occupancy") == ("kitchen", "edge-02", "occupancy")
-    assert edge_service.parse_node_topic("home/room/edge/edge-01/status") == ("room", "edge-01", "status")
+    assert edge_service.parse_node_topic("home/kitchen/edge/r2/features") == ("kitchen", "r2", "features")
+    assert edge_service.parse_node_topic("home/room/edge/r3/features") == ("room", "r3", "features")
     # 규칙에 안 맞는 토픽
-    assert edge_service.parse_node_topic("home/kitchen/edge/edge-02/unknown") is None
     assert edge_service.parse_node_topic("home/kitchen/light/light-01/state") is None
+    assert edge_service.parse_node_topic("home/kitchen/edge/r2") is None
     assert edge_service.parse_node_topic(settings.EDGE_COMBINED_TOPIC) is None
     assert edge_service.parse_node_topic(settings.EDGE_RESULT_TOPIC) is None
 
 
 # ---------------------------------------------------------------------------
-# 합치기
+# 합치기 (지우님 요청 형식: locations.{구역}.node)
 # ---------------------------------------------------------------------------
 
-def test_combined_has_known_rooms_even_without_messages():
+def test_combined_format_matches_request():
     combined = edge_service.build_combined()
-    assert set(combined["rooms"]) == {"room", "kitchen", "toilet"}
-    assert combined["rooms"]["kitchen"] == {"node": None, "occupancy": None, "activity": None, "status": None}
+    assert set(combined) == {"seq", "publishedAt", "locations"}
+    assert combined["locations"] == {"room": {"node": None}, "kitchen": {"node": None}, "toilet": {"node": None}}
 
 
 def test_combined_keeps_latest_original_message():
-    _node("kitchen", "edge-02", "occupancy", _occupancy(1, p=0.3))
-    _node("kitchen", "edge-02", "occupancy", _occupancy(2, p=0.9))
-    _node("kitchen", "edge-02", "status", {"node": "edge-02", "online": True})
-    _node("room", "edge-01", "activity", {"bootId": "b", "seq": 1, "probs": {"lying": 0.8}})
+    _node("kitchen", "r2", _features("r2", t_end=100, base=-4.0))
+    _node("kitchen", "r2", _features("r2", t_end=101, base=-1.0))
+    _node("room", "r3", _features("r3", t_end=100))
 
-    combined = edge_service.build_combined()
-    kitchen = combined["rooms"]["kitchen"]
-    assert kitchen["node"] == "edge-02"
-    assert kitchen["occupancy"]["message"] == _occupancy(2, p=0.9)  # 원본 그대로
-    assert "receivedAt" in kitchen["occupancy"]
-    assert kitchen["status"]["message"] == {"node": "edge-02", "online": True}
-    assert kitchen["activity"] is None
-    assert combined["rooms"]["room"]["activity"]["message"]["probs"] == {"lying": 0.8}
-    assert combined["rooms"]["toilet"]["occupancy"] is None
+    locations = edge_service.build_combined()["locations"]
+    assert locations["kitchen"] == {"node": _features("r2", t_end=101, base=-1.0)}  # 원본 그대로, 최신값
+    assert locations["room"]["node"]["node"] == "r3"
+    assert locations["toilet"] == {"node": None}
 
 
 def test_combined_seq_increases():
@@ -78,43 +81,41 @@ def test_combined_seq_increases():
 
 
 def test_duplicate_and_old_messages_are_dropped():
-    assert _node("kitchen", "edge-02", "occupancy", _occupancy(5, p=0.9)) is True
-    assert _node("kitchen", "edge-02", "occupancy", _occupancy(5, p=0.9)) is False  # QoS 1 중복
-    assert _node("kitchen", "edge-02", "occupancy", _occupancy(4, p=0.1)) is False  # 늦게 도착한 옛 메시지
-    # 노드가 재시작하면(bootId 변경) seq가 다시 1부터여도 받는다
-    assert _node("kitchen", "edge-02", "occupancy", _occupancy(1, p=0.5, boot="boot-b")) is True
-    assert edge_service.build_combined()["rooms"]["kitchen"]["occupancy"]["message"]["pOccupied"] == 0.5
+    assert _node("kitchen", "r2", _features("r2", t_end=200, base=-1.0)) is True
+    assert _node("kitchen", "r2", _features("r2", t_end=200, base=-1.0)) is False  # QoS 1 중복
+    assert _node("kitchen", "r2", _features("r2", t_end=199, base=-9.0)) is False  # 늦게 도착한 옛 메시지
+    assert edge_service.build_combined()["locations"]["kitchen"]["node"]["t_end"] == 200
+    # t_end가 없는 메시지는 거르지 않는다
+    no_time = {"v": 1, "node": "r2", "status": "ok"}
+    assert _node("kitchen", "r2", no_time) is True
+    assert _node("kitchen", "r2", no_time) is True
 
 
 def test_server_does_not_judge_messages():
-    """유효기간이 지난 값이나 offline 상태도 판단 없이 그대로 전달한다."""
-    old = {**_occupancy(1), "windowEnd": "2020-01-01T00:00:00+00:00", "validSec": 1}
-    _node("kitchen", "edge-02", "occupancy", old)
-    _node("toilet", "edge-03", "status", {"node": "edge-03", "online": False})
-
-    rooms = edge_service.build_combined()["rooms"]
-    assert rooms["kitchen"]["occupancy"]["message"] == old
-    assert rooms["toilet"]["status"]["message"] == {"node": "edge-03", "online": False}
-    assert "stale" not in json.dumps(rooms) and "online" not in rooms["toilet"]
+    """status가 ok가 아니거나 품질이 나빠도 판단 없이 그대로 전달한다."""
+    bad = {**_features("r4", t_end=300, status="sensor_error"), "quality": {"rate_hz": 0.0, "rssi": -99.0}}
+    _node("toilet", "r4", bad)
+    assert edge_service.build_combined()["locations"]["toilet"] == {"node": bad}
 
 
-def test_invalid_node_messages_are_ignored():
-    assert _node("kitchen", "edge-02", "occupancy", b"not json") is False
-    assert _node("kitchen", "edge-02", "occupancy", [1, 2, 3]) is False
-    assert edge_service.build_combined()["rooms"]["kitchen"]["occupancy"] is None
+def test_other_topic_kinds_and_invalid_messages_are_ignored():
+    assert _node("kitchen", "r2", _features("r2"), kind="status") is False
+    assert _node("kitchen", "r2", b"not json") is False
+    assert _node("kitchen", "r2", [1, 2, 3]) is False
+    assert edge_service.build_combined()["locations"]["kitchen"] == {"node": None}
 
 
 def test_new_room_appears_in_combined():
-    _node("living", "edge-09", "status", {"online": True})
-    assert edge_service.build_combined()["rooms"]["living"]["node"] == "edge-09"
+    _node("living", "r9", _features("r9"))
+    assert edge_service.build_combined()["locations"]["living"]["node"]["node"] == "r9"
 
 
 def test_publish_combined_sends_to_combined_topic(published_json):
-    _node("kitchen", "edge-02", "occupancy", _occupancy(1))
+    _node("kitchen", "r2", _features("r2"))
     edge_service.publish_combined()
     topic, payload = published_json[-1]
     assert topic == settings.EDGE_COMBINED_TOPIC
-    assert payload["rooms"]["kitchen"]["occupancy"]["message"]["pOccupied"] == 0.9
+    assert payload["locations"]["kitchen"]["node"]["features"] == [-2.0] * 19
 
 
 def test_combined_loop_runs_with_server(monkeypatch, published_json):
@@ -142,10 +143,10 @@ class _Msg:
 def test_mqtt_routes_edge_and_result_messages(published):
     from app import mqtt_client
 
-    mqtt_client._on_message(None, None, _Msg("home/kitchen/edge/edge-02/occupancy", json.dumps(_occupancy(1)).encode()))
+    mqtt_client._on_message(None, None, _Msg("home/kitchen/edge/r2/features", json.dumps(_features("r2")).encode()))
     mqtt_client._on_message(None, None, _Msg(settings.EDGE_RESULT_TOPIC, _result("res-mqtt")))
 
-    assert edge_service.build_combined()["rooms"]["kitchen"]["occupancy"] is not None
+    assert edge_service.build_combined()["locations"]["kitchen"]["node"]["node"] == "r2"
     assert state_store.get_latest_sensing_result().resultId == "res-mqtt"
 
 
@@ -209,10 +210,10 @@ def test_results_by_period(client):
 
 
 def test_combined_preview_api(client):
-    _node("kitchen", "edge-02", "occupancy", _occupancy(1))
+    _node("kitchen", "r2", _features("r2"))
     published_seq = edge_service.build_combined()["seq"]
     body = client.get(f"{PREFIX}/sensing/combined").json()
-    assert body["rooms"]["kitchen"]["occupancy"]["message"]["pOccupied"] == 0.9
+    assert body["locations"]["kitchen"]["node"]["node"] == "r2"
     # 미리보기는 발행 순번을 건드리지 않는다
     assert body["seq"] == published_seq
     assert edge_service.build_combined()["seq"] == published_seq + 1
@@ -245,12 +246,15 @@ def test_fusion_simulator_rule():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import simulate_fusion
 
-    _node("kitchen", "edge-02", "occupancy", _occupancy(1, p=0.9))
-    _node("kitchen", "edge-02", "activity", {"bootId": "b", "seq": 1, "probs": {"walking": 0.7, "lying": 0.3}})
-    _node("room", "edge-01", "occupancy", {"bootId": "c", "seq": 1, "pOccupied": 0.1})
+    _node("kitchen", "r2", _features("r2", base=-1.5))
+    _node("room", "r3", _features("r3", base=-4.3))
+    _node("toilet", "r4", _features("r4", base=-4.4))
     result = simulate_fusion.decide(edge_service.build_combined())
-    assert (result["room"], result["present"], result["activity"]) == ("kitchen", True, "walking")
+    assert (result["room"], result["present"]) == ("kitchen", True)
 
+    # status가 ok가 아닌 노드는 제외, 모두 낮으면 아무도 없음
     edge_service.reset()
+    _node("kitchen", "r2", _features("r2", base=-1.5, status="sensor_error"))
+    _node("room", "r3", _features("r3", base=-4.3))
     empty = simulate_fusion.decide(edge_service.build_combined())
     assert (empty["room"], empty["present"]) == (None, False)

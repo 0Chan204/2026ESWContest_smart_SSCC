@@ -51,6 +51,7 @@ def read_results(
 def read_combined() -> dict:
     """
     지금 시점의 합친 엣지 메시지(home/edge/combined로 보내는 것과 같은 형식)를 보여줍니다. 확인·디버깅용입니다.
+    형식: {"seq", "publishedAt", "locations": {구역: {"node": 노드가 보낸 최신 메시지 또는 null}}}
     이 요청은 MQTT로 발행하지 않고, seq도 올리지 않습니다 (마지막으로 발행한 seq를 보여줌).
     """
     return edge_service.build_combined(advance_seq=False)
