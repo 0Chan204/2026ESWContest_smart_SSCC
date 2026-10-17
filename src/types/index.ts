@@ -74,6 +74,8 @@ export interface LightDevice extends DeviceBase {
   on: boolean
   brightness: number
   auto: boolean
+  /** 밝기 조절 가능 여부. 백엔드 전등은 켜기/끄기만 지원해 false (기본 true) */
+  dimmable?: boolean
 }
 
 export type Device = InductionDevice | PurifierDevice | FanDevice | LightDevice
@@ -106,6 +108,10 @@ export type SafetyEventType =
   | 'fall_resolved'
   | 'fall_reported'
   | 'fall_auto_reported'
+  /** BE v0.3.1: 사용자가 응답하지 않아 보호자에게 알림을 넘김 */
+  | 'fall_escalated'
+  /** BE v0.3: AI 중앙 판정 엔진의 판단으로 가전을 제어함 */
+  | 'ai_control'
   /** 프론트 확장: 중앙제어 아침 자동 출수 */
   | 'auto_dispense'
 
@@ -189,4 +195,39 @@ export interface KitchenPolicy {
 
 export interface FallPolicy {
   autoReportSec: number
+}
+
+// ── 날씨 (BE GET /weather · WeatherBriefing) ─────────────────────────────
+export interface Weather {
+  location: string
+  temperature: number
+  /** 날씨 상태 한국어 (맑음, 흐림, 비 …) */
+  condition: string
+  /** WMO 날씨 코드 (아이콘 고르기) */
+  code: number
+  max?: number
+  min?: number
+  /** 체감 온도 */
+  feels?: number
+  /** 습도 (%) */
+  humidity?: number
+  /** 오늘 최대 강수 확률 (%) */
+  rainChance?: number
+  /** 서버가 날씨를 받아온 시각 (ISO) */
+  fetchedAt?: string
+  /** 앞으로 몇 시간의 예보 (백엔드가 hourly 를 주면 채워진다) */
+  hourly?: HourlyWeather[]
+  /** 오래된 값(인터넷 끊김 등)이면 true */
+  stale: boolean
+  /** 안내 문장 */
+  text: string
+}
+
+export interface HourlyWeather {
+  /** ISO 시각 */
+  time: string
+  temperature: number
+  code: number
+  /** 강수 확률 (%) */
+  rainChance?: number
 }

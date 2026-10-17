@@ -1,4 +1,5 @@
 import { openDemoChannel, type DemoRequest, type DemoResponse } from './demoChannel'
+import { apiConfig } from './source/config'
 import type { FallIncident, FallStatus } from '@/types'
 
 /**
@@ -6,7 +7,7 @@ import type { FallIncident, FallStatus } from '@/types'
  *   GET  /api/v1/fall-incidents/{id}
  *   POST /api/v1/fall-incidents/{id}/resolve?token=
  *   POST /api/v1/fall-incidents/{id}/report?token=
- * VITE_API_BASE_URL 이 없으면 시연 모드: 같은 브라우저의 대시보드 탭과 BroadcastChannel 로 통신한다.
+ * VITE_DATA_SOURCE=http 가 아니면 시연 모드: 같은 브라우저의 대시보드 탭과 BroadcastChannel 로 통신한다.
  */
 export interface FallApi {
   readonly demo: boolean
@@ -26,7 +27,7 @@ function parseIncident(raw: unknown): FallIncident | null {
   if (typeof r.incidentId !== 'string' || typeof r.detectedAt !== 'string' || typeof r.autoReportAt !== 'string') return null
   if (!STATUSES.includes(r.status as FallStatus)) return null
   return {
-    incidentId: r.incidentId, room: r.room === 'kitchen' ? 'kitchen' : 'bathroom',
+    incidentId: r.incidentId, room: r.room === 'kitchen' ? 'kitchen' : 'bathroom',   // 백엔드 'toilet' 등은 욕실로 본다
     status: r.status as FallStatus, detectedAt: r.detectedAt, autoReportAt: r.autoReportAt,
     confidence: typeof r.confidence === 'number' ? r.confidence : 0,
     confirmUrl: '', resolvedAt: typeof r.resolvedAt === 'string' ? r.resolvedAt : undefined,
@@ -125,6 +126,6 @@ function createDemoFallApi(): FallApi {
 }
 
 export function createFallApi(): FallApi {
-  const base = import.meta.env.VITE_API_BASE_URL
-  return typeof base === 'string' && base.length > 0 ? createHttpFallApi(base) : createDemoFallApi()
+  const cfg = apiConfig()
+  return cfg.mode === 'http' ? createHttpFallApi(cfg.base) : createDemoFallApi()
 }

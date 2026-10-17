@@ -1,6 +1,6 @@
 import type {
   Burner, Contact, ContactSaveResult, CookingSession, Device, FallIncident, FallPolicy,
-  KitchenPolicy, Location, Presence, Publisher, SafetyEvent,
+  KitchenPolicy, Location, Presence, Publisher, SafetyEvent, Weather,
 } from '@/types'
 
 export interface Snapshot {
@@ -43,6 +43,8 @@ export type StreamMessage =
   | { event: 'device.updated'; data: Device }
   /** (FE 확장) 중앙제어가 판단한 사용자 위치 */
   | { event: 'location.updated'; data: { location: Location; observedAt: string } }
+  /** BE ai.announcement · weather.briefing — 화면에 띄우고 음성으로 읽는 안내 문장 */
+  | { event: 'announcement'; data: { id: string; text: string; at: string } }
 
 export interface DeviceControl {
   on?: boolean
@@ -74,5 +76,7 @@ export interface DataSource {
   saveContact(kind: 'user' | 'guardian', contact: Contact): Promise<ContactSaveResult>
   savePolicy(policy: KitchenPolicy): Promise<KitchenPolicy>
   saveFallPolicy(policy: FallPolicy): Promise<FallPolicy>
+  /** 시계 옆 날씨. 받아 둔 날씨가 없으면 null */
+  loadWeather(): Promise<Weather | null>
   readonly demo: DemoControls | null
 }

@@ -4,6 +4,6 @@ import { useEffect } from 'react'
 export function useApplyTheme(theme: 'dark' | 'light') {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0b0b0c' : '#f2f2f7')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0e0e0d' : '#efeeea')
   }, [theme])
 }

@@ -5,8 +5,10 @@
 
    기준: Apple Human Interface Guidelines 의 시스템 색상·글자 체계와
    iPad '홈' 앱의 타일 표현, 아파트 월패드의 큰 시계·방별 구성.
-   - 색 값은 Apple 시스템 색(다크/라이트 공식 값)을 쓰고, 본문 글자로 쓰는 색은
-     접근성 대비(4.5:1)를 맞춘 Apple '고대비' 변형을 쓴다.
+   - 바탕·면은 순백(#fff)·순흑(#000) 대신 살짝 따뜻한 중성색(웜 그레이)을 쓴다.
+     넓은 흰 면의 눈부심을 줄이고, 병원 같은 차가운 느낌 대신 집 안 패널처럼 보이게 하기 위함.
+     구분은 Apple 방식(바탕보다 카드가 한 단계 밝음, 대비 약 1.11)을 따른다.
+   - 상태색은 Apple 시스템 색 계열이며, 글자로 쓰는 색은 바탕·카드 위에서 4.5:1 이상으로 맞췄다.
    - 상자는 타일·목록에만 쓰고, 나머지는 여백과 글자 크기로 구분한다.
    - 켜진 기기 타일은 밝게 반전된다(홈 앱 방식). 꺼진 타일은 어둡다.
 
@@ -37,42 +39,42 @@
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
   /* ── 라이트 (iOS Light) ─────────────────────────────── */
-  --color-canvas: #f2f2f7;          /* systemGroupedBackground */
-  --color-surface: #ffffff;         /* secondarySystemGroupedBackground */
-  --color-sunken: #f2f2f7;          /* 칸 안 입력·바탕 (systemGray6) */
-  --color-raised: #ffffff;
-  --color-line: #e5e5ea;            /* separator (opaque) */
-  --color-track: #e9e9eb;           /* 꺼진 스위치 */
-  --color-fill: rgba(118, 118, 128, 0.12);  /* systemFill — 회색 버튼·세그먼트 바탕 */
-  --color-thumb: #ffffff;           /* 세그먼트 선택 */
+  --color-canvas: #efeeea;          /* systemGroupedBackground */
+  --color-surface: #fbfaf8;         /* secondarySystemGroupedBackground */
+  --color-sunken: #efeeea;          /* 칸 안 입력·바탕 (systemGray6) */
+  --color-raised: #fbfaf8;
+  --color-line: #e3e1dc;            /* separator (opaque) */
+  --color-track: #d3d0ca;           /* 꺼진 스위치 */
+  --color-fill: rgba(120, 113, 102, 0.12);  /* systemFill — 회색 버튼·세그먼트 바탕 */
+  --color-thumb: #fdfcfa;           /* 세그먼트 선택 */
 
-  --color-ink: #1d1d1f;
-  --color-ink-2: #515154;
-  --color-ink-3: #6e6e73;
+  --color-ink: #1e1d1b;
+  --color-ink-2: #54514c;
+  --color-ink-3: #65625d;
 
   --color-brand: #0071e3;           /* 흰 글자를 올리는 채움 */
   --color-brand-dark: #0062c4;
-  --color-brand-soft: #e8f1fc;
-  --color-brand-ink: #0066cc;       /* 링크·선택 글자 */
+  --color-brand-soft: #e3edf8;
+  --color-brand-ink: #005fbf;       /* 링크·선택 글자 */
   --color-switch: #34c759;          /* systemGreen — 스위치 켜짐 */
 
-  --color-ok: #248a3d;              /* systemGreen (고대비) */
-  --color-ok-soft: #e5f5ea;
-  --color-caution: #946200;
-  --color-caution-soft: #fff4d6;
-  --color-warn: #c93400;            /* systemOrange (고대비) */
-  --color-warn-soft: #ffede2;
-  --color-danger: #d70015;          /* systemRed (고대비) */
-  --color-danger-soft: #ffe9ea;
-  --color-danger-fill: #d70015;
-  --color-muted-soft: #ebebf0;
+  --color-ok: #1d7434;              /* systemGreen (고대비) */
+  --color-ok-soft: #e3f1e6;
+  --color-caution: #805500;
+  --color-caution-soft: #f8efd6;
+  --color-warn: #b03000;            /* systemOrange (고대비) */
+  --color-warn-soft: #fbe9df;
+  --color-danger: #c20f1e;          /* systemRed (고대비) */
+  --color-danger-soft: #fbe6e6;
+  --color-danger-fill: #c8101f;
+  --color-muted-soft: #e8e6e1;
 
   /* 홈 앱 타일 */
-  --color-tile-on: #ffffff;
-  --color-tile-on-ink: #1d1d1f;
-  --color-tile-on-ink-2: #6e6e73;
-  --color-card-on: #ffffff;           /* 홈 기기 카드: 동작 중 */
-  --color-tile-off: #d8d8dd;          /* 꺼진 기기: 바탕보다 확실히 어둡게 */
+  --color-tile-on: #fdfcfa;
+  --color-tile-on-ink: #1e1d1b;
+  --color-tile-on-ink-2: #65625d;
+  --color-card-on: #fdfcfa;           /* 홈 기기 카드: 동작 중 */
+  --color-tile-off: #e2e0db;          /* 꺼진 기기: 바탕보다 확실히 어둡게 */
 
   /* 켜진 기기 아이콘 색 (홈 앱: 조명 노랑 · 환기 청록 · 물 파랑 · 화구 주황) */
   --color-glyph-light: #e6a100;
@@ -93,25 +95,25 @@
   --font-size-base: 16px;
   --scrim: rgba(0, 0, 0, 0.32);
   --shadow-pop: 0 10px 40px rgba(0, 0, 0, 0.18);
-  --shadow-tile: 0 1px 2px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-tile: 0 1px 2px rgba(60, 50, 30, 0.06), 0 2px 8px rgba(60, 50, 30, 0.06);
   --shadow-thumb: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
   color-scheme: light;
 }
 
 /* ── 다크 (iOS Dark · 플랫폼 샘플과 같은 어두운 대시보드) ─────────────────── */
 [data-theme='dark'] {
-  --color-canvas: #0b0b0c;
-  --color-surface: #1c1c1e;
-  --color-sunken: #2c2c2e;
-  --color-raised: #3a3a3c;
-  --color-line: #38383a;
-  --color-track: #39393d;
+  --color-canvas: #0e0e0d;
+  --color-surface: #1c1c1a;
+  --color-sunken: #2a2927;
+  --color-raised: #393835;
+  --color-line: #363532;
+  --color-track: #3a3936;
   --color-fill: rgba(118, 118, 128, 0.24);
-  --color-thumb: #636366;
+  --color-thumb: #5f5d59;
 
-  --color-ink: #f5f5f7;
-  --color-ink-2: #aeaeb2;
-  --color-ink-3: #8e8e93;
+  --color-ink: #f3f1ed;
+  --color-ink-2: #b3afa8;
+  --color-ink-3: #8f8b85;
 
   --color-brand: #0071e3;
   --color-brand-dark: #0062c4;
@@ -128,13 +130,13 @@
   --color-danger: #ff453a;
   --color-danger-soft: #3d1614;
   --color-danger-fill: #d70015;
-  --color-muted-soft: #2c2c2e;
+  --color-muted-soft: #2a2927;
 
-  --color-tile-on: #f5f5f7;
-  --color-tile-on-ink: #1d1d1f;
-  --color-tile-on-ink-2: #6e6e73;
-  --color-card-on: #2c2c2e;
-  --color-tile-off: #121214;          /* 꺼진 기기: 목록 칸(#1c1c1e)보다 어둡게 */
+  --color-tile-on: #f3f1ed;
+  --color-tile-on-ink: #1e1d1b;
+  --color-tile-on-ink-2: #65625d;
+  --color-card-on: #2b2a28;
+  --color-tile-off: #141413;          /* 꺼진 기기: 목록 칸(#1c1c1e)보다 어둡게 */
 
   --color-glyph-light: #e6a100;
   --color-glyph-fan: #0a9fb8;

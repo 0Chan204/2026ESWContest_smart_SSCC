@@ -50,26 +50,51 @@ function cspPlugin(csp: string) {
 // file:// URL → 파일 경로. Windows(/C:/… → C:/…)와 한글·공백 폴더명(%EC…)에서도 동작한다.
 const toPath = (u: URL) => decodeURIComponent(u.pathname).replace(/^\/([A-Za-z]:)/, '$1')
 
-export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), cspPlugin(buildCsp(loadEnv(mode, toPath(new URL('.', import.meta.url)), 'VITE_').VITE_API_BASE_URL ?? ''))],
-  resolve: {
-    alias: {
-      '@': toPath(new URL('./src', import.meta.url)),
+/**
+ * 로컬 백엔드 프록시. .env.local 에 HOMEVIS_API_TARGET=http://127.0.0.1:8000 을 두면
+ * 개발 서버(5173)·미리보기(4173)가 /api 요청과 WebSocket(/api/v1/stream)을 그 주소로 넘긴다.
+ * 브라우저는 같은 주소로만 통신하므로 백엔드에 CORS 를 열 필요가 없다.
+ * (VITE_ 가 아니므로 이 값은 브라우저 번들에 들어가지 않는다)
+ */
+function apiProxy(target: string) {
+  if (!target) return undefined
+  let url: URL
+  try {
+    url = new URL(target)
+  } catch {
+    throw new Error('HOMEVIS_API_TARGET 형식이 올바르지 않습니다: ' + target)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('HOMEVIS_API_TARGET 은 http(s) 주소여야 합니다.')
+  return { '/api': { target: url.origin, ws: true, changeOrigin: false } }
+}
+
+export default defineConfig(({ mode }) => {
+  const root = toPath(new URL('.', import.meta.url))
+  const env = loadEnv(mode, root, '')
+  const proxy = apiProxy(env.HOMEVIS_API_TARGET ?? '')
+  return {
+    plugins: [react(), tailwindcss(), cspPlugin(buildCsp(env.VITE_API_BASE_URL ?? ''))],
+    resolve: {
+      alias: {
+        '@': toPath(new URL('./src', import.meta.url)),
+      },
     },
-  },
-  server: {
-    host: '127.0.0.1',
-    port: 5173,
-    strictPort: true,
-  },
-  preview: {
-    host: '127.0.0.1',
-    port: 4173,
-    strictPort: true,
-  },
-  build: {
-    target: 'es2022',
-    sourcemap: false,
-    chunkSizeWarningLimit: 700,
-  },
-}))
+    server: {
+      host: '127.0.0.1',
+      port: 5173,
+      strictPort: true,
+      proxy,
+    },
+    preview: {
+      host: '127.0.0.1',
+      port: 4173,
+      strictPort: true,
+      proxy,
+    },
+    build: {
+      target: 'es2022',
+      sourcemap: false,
+      chunkSizeWarningLimit: 700,
+    },
+  }
+})

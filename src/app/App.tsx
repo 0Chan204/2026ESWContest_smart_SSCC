@@ -44,7 +44,16 @@ function Dashboard() {
 }
 
 function DashboardRoutes() {
-  const { ready } = useHome()
+  const { ready, loadError, retryLoad } = useHome()
+  if (!ready && loadError) {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
+        <p className="text-[1.25rem] font-semibold text-ink">서버에 연결하지 못했어요</p>
+        <p className="max-w-md text-[0.9375rem] text-ink-2">{loadError}</p>
+        <button type="button" onClick={retryLoad} className="press mt-2 min-h-11 rounded-[12px] bg-brand px-5 font-semibold text-white">다시 시도</button>
+      </div>
+    )
+  }
   if (!ready) return <div className="flex h-dvh items-center justify-center text-ink-3">불러오는 중…</div>
   return (
     <Routes>

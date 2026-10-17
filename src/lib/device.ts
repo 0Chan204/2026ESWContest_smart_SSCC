@@ -38,7 +38,7 @@ export function summarize(d: Device): DeviceSummary {
         : { active: false, status: '꺼짐', detail: d.auto ? '조리를 시작하면 자동으로 켜져요' : '자동 운전 꺼짐', risk: 'normal' }
     case 'light':
       return d.on
-        ? { active: true, status: `밝기 ${d.brightness}%`, detail: d.auto ? '사람이 있어 자동으로 켜짐' : '직접 켬', risk: 'normal' }
+        ? { active: true, status: d.dimmable === false ? '켜짐' : `밝기 ${d.brightness}%`, detail: d.auto ? '사람이 있어 자동으로 켜짐' : '직접 켬', risk: 'normal' }
         : { active: false, status: '꺼짐', detail: d.auto ? '사람이 들어오면 자동으로 켜져요' : '자동 점등 꺼짐', risk: 'normal' }
   }
 }

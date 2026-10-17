@@ -323,6 +323,19 @@ export function createMockSource(): DataSource {
     async savePolicy(next) { policy = { ...next }; return policy },
     async saveFallPolicy(next) { fallPolicy = { ...next }; return fallPolicy },
 
+    // 시연용 날씨 (외부 요청 없음)
+    async loadWeather() {
+      return { location: '서울', temperature: 21, condition: '구름 조금', code: 2, max: 24, min: 15, stale: false,
+        feels: 20, humidity: 48, rainChance: 60, fetchedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+        // 앞으로 12시간: 기온이 조금씩 내려가고 5~7시간 뒤 비
+        hourly: Array.from({ length: 12 }, (_, i) => {
+          const at = new Date(); at.setMinutes(0, 0, 0); at.setHours(at.getHours() + i)
+          const rain = i >= 5 && i <= 7
+          return { time: at.toISOString(), temperature: 21 - Math.round(i * 0.6), code: rain ? 61 : i >= 3 ? 3 : 2, rainChance: rain ? 50 + (i - 5) * 10 : i === 4 ? 20 : 0 }
+        }),
+        text: '서울은 지금 구름 조금, 21도예요. 오늘 최고 24도, 최저 15도이고 비 올 확률은 60%예요.' }
+    },
+
     demo: {
       leaveKitchen(zone) {
         const k: Presence = presence.kitchen

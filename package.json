@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "vite --mode api",
     "build": "tsc -b && vite build",
+    "build:api": "tsc -b && vite build --mode api",
     "preview": "vite preview",
+    "preview:api": "vite preview --mode api",
     "lint": "eslint .",
     "typecheck": "tsc -b --noEmit",
     "audit": "npm audit --omit=dev"

@@ -6,7 +6,7 @@ import { createDataSource, type DataSource, type DeviceControl, type Snapshot, t
 import { maxRisk, phaseRisk } from '@/lib/labels'
 import type {
   Contact, CookingSession, Device, FallIncident, FallPolicy, InductionDevice, KitchenPhase,
-  KitchenPolicy, Location, Presence, Risk, SafetyEvent,
+  KitchenPolicy, Location, Presence, Risk, SafetyEvent, Weather,
 } from '@/types'
 
 type AbsenceStage = 'none' | 'watch' | 'reduce' | 'off'
@@ -27,10 +27,15 @@ interface HomeState {
   /** 방금 시스템이 수행한 안전 조치 (결과 안내 시트) */
   notice: SafetyEvent | null
   fallAlertOpen: boolean
+  /** AI 판정 엔진의 최근 안내 문장 (화면 표시 + 음성) */
+  announcement: { id: string; text: string; at: string } | null
+  /** 처음 불러오기 실패 (백엔드가 꺼져 있는 등) */
+  loadError: string | null
 }
 
 type Action =
   | { type: 'init'; snapshot: Snapshot }
+  | { type: 'loadError'; message: string | null }
   | { type: 'message'; message: StreamMessage }
   | { type: 'dismissNotice' }
   | { type: 'setFallAlert'; open: boolean }
@@ -103,6 +108,8 @@ function reduceMessage(state: HomeState, m: StreamMessage): HomeState {
       return { ...state, devices: state.devices.map((d) => (d.id === m.data.id ? m.data : d)) }
     case 'location.updated':
       return { ...state, location: m.data.location }
+    case 'announcement':
+      return { ...state, announcement: m.data }
   }
 }
 
@@ -111,12 +118,13 @@ function reducer(state: HomeState, a: Action): HomeState {
     case 'init': {
       const s = a.snapshot
       return {
-        ...state, ready: true, devices: s.devices, presence: s.presence, location: s.location,
+        ...state, ready: true, loadError: null, devices: s.devices, presence: s.presence, location: s.location,
         activeSessionId: s.session?.sessionId ?? null,
         sessions: Object.fromEntries(s.sessions.map((x) => [x.sessionId, x])),
         events: s.events, fall: s.fall, contacts: s.contacts, policy: s.policy, fallPolicy: s.fallPolicy,
       }
     }
+    case 'loadError': return { ...state, loadError: a.message }
     case 'message': return reduceMessage(state, a.message)
     case 'dismissNotice': return { ...state, notice: null }
     case 'setFallAlert': return { ...state, fallAlertOpen: a.open }
@@ -134,7 +142,7 @@ const initial: HomeState = {
   location: 'unknown', activeSessionId: null, sessions: {}, events: [], fall: null,
   contacts: { user: null, guardian: null },
   policy: {} as KitchenPolicy, fallPolicy: { autoReportSec: 60 },
-  absenceStage: 'none', notice: null, fallAlertOpen: false,
+  absenceStage: 'none', notice: null, fallAlertOpen: false, announcement: null, loadError: null,
 }
 
 interface HomeValue extends HomeState {
@@ -159,6 +167,10 @@ interface HomeValue extends HomeState {
   reconnect: (deviceId: string) => Promise<boolean>
   /** 마지막으로 상태를 확인한 시각 (ISO) */
   checkedAt: string | null
+  /** 처음 불러오기를 다시 시도 */
+  retryLoad: () => void
+  /** 시계 옆 날씨 (없으면 null) */
+  weather: Weather | null
 }
 
 const HomeContext = createContext<HomeValue | null>(null)
@@ -170,16 +182,31 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
   const sourceRef = useRef<DataSource>(createDataSource())
   const [checkedAt, setCheckedAt] = useState<string | null>(null)
 
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     const source = sourceRef.current
     let alive = true
+    dispatch({ type: 'loadError', message: null })
     source.loadSnapshot().then((snapshot) => {
       if (!alive) return
       dispatch({ type: 'init', snapshot })
       setCheckedAt(new Date().toISOString())
+    }).catch((e: unknown) => {
+      if (alive) dispatch({ type: 'loadError', message: e instanceof Error ? e.message : '서버에 연결하지 못했어요.' })
     })
     const off = source.subscribe((message) => dispatch({ type: 'message', message }))
     return () => { alive = false; off() }
+  }, [attempt])
+  const retryLoad = useCallback(() => setAttempt((n) => n + 1), [])
+
+  // 날씨: 10분마다 다시 받는다 (서버가 30분마다 갱신해 두므로 자주 부를 필요 없음)
+  const [weather, setWeather] = useState<Weather | null>(null)
+  useEffect(() => {
+    let alive = true
+    const load = () => sourceRef.current.loadWeather().then((w) => { if (alive) setWeather(w) }).catch(() => { /* 날씨는 없어도 된다 */ })
+    load()
+    const t = setInterval(load, 10 * 60_000)
+    return () => { alive = false; clearInterval(t) }
   }, [])
 
   const controlDevice = useCallback(async (id: string, control: DeviceControl) => {
@@ -208,9 +235,13 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     // 너무 빨리 끝나면 눌렀는지 알 수 없으므로 최소 표시 시간을 둔다
-    const [snapshot] = await Promise.all([sourceRef.current.loadSnapshot(), wait(900)])
-    dispatch({ type: 'init', snapshot })
-    setCheckedAt(new Date().toISOString())
+    try {
+      const [snapshot] = await Promise.all([sourceRef.current.loadSnapshot(), wait(900)])
+      dispatch({ type: 'init', snapshot })
+      setCheckedAt(new Date().toISOString())
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '서버에 연결하지 못했어요.')
+    }
   }, [])
 
   const reconnect = useCallback(async (deviceId: string) => {
@@ -221,10 +252,14 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
       return true
     }
     // 실제 연결은 기기·게이트웨이가 다시 붙어야 하므로, 여기서는 상태를 다시 확인만 한다
-    const snapshot = await source.loadSnapshot()
-    dispatch({ type: 'init', snapshot })
-    setCheckedAt(new Date().toISOString())
-    return snapshot.devices.find((d) => d.id === deviceId)?.online ?? false
+    try {
+      const snapshot = await source.loadSnapshot()
+      dispatch({ type: 'init', snapshot })
+      setCheckedAt(new Date().toISOString())
+      return snapshot.devices.find((d) => d.id === deviceId)?.online ?? false
+    } catch {
+      return false
+    }
   }, [])
 
   const dismissNotice = useCallback(() => dispatch({ type: 'dismissNotice' }), [])
@@ -245,10 +280,10 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
       kitchenPhase, kitchenRisk, bathroomRisk, overallRisk: maxRisk(kitchenRisk, bathroomRisk),
       onlineCount: state.devices.filter((d) => d.online).length,
       controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, dismissNotice, setFallAlert,
-      refresh, reconnect, checkedAt,
+      refresh, reconnect, checkedAt, retryLoad, weather,
     }
   }, [state, controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, dismissNotice, setFallAlert,
-    refresh, reconnect, checkedAt])
+    refresh, reconnect, checkedAt, retryLoad, weather])
 
   return <HomeContext.Provider value={value}>{children}</HomeContext.Provider>
 }

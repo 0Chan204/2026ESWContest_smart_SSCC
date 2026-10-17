@@ -84,14 +84,14 @@ export function DeviceSheet({ deviceId, onClose }: { deviceId: string | null; on
           <ListGroup className="mt-6">
             <ListRow big={big} title="전원" trailing={<Toggle checked={d.on} disabled={!d.online} size={big ? 'lg' : 'md'} label="조명 전원" onChange={(v) => controlDevice(d.id, { on: v })} />} />
           </ListGroup>
-          <ListGroup title="밝기" className="mt-6" bodyClassName="px-4 py-4" footer="사람이 들어오면 켜지고, 나가면 꺼져요.">
+          {d.dimmable !== false && <ListGroup title="밝기" className="mt-6" bodyClassName="px-4 py-4" footer="사람이 들어오면 켜지고, 나가면 꺼져요.">
             <label className="flex items-center gap-4">
               <input type="range" min={10} max={100} step={10} value={d.brightness} disabled={!d.online}
                 onChange={(e) => controlDevice(d.id, { brightness: Number(e.target.value) })}
                 className="h-2 min-w-0 flex-1 cursor-pointer" aria-label="밝기" />
               <span className="tabular w-12 text-right text-[0.9375rem] text-ink-2">{d.brightness}%</span>
             </label>
-          </ListGroup>
+          </ListGroup>}
         </>
       )}
     </Sheet>

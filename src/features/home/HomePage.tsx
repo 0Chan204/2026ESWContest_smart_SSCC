@@ -94,7 +94,9 @@ function HomeNormal() {
               <RefreshCw className={cn('h-4 w-4', checking && 'spin-slow')} aria-hidden="true" />{checking ? '확인 중…' : '다시 확인'}
             </button>
           }>기기 <span className="font-normal text-ink-3">{devices.length}</span></SectionTitle>
-          <div className="grid grid-cols-2 gap-4 auto-rows-[158px] md:grid-cols-4 wall:short:auto-rows-[144px]">
+          {/* 기기 수만큼 칸을 나눈다 (목업 4대 · 백엔드 기본 3대) */}
+          <div style={{ ['--cols' as string]: Math.min(Math.max(devices.length, 1), 4) }}
+            className="grid grid-cols-2 gap-4 auto-rows-[158px] md:grid-cols-[repeat(var(--cols),minmax(0,1fr))] wall:short:auto-rows-[144px]">
             {devices.map((d) => <DeviceCard key={d.id} device={d} onOpen={() => setDeviceId(d.id)} />)}
           </div>
         </section>

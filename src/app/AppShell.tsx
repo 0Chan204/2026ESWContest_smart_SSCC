@@ -4,6 +4,7 @@ import { BottomBar, NavRail } from './NavRail'
 import { ActionNoticeSheet } from '@/features/alerts/ActionNoticeSheet'
 import { FallAlertSheet } from '@/features/alerts/FallAlertSheet'
 import { DemoPanel } from '@/features/alerts/DemoPanel'
+import { AnnouncementSpeaker } from '@/features/alerts/AnnouncementSpeaker'
 import { VoicePanel } from '@/features/voice/VoicePanel'
 import { useVoice } from '@/features/voice/useVoice'
 
@@ -25,6 +26,7 @@ export function AppShell() {
       <BottomBar onVoice={voice.start} voiceActive={voice.open} onDemo={() => setDemoOpen(true)} />
       <ActionNoticeSheet />
       <FallAlertSheet />
+      <AnnouncementSpeaker />
       <DemoPanel open={demoOpen} onClose={() => setDemoOpen(false)} />
       {voice.open && <VoicePanel voice={voice} />}
     </div>

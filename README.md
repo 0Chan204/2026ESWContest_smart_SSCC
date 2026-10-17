@@ -15,6 +15,37 @@ npm run lint
 npm audit
 ```
 
+### 로컬 백엔드 연결 (`v3_api` 브랜치)
+
+배포 서버가 아니라 **이 PC 에서 띄운 백엔드**(HomeVIS-Backend `develop`)에 연결한다. 프론트 개발 서버가 `/api` 요청과 실시간 연결(WebSocket)을 `127.0.0.1:8000` 으로 넘기므로 백엔드에 CORS 설정이 필요 없다.
+
+```bash
+# 1) 백엔드 (HomeVIS-Backend 폴더) — 처음 한 번
+python3.11 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
+cp .env.example .env     # FRONTEND_BASE_URL=http://127.0.0.1:5173 으로 바꾸고, SOLAPI·MONGODB_URI 는 비워 둔다
+# 2) MQTT 브로커 (Docker Desktop 실행 후) — 이 PC 안(127.0.0.1)에서만 열리게 띄운다
+#    ※ docker compose up -d mosquitto 는 인증 없이 모든 네트워크(0.0.0.0:1883)에 열려,
+#      공유 와이파이에서는 다른 사람이 가전 명령을 보낼 수 있다
+docker run -d --name homevis-mosquitto -p 127.0.0.1:1883:1883 \
+  -v "$PWD/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" eclipse-mosquitto:2
+# 3) 백엔드 실행
+./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+# (선택) 가짜 인덕션·전등·정수기·재실 판단 — 각각 새 터미널에서
+./.venv/bin/python tests/simulate_device.py
+./.venv/bin/python tests/simulate_home_devices.py
+./.venv/bin/python tests/simulate_fusion.py --host 127.0.0.1
+```
+
+```bash
+# 4) 프론트 (이 폴더)
+npm run dev:api          # http://127.0.0.1:5173 — 백엔드 연결 모드
+npm run dev              # 백엔드 없이 시연용 목 데이터
+```
+
+- 설정은 `.env.api`(127.0.0.1 주소만, 비밀값 없음). 백엔드가 꺼져 있으면 "서버에 연결하지 못했어요 · 다시 시도" 화면이 뜬다.
+- 비용: 백엔드 `.env` 의 `SOLAPI_*`(문자 발송, 건당 과금)와 `MONGODB_URI`(Atlas)를 비워 두면 문자는 로그만 남고 DB 는 메모리로 동작한다. 날씨(Open-Meteo)는 키 없는 무료 API.
+- 백엔드에 없는 기능: 환풍기, 욕실 조명(전등은 `room` 구역 1개), 전등 밝기, 진행 중인 낙상 사건 목록(새로고침하면 다음 실시간 알림까지 보이지 않음), 욕실 재실 값.
+
 ### 시연 PC (Windows · 삼성 노트북)
 
 Node.js LTS 와 Chrome(또는 Edge)이 설치돼 있으면 폴더의 **`demo.cmd`** 를 더블클릭한다.

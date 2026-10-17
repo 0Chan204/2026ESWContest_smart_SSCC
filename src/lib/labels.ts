@@ -37,6 +37,8 @@ export const EVENT_TITLE: Record<SafetyEventType, string> = {
   fall_resolved: '낙상 — 보호자 확인 완료',
   fall_reported: '낙상 — 보호자 신고 요청',
   fall_auto_reported: '낙상 — 자동 신고',
+  fall_escalated: '낙상 — 보호자에게 알림',
+  ai_control: 'AI 자동 제어',
   auto_dispense: '아침 자동 출수',
 }
 
@@ -44,7 +46,7 @@ export type EventCategory = 'fire' | 'fall' | 'routine'
 
 export function eventCategory(type: SafetyEventType): EventCategory {
   if (type.startsWith('fall_')) return 'fall'
-  if (type === 'auto_dispense') return 'routine'
+  if (type === 'auto_dispense' || type === 'ai_control') return 'routine'
   return 'fire'
 }
 
@@ -58,12 +60,12 @@ export const CATEGORY_LABEL: Record<EventCategory, string> = {
  */
 export const RECORD_TYPES: ReadonlySet<SafetyEventType> = new Set<SafetyEventType>([
   'auto_power_reduced', 'auto_power_off', 'overheat_detected', 'fall_detected',
-  'fall_resolved', 'fall_reported', 'fall_auto_reported', 'auto_dispense',
+  'fall_resolved', 'fall_reported', 'fall_auto_reported', 'fall_escalated', 'auto_dispense', 'ai_control',
 ])
 
 /** 사용자가 적절성 피드백을 남길 수 있는 자동 조치 */
 export const FEEDBACK_TYPES: ReadonlySet<SafetyEventType> = new Set<SafetyEventType>([
-  'auto_power_reduced', 'auto_power_off', 'fall_detected',
+  'auto_power_reduced', 'auto_power_off', 'fall_detected', 'ai_control',
 ])
 
 export function isRecord(e: SafetyEvent): boolean {
