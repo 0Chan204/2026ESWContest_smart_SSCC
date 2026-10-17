@@ -101,5 +101,31 @@ services:
       - mosquitto
       - backend
 
+  edge-simulator:
+    # 가짜 엣지 노드 3개 (v0.4, docs/EDGE-MQTT.md). 실제 라즈베리파이 노드가 연결되면 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-edge-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_edge_nodes.py", "--host", "mosquitto"]
+    healthcheck:
+      disable: true
+    depends_on:
+      - mosquitto
+      - backend
+
+  fusion-simulator:
+    # 가짜 최종 재실 판단 (v0.4). 재실 판단 담당의 실제 모델이 연결되면 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-fusion-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_fusion.py", "--host", "mosquitto"]
+    healthcheck:
+      disable: true
+    depends_on:
+      - mosquitto
+      - backend
+
 volumes:
   mongo-data:

@@ -44,6 +44,7 @@ induction-backend/
 │   ├── commands_service.py         # 화구 제어 명령 발행/ack 반영
 │   ├── safety_service.py           # 안전 이벤트, 부재중 자동 제어 정책
 │   ├── weather_service.py          # 날씨 받아오기(Open-Meteo, 30분 캐시) + 안내 문장 (v0.3.2)
+│   ├── edge_service.py             # 엣지 노드 메시지 합쳐 전달 + 최종 재실 판단 결과 저장·조회 (v0.4)
 │   ├── ws_hub.py                   # WebSocket(/stream) 연결 관리 + 브로드캐스트
 │   └── routers/
 │       ├── device.py                # 인덕션(디바이스) 조회용 REST (tag=device)
@@ -291,6 +292,18 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 - 날씨는 Open-Meteo(API 키 불필요)에서 30분마다 미리 받아 메모리와 DB에 저장합니다. 대회장 인터넷이 끊겨도
   마지막으로 받은 날씨로 안내하고, 오래된 값이면 "몇 시 기준"을 붙입니다.
 - 위치는 `.env`의 `WEATHER_LOCATION_NAME` / `WEATHER_LAT` / `WEATHER_LON` (기본 서울). 로직은 `app/weather_service.py`.
+
+## 9-3. 엣지 노드 · 최종 재실 판단 결과 (v0.4)
+
+```
+엣지 노드 ──MQTT home/{구역}/edge/{노드ID}/...──> 서버 ──MQTT home/edge/combined(1초마다)──> 재실 판단 담당
+재실 판단 담당 ──MQTT home/edge/result──> 서버(DB 저장) <──HTTP GET /api/v1/sensing/results/latest── AI 판정 엔진
+```
+
+- 서버는 노드 메시지를 판단하지 않고, 구역별 최신 메시지를 맵으로 합쳐 원본 그대로 전달합니다 (수신 시각만 추가).
+- 재실 판단 담당이 보낸 최종 결과만 DB(`sensing_results`)에 저장하고, AI 판정 엔진이 HTTP로 꺼내 씁니다.
+- 토픽·메시지 형식: `docs/EDGE-MQTT.md`, 조회 API: `docs/AI-INTEGRATION.md`. 로직은 `app/edge_service.py`.
+- 테스트: `docker compose --profile sim up -d`로 가짜 엣지 노드·가짜 최종 판단까지 함께 띄울 수 있습니다.
 
 ---
 

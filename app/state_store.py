@@ -15,6 +15,7 @@ MongoDB가 연결되지 않은 경우(MONGODB_URI 없음, 접속 실패)에는 �
 
 import logging
 import threading
+from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -33,6 +34,7 @@ from app.schemas import (
     FallPolicy,
     SmsLog,
     AiDecisionRecord,
+    SensingResult,
     WeatherSnapshot,
 )
 
@@ -47,6 +49,8 @@ _LOAD_LIMIT_SESSIONS = 200
 _LOAD_LIMIT_FALL_INCIDENTS = 200
 _LOAD_LIMIT_SMS_LOGS = 200
 _LOAD_LIMIT_AI_DECISIONS = 500
+# 최종 재실 판단 결과: 메모리에 최근 N건만 둡니다 (1초마다 오면 약 1시간 20분). 그 이전은 DB에만 남습니다.
+SENSING_RESULT_MEMORY_LIMIT = 5000
 
 # --- 가전 텔레메트리 ---
 _latest_telemetry: dict[str, TelemetryReport] = {}
@@ -100,6 +104,11 @@ _restore_levels: dict[str, int] = {}
 # --- v0.3.2: 마지막으로 받아 둔 날씨 (인터넷이 끊겨도 안내할 수 있도록 DB에도 저장) ---
 _weather: Optional[WeatherSnapshot] = None
 
+# --- v0.4: 최종 재실 판단 결과 (오래된 것부터) ---
+_sensing_results: "deque[SensingResult]" = deque(maxlen=SENSING_RESULT_MEMORY_LIMIT)
+_sensing_result_ids: set[str] = set()
+_next_sensing_seq = 1
+
 # --- v0.3: AI 판단 기록 ---
 _ai_decisions: dict[str, AiDecisionRecord] = {}
 _ai_decision_order: list[str] = []
@@ -123,8 +132,12 @@ _STATE_WEATHER = "weather"
 def reset_memory() -> None:
     """메모리의 모든 데이터를 초기 상태로 되돌립니다. (DB는 건드리지 않음. 시작 시, 테스트에서 사용)"""
     global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq, _next_ai_seq, _weather
+    global _next_sensing_seq
     with _lock:
         _weather = None
+        _sensing_results.clear()
+        _sensing_result_ids.clear()
+        _next_sensing_seq = 1
         for store in (
             _latest_telemetry,
             _last_seen_at,
@@ -268,6 +281,15 @@ def load_from_db() -> None:
             _ai_decision_seq[record.decisionId] = doc["seq"]
             _next_ai_seq = max(_next_ai_seq, doc["seq"] + 1)
 
+    def load_sensing_results() -> None:
+        global _next_sensing_seq
+        docs = db.find_all(db.SENSING_RESULTS, sort_field="seq", newest_limit=SENSING_RESULT_MEMORY_LIMIT)
+        for doc in docs:
+            result = SensingResult.model_validate(_without_id(doc, "seq", "savedAtTime"))
+            _sensing_results.append(result)
+            _sensing_result_ids.add(result.resultId)
+            _next_sensing_seq = max(_next_sensing_seq, doc["seq"] + 1)
+
     with _lock:
         load("인덕션 상태", load_telemetry)
         load("제어 명령", load_commands)
@@ -281,6 +303,7 @@ def load_from_db() -> None:
         load("진행 상태", load_runtime_state)
         load("전등·정수기 상태", load_device_states)
         load("AI 판단 기록", load_ai_decisions)
+        load("최종 재실 판단 결과", load_sensing_results)
 
     logger.info(
         "DB에서 불러옴: 안전 이벤트 %d건, 제어 명령 %d건, 조리 세션 %d건, 낙상 사건 %d건",
@@ -691,3 +714,35 @@ def list_ai_decisions() -> list[AiDecisionRecord]:
     """오래된 것부터 순서대로 돌려줍니다."""
     with _lock:
         return [_ai_decisions[d] for d in _ai_decision_order if d in _ai_decisions]
+
+
+# ---------------------------------------------------------------------------
+# v0.4: 최종 재실 판단 결과
+# ---------------------------------------------------------------------------
+
+def save_sensing_result(result: SensingResult) -> bool:
+    """저장했으면 True, 이미 받은 resultId라 건너뛰었으면 False"""
+    global _next_sensing_seq
+    with _lock:
+        if result.resultId in _sensing_result_ids:
+            return False
+        if len(_sensing_results) == _sensing_results.maxlen:
+            _sensing_result_ids.discard(_sensing_results[0].resultId)
+        _sensing_results.append(result)
+        _sensing_result_ids.add(result.resultId)
+        seq = _next_sensing_seq
+        _next_sensing_seq += 1
+    saved_time = datetime.fromisoformat(result.savedAt)
+    db.upsert(db.SENSING_RESULTS, result.resultId, {"seq": seq, "savedAtTime": saved_time, **result.model_dump()})
+    return True
+
+
+def get_latest_sensing_result() -> Optional[SensingResult]:
+    with _lock:
+        return _sensing_results[-1] if _sensing_results else None
+
+
+def list_sensing_results() -> list[SensingResult]:
+    """메모리에 있는 최근 결과 (오래된 것부터)"""
+    with _lock:
+        return list(_sensing_results)

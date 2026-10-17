@@ -8,6 +8,8 @@ MQTT 통신을 담당하는 모듈입니다.
 즉 서버는 telemetry/ack 토픽에는 "구독자", command 토픽에는 "발행자" 역할을 합니다.
 
 v0.3: 전등·정수기도 같은 방식으로 주고받습니다. 토픽 규칙은 app/device_registry.py 참고.
+v0.4: 엣지 노드 메시지(home/{구역}/edge/...)와 최종 재실 판단 결과(home/edge/result)를 받고,
+      합친 엣지 메시지(home/edge/combined)를 보냅니다. 처리는 app/edge_service.py 참고.
 """
 
 import json
@@ -52,11 +54,24 @@ def _on_connect(client: mqtt.Client, userdata, flags, rc: int) -> None:
         client.subscribe(home_topic, qos=1)
     logger.info("전등·정수기 토픽 구독 시작: %s", ", ".join(device_registry.home_device_subscriptions()))
 
+    client.subscribe(settings.EDGE_NODE_TOPIC, qos=1)
+    client.subscribe(settings.EDGE_RESULT_TOPIC, qos=1)
+    logger.info("엣지 노드 토픽 구독 시작: %s, %s", settings.EDGE_NODE_TOPIC, settings.EDGE_RESULT_TOPIC)
+
 
 def _on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage) -> None:
     # 지연 import: device_service가 commands_service/safety_service를 거쳐
     # 다시 mqtt_client를 참조할 수 있으므로, 순환 참조를 피하기 위해 호출 시점에 import합니다.
-    from app import device_service, home_device_service
+    from app import device_service, edge_service, home_device_service
+
+    # v0.4: 엣지 노드 / 최종 재실 판단 결과
+    if msg.topic == settings.EDGE_RESULT_TOPIC:
+        edge_service.handle_result(msg.payload)
+        return
+    edge_topic = edge_service.parse_node_topic(msg.topic)
+    if edge_topic is not None:
+        edge_service.handle_node_message(*edge_topic, msg.payload)
+        return
 
     parsed = device_registry.parse_topic(msg.topic)
     if parsed is not None and parsed[0] in device_registry.HOME_DEVICE_TYPES:
@@ -144,3 +159,8 @@ def publish_device_command(device_id: str, payload: dict) -> None:
     result = _client.publish(topic, message, qos=1)
     logger.info("제어 명령 발행 (topic=%s): %s", topic, message)
     result.wait_for_publish(timeout=5)
+
+
+def publish_json(topic: str, payload: dict, qos: int = 1, retain: bool = False) -> None:
+    """JSON 메시지를 발행합니다. 주기적으로 보내는 메시지용이라 전달 완료를 기다리지 않습니다. (v0.4)"""
+    _client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=qos, retain=retain)

@@ -18,12 +18,16 @@ v0.3.1 추가 (낙상 대응 단계화):
 - FallIncident에 stage / guardianAlertAt / userNotified / lightBlinkSent 등 단계 정보 추가
 - FallPolicy에 userAlertWaitSec(사용자 -> 보호자 대기 시간) 추가
 - SafetyEventType에 fall_escalated, SmsPurpose에 fall_user_alert 추가
+
+v0.4 추가 (엣지 노드 · 최종 재실 판단 결과):
+- SensingResultIn / SensingResult: 재실 판단 담당이 보낸 최종 결과 (형식 확정 전이라 추가 필드도 그대로 보관)
 """
 
 import re
+from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DeviceState = Literal["off", "on", "overheated", "cooling"]
 
@@ -610,3 +614,49 @@ class WeatherBriefing(BaseModel):
 AiDecisionRecord.model_rebuild()
 AiDecisionAccepted.model_rebuild()
 AiDecisionListResponse.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# 11. 최종 재실 판단 결과 (v0.4, docs/EDGE-MQTT.md)
+#
+# 재실 판단 담당이 MQTT(home/edge/result)로 보낸 최종 결과를 그대로 저장하고,
+# AI 중앙 판정 엔진이 HTTP로 꺼내 씁니다. 서버는 값을 판단하지 않습니다.
+# 아래에 없는 필드가 와도 버리지 않고 그대로 저장·전달합니다 (형식이 확정되기 전이라).
+# ---------------------------------------------------------------------------
+
+def _check_iso_time(value: str) -> str:
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("observedAt은 ISO 8601 시각이어야 합니다. 예: 2026-10-17T12:00:02+00:00") from exc
+    return value
+
+
+class SensingResultIn(BaseModel):
+    """재실 판단 담당 -> 서버 (MQTT home/edge/result)"""
+
+    model_config = ConfigDict(extra="allow")
+
+    resultId: Optional[str] = Field(default=None, min_length=1, max_length=100, description="없으면 서버가 만듦. 같은 id는 한 번만 저장")
+    observedAt: str = Field(..., description="판단 기준 시각 (ISO 8601, 시간대 포함)")
+    room: Optional[str] = Field(default=None, description="최종 위치 (room / kitchen / toilet). 아무도 없으면 null")
+    present: Optional[bool] = None
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    activity: Optional[str] = None
+    activityConfidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    modelVersion: Optional[str] = None
+    validSec: Optional[int] = Field(default=None, ge=0, description="결과를 유효하게 볼 시간(초). 판단은 받는 쪽에서 함")
+
+    _observed = field_validator("observedAt")(_check_iso_time)
+
+
+class SensingResult(SensingResultIn):
+    """저장된 최종 결과 (서버가 resultId, savedAt을 붙임)"""
+
+    resultId: str
+    savedAt: str = Field(..., description="서버가 저장한 시각 (UTC)")
+
+
+class SensingResultListResponse(BaseModel):
+    items: list[SensingResult] = Field(..., description="오래된 것부터")
+    total: int = Field(..., description="조건에 맞는 전체 개수 (items는 그중 최근 limit개)")
