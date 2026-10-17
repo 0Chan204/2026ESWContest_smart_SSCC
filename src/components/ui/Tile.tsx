@@ -8,7 +8,7 @@ type IconType = LucideIcon
 /**
  * 기기·상태 타일 (iPad '홈' 앱 액세서리 타일 방식).
  *  - on: 켜짐/활성 → 밝게 반전된 타일 + 색 있는 아이콘
- *  - off: 어두운 타일 + 회색 아이콘
+ *  - off: 바탕보다 어두운 타일 + 흐린 아이콘·글자
  *  - danger / warn: 위험·주의 상태는 연한 상태색 바탕
  * 아이콘에 동그라미 배경을 두지 않는다. 상태 글자는 한 줄로 짧게.
  */
@@ -32,9 +32,11 @@ export function Tile({
   big?: boolean
   className?: string
 }) {
-  const bg = tone === 'danger' ? 'bg-danger-soft' : tone === 'warn' ? 'bg-warn-soft' : on ? 'bg-tile-on shadow-[var(--shadow-tile)]' : 'bg-tile-off'
-  const iconColor = tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : on ? (glyph ?? 'text-brand-ink') : 'text-ink-3'
-  const nameColor = tone ? 'text-ink' : on ? 'text-tile-on-ink' : 'text-ink'
+  const bg = tone === 'danger' ? 'bg-danger-soft' : tone === 'warn' ? 'bg-warn-soft' : on ? 'bg-tile-on shadow-[var(--shadow-tile)]' : 'bg-tile-off ring-1 ring-inset ring-line/70'
+  // 꺼진 기기는 바탕·아이콘·글자를 모두 한 단계 어둡게 해서 켜진 기기와 바로 구분되게 한다
+  const off = !on && (!tone || tone === 'muted')
+  const iconColor = tone === 'danger' ? 'text-danger' : tone === 'warn' ? 'text-warn' : on ? (glyph ?? 'text-brand-ink') : 'text-ink-3 opacity-70'
+  const nameColor = off ? 'text-ink-2' : tone ? 'text-ink' : 'text-tile-on-ink'
   const stateColor = tone === 'danger' ? 'text-danger font-semibold' : tone === 'warn' ? 'text-warn font-semibold'
     : on ? 'text-tile-on-ink-2' : 'text-ink-2'
 

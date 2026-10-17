@@ -71,7 +71,8 @@
   --color-tile-on: #ffffff;
   --color-tile-on-ink: #1d1d1f;
   --color-tile-on-ink-2: #6e6e73;
-  --color-tile-off: #e5e5ea;
+  --color-card-on: #ffffff;           /* 홈 기기 카드: 동작 중 */
+  --color-tile-off: #d8d8dd;          /* 꺼진 기기: 바탕보다 확실히 어둡게 */
 
   /* 켜진 기기 아이콘 색 (홈 앱: 조명 노랑 · 환기 청록 · 물 파랑 · 화구 주황) */
   --color-glyph-light: #e6a100;
@@ -132,7 +133,8 @@
   --color-tile-on: #f5f5f7;
   --color-tile-on-ink: #1d1d1f;
   --color-tile-on-ink-2: #6e6e73;
-  --color-tile-off: #1c1c1e;
+  --color-card-on: #2c2c2e;
+  --color-tile-off: #121214;          /* 꺼진 기기: 목록 칸(#1c1c1e)보다 어둡게 */
 
   --color-glyph-light: #e6a100;
   --color-glyph-fan: #0a9fb8;
