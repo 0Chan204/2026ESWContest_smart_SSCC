@@ -21,6 +21,9 @@ v0.3.1 추가 (낙상 대응 단계화):
 
 v0.4 추가 (엣지 노드 · 최종 재실 판단 결과):
 - SensingResultIn / SensingResult: 재실 판단 담당이 보낸 최종 결과 (형식 확정 전이라 추가 필드도 그대로 보관)
+
+v0.4.1 추가:
+- AiDecisionRequest / AiDecisionRecord에 announcement(음성 안내 문장), expiresAt(만료 시각), status(executed/expired)
 """
 
 import re
@@ -373,6 +376,15 @@ class StreamEnvelope(BaseModel):
 # 그 페이지가 POST .../resolve 또는 .../report를 호출하고, 그 뒤 단계는 진행되지 않습니다.
 # ---------------------------------------------------------------------------
 
+def _check_iso_time(value: str) -> str:
+    """ISO 8601 시각인지 확인합니다 ('Z'로 끝나는 UTC 표기도 허용)"""
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("ISO 8601 시각이어야 합니다. 예: 2026-10-17T12:00:02+00:00") from exc
+    return value
+
+
 def _normalize_phone(value: str) -> str:
     """'010-1234-5678', '010 1234 5678' 처럼 들어와도 숫자만 남겨 저장합니다.
     (문자 발송 API가 숫자만 있는 번호를 요구하기 때문)"""
@@ -542,6 +554,18 @@ class AiDecisionRequest(BaseModel):
     room: Optional[str] = None
     actions: list[AiAction] = Field(default_factory=list)
     weatherBriefing: bool = Field(default=False, description="true면 서버가 날씨 안내를 만들어 대시보드에 보내고 응답(weather)에 담음")
+    announcement: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+        description="대시보드가 화면에 띄우고 음성으로 읽을 안내 문장 (v0.4.1)",
+    )
+    expiresAt: Optional[str] = Field(
+        default=None,
+        description="이 시각이 지나서 도착한 판단은 실행하지 않고 expired로 기록 (ISO 8601). 낙상(fall_detected)은 예외",
+    )
+
+    _expires = field_validator("expiresAt")(lambda value: value if value is None else _check_iso_time(value))
 
 
 class AiActionResult(BaseModel):
@@ -567,6 +591,11 @@ class AiDecisionRecord(BaseModel):
     fallIncidentId: Optional[str] = None
     feedback: Optional[SafetyEventFeedbackRecord] = None
     weather: Optional["WeatherBriefing"] = Field(default=None, description="weatherBriefing=true일 때 만든 날씨 안내")
+    announcement: Optional[str] = None
+    expiresAt: Optional[str] = None
+    status: Literal["executed", "expired"] = Field(
+        default="executed", description="executed: 실행함 / expired: 만료 시각이 지나 도착해서 실행하지 않음"
+    )
 
 
 class AiDecisionAccepted(AiDecisionRecord):
@@ -623,14 +652,6 @@ AiDecisionListResponse.model_rebuild()
 # AI 중앙 판정 엔진이 HTTP로 꺼내 씁니다. 서버는 값을 판단하지 않습니다.
 # 아래에 없는 필드가 와도 버리지 않고 그대로 저장·전달합니다 (형식이 확정되기 전이라).
 # ---------------------------------------------------------------------------
-
-def _check_iso_time(value: str) -> str:
-    try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("observedAt은 ISO 8601 시각이어야 합니다. 예: 2026-10-17T12:00:02+00:00") from exc
-    return value
-
 
 class SensingResultIn(BaseModel):
     """재실 판단 담당 -> 서버 (MQTT home/edge/result)"""

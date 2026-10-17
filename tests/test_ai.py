@@ -5,6 +5,10 @@ v0.3: AI 중앙 판정 엔진 연동과 전등·정수기 제어 테스트입니
 판단 기록·피드백·기기 상태가 판정 엔진에 맞는 형태로 나오는지 확인합니다.
 """
 
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from app import home_device_service, state_store
 from app.config import settings
 from app.schemas import BurnerTelemetry, LastControl, TelemetryReport
@@ -345,3 +349,127 @@ def test_mqtt_messages_are_routed_by_topic(client):
     assert items[WATER]["is_on"] is True
     assert items[STOVE]["is_on"] is True
     assert items[STOVE]["current_state"]["level"] == 3
+
+
+# ---------------------------------------------------------------------------
+# v0.4.1: 음성 안내(announcement) / 판단 만료(expiresAt)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def broadcasts(monkeypatch):
+    from app import ws_hub
+
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(ws_hub, "broadcast_threadsafe", lambda event, data: sent.append((event, data)))
+    return sent
+
+
+def _iso_from_now(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat(timespec="seconds")
+
+
+def test_announcement_only_decision(client, published, broadcasts):
+    res = client.post(
+        f"{PREFIX}/ai/decisions",
+        json=_decision("d-ann", "morning_briefing", [], announcement="좋은 아침이에요. 오늘은 맑고 22도예요."),
+    )
+    assert res.status_code == 202
+    body = res.json()
+    assert (body["announcement"], body["status"], body["actions"]) == ("좋은 아침이에요. 오늘은 맑고 22도예요.", "executed", [])
+    assert published == []
+
+    announcements = [data for event, data in broadcasts if event == "ai.announcement"]
+    assert len(announcements) == 1
+    assert announcements[0]["text"] == "좋은 아침이에요. 오늘은 맑고 22도예요."
+    assert announcements[0]["decisionId"] == "d-ann"
+
+    event = client.get(f"{PREFIX}/safety-events/{body['eventId']}").json()
+    assert "안내: 좋은 아침이에요" in event["action"]
+    # 판단 기록에도 남는다
+    assert client.get(f"{PREFIX}/ai/decisions/d-ann").json()["announcement"].startswith("좋은 아침")
+
+
+def test_announcement_with_actions(client, published, broadcasts):
+    res = client.post(
+        f"{PREFIX}/ai/decisions",
+        json=_decision(
+            "d-ann-water",
+            "water_dispense",
+            [{"device": "water_purifier", "action": "dispense", "amountMl": 250}],
+            announcement="물 250ml를 드릴게요.",
+        ),
+    ).json()
+    assert res["actions"][0]["status"] == "sent"
+    assert [c["type"] for c in published] == ["dispense"]
+    assert [data["text"] for event, data in broadcasts if event == "ai.announcement"] == ["물 250ml를 드릴게요."]
+
+
+def test_no_announcement_broadcast_when_not_sent(client, published, broadcasts):
+    client.post(f"{PREFIX}/ai/decisions", json=_decision("d-no-ann", "bedtime_light_off", [{"device": "light", "action": "off"}]))
+    assert [event for event, _ in broadcasts if event == "ai.announcement"] == []
+
+
+def test_expired_decision_is_not_executed(client, published, broadcasts):
+    res = client.post(
+        f"{PREFIX}/ai/decisions",
+        json=_decision(
+            "d-expired",
+            "bedtime_light_off",
+            [{"device": "light", "action": "off"}],
+            announcement="불을 끌게요.",
+            expiresAt=_iso_from_now(-60),
+        ),
+    )
+    assert res.status_code == 202  # 재전송이 계속되지 않도록 정상 응답
+    body = res.json()
+    assert (body["status"], body["actions"], body["eventId"], body["duplicate"]) == ("expired", [], None, False)
+    assert published == []
+    assert [event for event, _ in broadcasts if event == "ai.announcement"] == []
+    assert client.get(f"{PREFIX}/safety-events").json()["items"] == []
+
+    # 같은 판단을 다시 보내도 실행하지 않는다
+    again = client.post(
+        f"{PREFIX}/ai/decisions",
+        json=_decision("d-expired", "bedtime_light_off", [{"device": "light", "action": "off"}], expiresAt=_iso_from_now(60)),
+    )
+    assert again.status_code == 200
+    assert (again.json()["status"], again.json()["duplicate"]) == ("expired", True)
+    assert published == []
+
+
+def test_decision_before_expiry_is_executed(client, published):
+    body = client.post(
+        f"{PREFIX}/ai/decisions",
+        json=_decision(
+            "d-in-time", "bedtime_light_off", [{"device": "light", "action": "off"}], expiresAt=_iso_from_now(60)
+        ),
+    ).json()
+    assert body["status"] == "executed"
+    assert [c["type"] for c in published] == ["off"]
+
+
+def test_expiry_compares_across_timezones(client, published):
+    """만료 시각을 한국 시각(+09:00)으로 보내도 같은 순간으로 비교한다."""
+    kst = timezone(timedelta(hours=9))
+    future_kst = (datetime.now(timezone.utc) + timedelta(seconds=60)).astimezone(kst).isoformat(timespec="seconds")
+    past_kst = (datetime.now(timezone.utc) - timedelta(seconds=60)).astimezone(kst).isoformat(timespec="seconds")
+    ok = client.post(f"{PREFIX}/ai/decisions", json=_decision("d-kst-ok", "x", [], expiresAt=future_kst)).json()
+    late = client.post(f"{PREFIX}/ai/decisions", json=_decision("d-kst-late", "x", [], expiresAt=past_kst)).json()
+    assert (ok["status"], late["status"]) == ("executed", "expired")
+
+
+def test_fall_decision_runs_even_if_expired(client, published):
+    body = client.post(
+        f"{PREFIX}/ai/decisions",
+        json=_decision("d-fall-late", "fall_detected", [], room="toilet", expiresAt=_iso_from_now(-60)),
+    ).json()
+    assert body["status"] == "executed"
+    assert body["fallIncidentId"] is not None
+    assert [c["type"] for c in published] == ["turn_off", "blink"]
+
+
+def test_invalid_expires_at_is_rejected(client):
+    res = client.post(f"{PREFIX}/ai/decisions", json=_decision("d-bad", "x", [], expiresAt="내일"))
+    assert res.status_code == 422
+    too_long = client.post(f"{PREFIX}/ai/decisions", json=_decision("d-long", "x", [], announcement="가" * 501))
+    assert too_long.status_code == 422

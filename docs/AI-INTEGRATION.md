@@ -68,7 +68,8 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
   "timestamp": "2026-10-16T23:10:00+09:00",
   "room": "room",
   "actions": [ { "device": "light", "action": "off" } ],
-  "weatherBriefing": false
+  "announcement": "주무실 시간이라 불을 끌게요.",
+  "expiresAt": "2026-10-16T23:10:30+09:00"
 }
 ```
 
@@ -78,7 +79,9 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 | `scenario` | 시나리오 이름 (아래 표) |
 | `room` | 판단 대상 구역. `deviceId`를 생략하면 이 구역의 기기를 우선 사용 |
 | `actions` | 실행할 제어 목록. 순서대로 실행하며, 하나가 실패해도 나머지는 실행 |
-| `weatherBriefing` | `true`면 서버가 날씨 안내 문장을 만들어 대시보드에 보내고 응답의 `weather`에 담습니다 (아래 "날씨 안내") |
+| `announcement` | (선택) 대시보드가 화면에 띄우고 **음성으로 읽을 안내 문장** (최대 500자). 제어 없이 안내만 보내도 됩니다 |
+| `expiresAt` | (선택) 만료 시각. 이 시각이 지나서 도착한 판단은 **실행하지 않고** `status: "expired"`로 기록합니다 |
+| `weatherBriefing` | `true`면 서버가 날씨 안내 문장을 만들어 대시보드에 보내고 응답의 `weather`에 담습니다 (아래 "날씨 안내"). 판정 엔진이 `announcement`로 안내를 만든다면 보내지 마세요 (두 번 읽힘) |
 
 `actions[]` 항목
 
@@ -116,6 +119,22 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
 - 판단 응답의 `actions`에 인덕션 `turn_off`, 전등 `blink` 결과가 들어 있고, 단계 진행 상황은
   `GET /api/v1/fall-incidents/{fallIncidentId}`의 `stage`(user/guardian), `status`로 확인합니다.
 
+음성 안내 (`announcement`)
+
+- 대시보드에 WebSocket 이벤트 `ai.announcement`로 보내고, 대시보드가 화면 표시 + 음성(TTS) 재생을 합니다.
+  `{ "decisionId", "scenario", "room", "text", "announcedAt" }`
+- 날씨를 안내에 넣으려면 판정 엔진이 `GET /api/v1/weather`로 날씨를 가져가 문장을 만듭니다.
+  `available: false`면 날씨 문장을 빼고, `stale: true`면 `basedOn` 기준 시각을 붙이면 됩니다.
+- 안내 문장은 판단 기록(`announcement`)과 안전 이벤트(`ai_control`의 action)에도 남습니다.
+
+판단 만료 (`expiresAt`)
+
+- 판정 엔진의 outbox가 네트워크 장애 뒤 늦게 재전송한 판단이 엉뚱한 때 실행되지 않도록 합니다.
+- 만료된 판단은 가전 제어, 안내, 안전 이벤트를 모두 하지 않고, 기록만 `status: "expired"`로 남깁니다.
+- 응답은 그대로 **202**입니다 (outbox가 실패로 보고 계속 재전송하지 않도록). 응답의 `status`로 구분하세요.
+- **낙상(`fall_detected`)은 늦게 도착해도 안전을 위해 항상 실행합니다.**
+- 시간대가 있는 ISO 8601 시각으로 보내세요 (`+09:00` 또는 `Z`). 서버와 판정 엔진의 시계가 맞아야 합니다.
+
 날씨 안내 (`weatherBriefing: true`)
 
 - 서버가 30분마다 Open-Meteo에서 날씨를 미리 받아 저장해 두고, 판단이 오면 그 값으로 바로 안내합니다.
@@ -149,11 +168,16 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기 제어** 섹션에
   "fallIncidentId": null,
   "feedback": null,
   "weather": null,
+  "announcement": "주무실 시간이라 불을 끌게요.",
+  "expiresAt": "2026-10-16T23:10:30+09:00",
+  "status": "executed",
   "duplicate": false
 }
 ```
 
 `actions[].status`: `sent`(기기로 전송), `rejected`(조건이 맞지 않아 거부, `message`에 이유), `failed`(전송 실패)
+
+`status`: `executed`(실행함), `expired`(만료 시각이 지나 도착해서 실행하지 않음, `actions`는 빈 목록)
 
 ### 판단 기록과 피드백 조회: `GET /api/v1/ai/decisions?limit=50`, `GET /api/v1/ai/decisions/{decisionId}`
 
