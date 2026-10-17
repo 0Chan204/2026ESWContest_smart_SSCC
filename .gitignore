@@ -1,55 +1,89 @@
-# Prerequisites
-*.d
+# Repository-specific exclusions
+.agents/
+.codex/
+.devcontainer/
+.vscode/
+tests/
+Kconfig.projbuild
+.clangd
 
-# Object files
+# Build directories and compiled artifacts
+build/
+dist/
+*.d
 *.o
-*.ko
 *.obj
 *.elf
-
-# Linker output
-*.ilk
+*.bin
+*.hex
 *.map
+*.ilk
 *.exp
-
-# Precompiled Headers
 *.gch
 *.pch
-
-# Libraries
 *.lib
 *.a
 *.la
 *.lo
-
-# Shared objects (inc. Windows DLLs)
 *.dll
 *.so
 *.so.*
 *.dylib
-
-# Executables
 *.exe
 *.out
 *.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
 *.dSYM/
 *.su
 *.idb
 *.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
 *.dwo
+
+# ESP-IDF generated configuration and downloaded dependencies
+sdkconfig
+sdkconfig.old
+flasher_args.json
+**/components/.idf/
+managed_components/
+.espressif/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+compile_commands.json
+
+# Python caches and virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+venv/
+.venv/
+env/
+
+# Editor caches and user settings
+.ccls-cache/
+*.user
+*.workspace
+*.suo
+*.sln.docstates
+
+# Temporary files and logs
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+*.log
+
+# Operating system metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+.directory
+Thumbs.db
+ehthumbs.db
+Desktop.ini
