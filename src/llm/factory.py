@@ -1,10 +1,21 @@
 from __future__ import annotations
 
+import os
+
 from src.llm.adapters.base import BaseLLMAdapter
 
 
-def create_llm(name: str | None) -> BaseLLMAdapter | None:
-    normalized = (name or "none").strip().lower()
+LLM_PROVIDERS = ("none", "gemini", "qwen", "llama", "exaone")
+
+
+def resolve_llm_provider(name: str | None = None) -> str:
+    """Resolve an explicit provider, or LLM_PROVIDER while preserving the old default."""
+    raw = os.getenv("LLM_PROVIDER", "none") if name is None else name
+    return (raw or "none").strip().lower()
+
+
+def create_llm(name: str | None = None) -> BaseLLMAdapter | None:
+    normalized = resolve_llm_provider(name)
 
     if normalized in {"none", "off", "fallback"}:
         return None
@@ -26,6 +37,6 @@ def create_llm(name: str | None) -> BaseLLMAdapter | None:
         return EXAONEAdapter()
 
     raise ValueError(
-        f"Unknown LLM '{name}'. "
-        "Choose one of: none, gemini, qwen, llama, exaone"
+        f"Unknown LLM '{normalized}'. "
+        f"Choose one of: {', '.join(LLM_PROVIDERS)}"
     )

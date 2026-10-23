@@ -97,10 +97,76 @@ python test_realtime.py --llm none --tts dry-run
 
 `dry-run`은 테스트용 WAV를 생성하며 파일을 자동 재생하지 않습니다.
 실제 OS 음성은 `--tts pyttsx3`를 사용합니다. `python -m pip install -r requirements.txt`는
-선택적 TTS 및 Gemini 의존성을 설치합니다. Gemini adapter는 Vertex AI의 `GOOGLE_CLOUD_PROJECT`와
+선택적 TTS, Gemini 및 EXAONE API 의존성을 설치합니다. Gemini adapter는 Vertex AI의 `GOOGLE_CLOUD_PROJECT`와
 선택적인 `GOOGLE_CLOUD_LOCATION`을 사용합니다. Qwen adapter는 별도 로컬 모델과
-`torch`, `transformers`, `accelerate`가 필요합니다. `llama`, `exaone` adapter는 placeholder입니다.
+`torch`, `transformers`, `accelerate`가 필요합니다. `llama` adapter는 placeholder입니다.
 기본 `--llm none` 경로는 이러한 모델과 인증을 요구하지 않습니다.
+
+## Qwen / EXAONE 선택
+
+EXAONE은 로컬 모델을 다운로드하거나 GPU에 적재하지 않고 FriendliAI의 OpenAI 호환 Chat Completions
+API를 사용합니다. 공통 `BaseLLMAdapter` 계약을 사용하므로 기존 안내문 생성, 위험 경고, TTS 입력 및
+자연어 피드백 JSON 해석 호출부는 모델 차이를 알 필요가 없습니다. EXAONE 요청이 실패하면 기존
+`LLMMessageGenerator`는 중앙 판단 결과를 바꾸지 않고 기본 안내문을 사용합니다. Qwen을 자동으로
+대체 로딩하지 않습니다.
+
+의존성을 설치합니다.
+
+```sh
+python -m pip install -r requirements.txt
+```
+
+PowerShell에서 EXAONE을 선택하는 예시는 다음과 같습니다. `.env.example`은 설정 예시일 뿐 자동으로
+로딩되지 않으므로 실제 실행 환경에 변수를 주입해야 합니다.
+
+```powershell
+$env:LLM_PROVIDER = "exaone"
+$env:FRIENDLI_API_KEY = "<FriendliAI Personal API Key>"
+$env:EXAONE_MODEL = "LGAI-EXAONE/EXAONE-4.0-32B"
+$env:EXAONE_BASE_URL = "https://api.friendli.ai/serverless/v1"
+python test_alert.py --risk WARNING --tts dry-run
+```
+
+Linux/macOS에서는 다음과 같이 설정합니다.
+
+```sh
+export LLM_PROVIDER=exaone
+export FRIENDLI_API_KEY='<FriendliAI Personal API Key>'
+python test_alert.py --risk WARNING --tts dry-run
+```
+
+기존 로컬 Qwen은 `LLM_PROVIDER=qwen` 또는 명령행의 `--llm qwen`으로 선택합니다. 명령행
+`--llm` 값이 환경변수보다 우선합니다. `LLM_PROVIDER`가 없으면 기존과 동일하게 `none`이 기본이며,
+API나 로컬 모델 없이 기본 안내문을 사용합니다.
+
+| 환경변수 | 기본값 | 의미 |
+| --- | --- | --- |
+| `LLM_PROVIDER` | `none` | `none`, `qwen`, `exaone` 등 기존 provider 선택 |
+| `FRIENDLI_API_KEY` | 없음 | EXAONE 선택 시 필수인 Personal API Key |
+| `EXAONE_MODEL` | `LGAI-EXAONE/EXAONE-4.0-32B` | FriendliAI 모델 ID |
+| `EXAONE_BASE_URL` | `https://api.friendli.ai/serverless/v1` | OpenAI 호환 API base URL |
+| `EXAONE_TIMEOUT_SECONDS` | `30` | 요청별 timeout(초) |
+| `EXAONE_MAX_RETRIES` | `2` | SDK가 네트워크 오류·429·서버 오류에 수행할 제한적 재시도 수 |
+| `EXAONE_MAX_TOKENS` | `256` | 최대 응답 토큰 수 |
+| `EXAONE_TEMPERATURE` | `0.3` | 생성 temperature |
+
+Mock 테스트는 API 키 없이 실행됩니다.
+
+```sh
+python -m unittest tests.test_exaone_adapter -v
+```
+
+실제 FriendliAI 연결 테스트는 키가 설정된 경우에만 명시적으로 실행합니다. 기본 테스트 실행에서는
+건너뛰므로 비용이나 외부 요청이 발생하지 않습니다.
+
+```powershell
+$env:RUN_EXAONE_API_TEST = "1"
+python -m unittest tests.test_exaone_adapter.EXAONELiveAPITest -v
+```
+
+기존 HomeVIS 확인 명령인 `test_alert.py`와 `test_realtime.py`에서 그대로 `--llm exaone`을 사용할 수
+있으며 EXAONE 전용 실행 파이프라인은 없습니다. 실제 키는 저장소에 기록하지 마세요. `.gitignore`는
+`.env`와 `.env.*`를 제외하고 예시 파일 `.env.example`만 추적하도록 설정되어 있습니다.
 
 ## 주요 설정
 

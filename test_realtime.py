@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.control import CentralController, ApplianceUpdate, SensingUpdate
 from src.alert_service import AlertService
+from src.llm.factory import LLM_PROVIDERS, create_llm, resolve_llm_provider
 from src.llm.message_generator import LLMMessageGenerator
 from src.output.output_writer import OutputWriter
 from src.voice.tts import DryRunTTS, Pyttsx3TTS
@@ -19,15 +20,16 @@ def demo():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, help="UTF-8 JSONL event file; defaults to demo")
-    parser.add_argument("--llm", default="none", choices=["none", "gemini", "qwen", "llama", "exaone"])
+    parser.add_argument(
+        "--llm", default=resolve_llm_provider(), choices=LLM_PROVIDERS,
+        help="LLM provider (default: LLM_PROVIDER or none)",
+    )
     parser.add_argument("--tts", default="dry-run", choices=["dry-run", "pyttsx3"])
     parser.add_argument("--output-dir", type=Path, default=Path("output/realtime"))
     args = parser.parse_args()
-    controller = CentralController()
-    llm = None
-    if args.llm != "none":
-        from src.llm.factory import create_llm
-        llm = create_llm(args.llm)
+    llm = create_llm(args.llm)
+    # Message generation and natural-language feedback share the selected client.
+    controller = CentralController(feedback_llm=llm)
     service = AlertService(LLMMessageGenerator(llm),
                            DryRunTTS() if args.tts == "dry-run" else Pyttsx3TTS(), args.output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)

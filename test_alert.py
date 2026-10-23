@@ -11,7 +11,7 @@ import argparse
 import importlib.util
 
 from src.alert_service import AlertService
-from src.llm.factory import create_llm
+from src.llm.factory import LLM_PROVIDERS, create_llm, resolve_llm_provider
 from src.llm.message_generator import LLMMessageGenerator
 from src.models import RiskDecision, RiskLevel
 from src.output.output_writer import OutputWriter
@@ -36,8 +36,9 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--llm",
-        choices=("none","gemini", "qwen", "llama", "exaone"),
-        default="none",
+        choices=LLM_PROVIDERS,
+        default=resolve_llm_provider(),
+        help="LLM provider (default: LLM_PROVIDER or none)",
     )
     parser.add_argument("--prompt", default="v1")
     parser.add_argument(
