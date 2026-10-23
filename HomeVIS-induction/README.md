@@ -102,6 +102,57 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 포트는 실제 장치에 맞게 바꿉니다. 모니터 종료는 `Ctrl+]`입니다. 보드에 업로드하기 전에 실제 모듈이 N16R8인지 확인하세요. 다른 메모리 구성이라면 `menuconfig`에서 Flash 용량과 PSRAM QUAD/OCT 모드를 맞춥니다.
 
+## 데이터 플로우
+
+로컬 입력과 MQTT 명령은 `control_task`에서 처리하며, 기기 상태는 이 태스크만 변경합니다. LED·OLED·네트워크 태스크는 뮤텍스로 보호된 상태 복사본을 읽습니다. 아래 MQTT 화살표는 브로커를 경유하며, 토픽의 기본 접두사는 `home/kitchen/induction/induction-01`입니다.
+
+```mermaid
+flowchart TB
+    Server["HomeVIS 서버"]
+    CommandQueue["명령 큐 · 16개"]
+    TemperatureQueue["최신 온도 큐 · 1개"]
+    Snapshot["상태 복사본<br/>뮤텍스로 보호"]
+    AckQueue["ACK 큐 · 32개"]
+    SoundQueue["최신 효과음 큐 · 1개"]
+
+    subgraph Core0["ESP32-S3 · Core 0: 통신"]
+        Receive["MQTT 콜백<br/>메시지 조립 · JSON 검증"]
+        Transmit["MQTT 송신<br/>network_task · 오류 응답 콜백"]
+    end
+
+    subgraph Core1["ESP32-S3 · Core 1: 기기 동작"]
+        Input["터치 · 엔코더<br/>5ms마다 입력 확인"]
+        Control["control_task<br/>명령 판정 · 상태 전환 · 사용 시간"]
+        Sensor["peripheral_task<br/>GY906 실측 · CRC 검증 · 500ms 주기"]
+        LED["led_task<br/>점등 개수 · 밝기 계산 → RMT DMA"]
+        Display["peripheral_task<br/>OLED 상태 · 단계 · 온도 표시"]
+        Sound["sound_task<br/>부저 효과음 재생"]
+    end
+
+    Server -->|"command · QoS 1 · retain false"| Receive
+    Receive -->|"형식이 유효한 명령"| CommandQueue
+    CommandQueue --> Control
+    Receive -->|"식별 가능한 잘못된 명령: rejected / 큐 초과: failed"| Transmit
+    Input --> Control
+    Sensor --> TemperatureQueue
+    TemperatureQueue --> Control
+    Control -->|"확정된 최신 상태"| Snapshot
+    Snapshot --> LED
+    LED --> Pixels["WS2812 12개<br/>1~2단: 3개 / 3~4단: 6개<br/>5~6단: 9개 / 7~9단: 12개"]
+    Snapshot --> Display
+    Control -->|"전원 전환 · 과열 알람 변경"| SoundQueue
+    SoundQueue --> Sound
+    Control -->|"applied / rejected 또는 캐시된 ACK"| AckQueue
+    AckQueue --> Transmit
+    Snapshot -->|"3초마다 + 조작·상태 전환 시"| Transmit
+    Transmit -->|"state / ack · QoS 1 · retain false"| Server
+```
+
+- **로컬 조작:** 터치·엔코더 입력을 제어 태스크가 직접 읽고 상태에 반영합니다. 해당 루프에서는 원격 명령 처리를 미룹니다.
+- **온도 측정:** 주변장치 태스크가 센서 응답을 검증해 최신 온도 큐에 넣고, 제어 태스크가 온도 유효성과 냉각·과열 상태를 관리합니다. OLED 출력도 같은 주변장치 태스크가 담당해 I²C 접근을 순서대로 처리합니다.
+- **원격 명령:** MQTT 콜백이 검증한 명령을 큐에 넣으면 제어 태스크가 중복 ID와 현재 상태를 확인합니다. 적용 결과와 당시 상태를 ACK 큐에 넣고, 중복 명령에는 캐시된 ACK를 재사용합니다.
+- **출력과 보고:** LED는 최신 상태에 따라 점등 개수와 밝기를 바꾸고, 부저는 효과음 요청을 처리합니다. 네트워크 태스크는 상태와 일반 ACK를, 수신 콜백은 검증 오류·명령 큐 초과에 대한 ACK를 MQTT 송신 큐에 넣습니다. JSON이 깨졌거나 문자열 `commandId`가 없어 식별할 수 없는 메시지는 ACK 없이 무시합니다.
+
 ## 듀얼 코어와 메모리
 
 | 태스크 | Core | 동작 |
