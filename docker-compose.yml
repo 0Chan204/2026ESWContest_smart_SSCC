@@ -127,5 +127,18 @@ services:
       - mosquitto
       - backend
 
+  voice-ai-simulator:
+    # 가짜 AI 판정 엔진의 음성 명령 처리 (v0.6). 실제 판정 엔진이 연결되면 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-voice-ai-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_voice_ai.py", "--host", "mosquitto", "--api", "http://backend:8000"]
+    healthcheck:
+      disable: true
+    depends_on:
+      - mosquitto
+      - backend
+
 volumes:
   mongo-data:

@@ -116,6 +116,15 @@ class Settings:
     # 최종 판단 결과 보관 기간(일). 지나면 MongoDB가 자동으로 지웁니다.
     SENSING_RESULT_TTL_DAYS: int = int(os.getenv("SENSING_RESULT_TTL_DAYS", "7"))
 
+    # --- 음성 명령 (v0.6, docs/VOICE.md) ---
+    # 대시보드가 보낸 문장을 이 토픽으로 AI 판정 엔진에 전달합니다.
+    VOICE_REQUEST_TOPIC: str = os.getenv("VOICE_REQUEST_TOPIC", "home/voice/request")
+    # 이 시간(초) 안에 판정 엔진의 판단이 없으면 timeout, 확인 창은 이 시간(초) 안에 답이 없으면 자동 취소
+    VOICE_AI_TIMEOUT_SEC: int = int(os.getenv("VOICE_AI_TIMEOUT_SEC", "10"))
+    VOICE_CONFIRM_TIMEOUT_SEC: int = int(os.getenv("VOICE_CONFIRM_TIMEOUT_SEC", "30"))
+    # 음성 문장은 개인정보라 이 기간(일)이 지나면 DB에서 자동 삭제합니다.
+    VOICE_COMMAND_TTL_DAYS: int = int(os.getenv("VOICE_COMMAND_TTL_DAYS", "30"))
+
     # --- 날씨 안내 (v0.3.2, Open-Meteo: API 키 불필요) ---
     # 대회장 인터넷이 불안정하므로 요청이 올 때 받지 않고, WEATHER_REFRESH_SEC마다 미리 받아 캐시합니다.
     # WEATHER_ENABLED=false면 날씨를 받으러 나가지 않습니다 (마지막으로 저장된 값만 사용).

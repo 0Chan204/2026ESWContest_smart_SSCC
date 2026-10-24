@@ -594,6 +594,14 @@ class AiDecisionRequest(BaseModel):
         description="이 시각이 지나서 도착한 판단은 실행하지 않고 expired로 기록 (ISO 8601). 낙상(fall_detected)은 예외",
     )
 
+    voiceId: Optional[str] = Field(
+        default=None, description="(v0.6) 음성 명령(home/voice/request)에 대한 판단이면 그 voiceId"
+    )
+    requiresConfirmation: bool = Field(
+        default=False,
+        description="(v0.6) true면 actions를 바로 실행하지 않고 사용자 확인(대시보드 확인 창)을 받은 뒤 실행. 음성 명령에서만 사용",
+    )
+
     _expires = field_validator("expiresAt")(lambda value: value if value is None else _check_iso_time(value))
 
 
@@ -601,7 +609,8 @@ class AiActionResult(BaseModel):
     device: DeviceType
     deviceId: Optional[str] = None
     action: AiActionName
-    status: Literal["sent", "rejected", "failed"]
+    # pending(v0.6): 사용자 확인 대기 / cancelled(v0.6): 사용자가 취소했거나 확인 시간이 지남
+    status: Literal["sent", "rejected", "failed", "pending", "cancelled"]
     commandId: Optional[str] = None
     message: Optional[str] = None
 
@@ -622,9 +631,13 @@ class AiDecisionRecord(BaseModel):
     weather: Optional["WeatherBriefing"] = Field(default=None, description="weatherBriefing=true일 때 만든 날씨 안내")
     announcement: Optional[str] = None
     expiresAt: Optional[str] = None
-    status: Literal["executed", "expired"] = Field(
-        default="executed", description="executed: 실행함 / expired: 만료 시각이 지나 도착해서 실행하지 않음"
+    status: Literal["executed", "expired", "awaiting_confirmation", "cancelled"] = Field(
+        default="executed",
+        description="executed: 실행함 / expired: 만료 시각이 지나(또는 음성 명령이 이미 끝나) 실행하지 않음 / "
+        "awaiting_confirmation: 사용자 확인 대기 / cancelled: 사용자가 취소함 (v0.6)",
     )
+    voiceId: Optional[str] = None
+    requiresConfirmation: bool = False
 
 
 class AiDecisionAccepted(AiDecisionRecord):
@@ -723,3 +736,75 @@ class SensingResult(SensingResultIn):
 class SensingResultListResponse(BaseModel):
     items: list[SensingResult] = Field(..., description="오래된 것부터")
     total: int = Field(..., description="조건에 맞는 전체 개수 (items는 그중 최근 limit개)")
+
+
+
+# ---------------------------------------------------------------------------
+# 12. 음성 명령 (v0.6)
+#
+# 대시보드가 브라우저 음성 인식으로 만든 전체 문장을 받아 저장하고, AI 판정 엔진에 MQTT로 전달합니다.
+# 판정 엔진은 POST /ai/decisions(voiceId 포함)로 답변·제어를 보내고, 서버는 진행 상황을 WebSocket
+# voice.status로 대시보드에 알립니다. 흐름과 형식은 docs/VOICE.md 참고.
+# ---------------------------------------------------------------------------
+
+VoiceStatus = Literal[
+    "received", "thinking", "confirm_required", "executed", "answered", "cancelled", "timeout", "failed"
+]
+
+
+class VoiceCommandIn(BaseModel):
+    """대시보드 -> 서버: 인식된 전체 문장"""
+
+    text: str = Field(..., min_length=1, max_length=500, description="인식된 전체 문장")
+    lang: str = Field(default="ko-KR", max_length=20)
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="음성 인식 신뢰도")
+    source: str = Field(default="voice", max_length=30, description="입력 경로 (기본 voice)")
+    recognizedAt: Optional[str] = Field(default=None, description="인식이 끝난 시각 (ISO 8601)")
+
+    _recognized = field_validator("recognizedAt")(lambda value: value if value is None else _check_iso_time(value))
+
+    @field_validator("text")
+    @classmethod
+    def _strip_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("빈 문장입니다.")
+        return value
+
+
+class VoiceCommand(BaseModel):
+    """저장된 음성 명령 1건"""
+
+    voiceId: str
+    text: str
+    lang: str = "ko-KR"
+    confidence: Optional[float] = None
+    source: str = "voice"
+    recognizedAt: Optional[str] = None
+    receivedAt: str
+    status: VoiceStatus
+    expiresAt: str = Field(..., description="이 시각까지 판정 엔진의 판단이 없으면 timeout")
+    decisionId: Optional[str] = None
+    answer: Optional[str] = Field(default=None, description="사용자에게 들려줄 답변 (판정 엔진의 announcement)")
+    requiresConfirmation: bool = False
+    confirmText: Optional[str] = Field(default=None, description="확인 창 문구 (서버가 만듦)")
+    confirmDeadline: Optional[str] = Field(default=None, description="이 시각까지 확인이 없으면 자동 취소")
+    confirmedAt: Optional[str] = None
+    pendingActions: list[AiAction] = Field(default_factory=list, description="확인을 기다리는 제어 (내부용)")
+    actions: list[AiActionResult] = Field(default_factory=list, description="제어 결과")
+    updatedAt: str
+
+
+class VoiceCommandAccepted(BaseModel):
+    voiceId: str
+    status: Literal["received"] = "received"
+    receivedAt: str
+
+
+class VoiceCommandListResponse(BaseModel):
+    items: list[VoiceCommand] = Field(..., description="최신순")
+    total: int
+
+
+class VoiceConfirmRequest(BaseModel):
+    approved: bool = Field(..., description="true: 실행 / false: 취소")

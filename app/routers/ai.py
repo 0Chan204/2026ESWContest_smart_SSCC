@@ -9,7 +9,7 @@ AI 중앙 판정 엔진이 호출하는 REST API입니다. (v0.3, Swagger 섹션
 
 from fastapi import APIRouter, HTTPException, Response, status
 
-from app import ai_service, state_store
+from app import ai_service, state_store, voice_service
 from app.schemas import (
     AiDecisionAccepted,
     AiDecisionListResponse,
@@ -47,8 +47,15 @@ def receive_decision(request: AiDecisionRequest, response: Response) -> AiDecisi
       제어 없이 안내만 보내도 됩니다 (actions 비움). 날씨는 GET /weather로 가져가 문장에 넣으세요.
     - expiresAt이 지난 뒤 도착한 판단은 실행하지 않고 status=expired로 기록합니다 (응답은 그대로 202).
       낙상(fall_detected)은 늦게 도착해도 안전을 위해 항상 실행합니다.
+    - (v0.6) 음성 명령(MQTT home/voice/request)에 대한 판단이면 voiceId를 넣습니다. 없는 voiceId면 404.
+      announcement는 사용자에게 들려줄 답변이 되고, actions가 없으면 답변만 합니다(거절 포함).
+      requiresConfirmation=true면 제어를 바로 실행하지 않고 대시보드 확인 창에서 "실행"을 누르면 실행합니다
+      (status=awaiting_confirmation). 이미 시간 초과됐거나 다른 판단이 연결된 음성 명령이면 실행하지 않고 expired로 기록합니다.
     """
-    record, duplicate = ai_service.handle_decision(request)
+    try:
+        record, duplicate = ai_service.handle_decision(request)
+    except voice_service.UnknownVoiceCommand as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="해당 voiceId를 찾을 수 없습니다.") from exc
     if duplicate:
         response.status_code = status.HTTP_200_OK
     return AiDecisionAccepted(**record.model_dump(), duplicate=duplicate)

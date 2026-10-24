@@ -35,6 +35,7 @@ from app.schemas import (
     SmsLog,
     AiDecisionRecord,
     SensingResult,
+    VoiceCommand,
     WeatherSnapshot,
 )
 
@@ -49,6 +50,7 @@ _LOAD_LIMIT_SESSIONS = 200
 _LOAD_LIMIT_FALL_INCIDENTS = 200
 _LOAD_LIMIT_SMS_LOGS = 200
 _LOAD_LIMIT_AI_DECISIONS = 500
+_LOAD_LIMIT_VOICE_COMMANDS = 500
 # 최종 재실 판단 결과: 메모리에 최근 N건만 둡니다 (1초마다 오면 약 1시간 20분). 그 이전은 DB에만 남습니다.
 SENSING_RESULT_MEMORY_LIMIT = 5000
 
@@ -118,6 +120,12 @@ _ai_decision_order: list[str] = []
 _ai_decision_seq: dict[str, int] = {}
 _next_ai_seq = 1
 
+# --- v0.6: 음성 명령 ---
+_voice_commands: dict[str, VoiceCommand] = {}
+_voice_order: list[str] = []
+_voice_seq: dict[str, int] = {}
+_next_voice_seq = 1
+
 _POLICY_KITCHEN_ABSENCE = "kitchen-absence"
 _POLICY_FALL_SAFETY = "fall-safety"
 _CONTACT_USER = "user"
@@ -136,9 +144,11 @@ _STATE_WEATHER = "weather"
 def reset_memory() -> None:
     """메모리의 모든 데이터를 초기 상태로 되돌립니다. (DB는 건드리지 않음. 시작 시, 테스트에서 사용)"""
     global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq, _next_ai_seq, _weather
-    global _next_sensing_seq
+    global _next_sensing_seq, _next_voice_seq
     with _lock:
         _weather = None
+        _voice_order.clear()
+        _next_voice_seq = 1
         _sensing_results.clear()
         _sensing_result_ids.clear()
         _next_sensing_seq = 1
@@ -160,6 +170,8 @@ def reset_memory() -> None:
             _power_saving_lights,
             _ai_decisions,
             _ai_decision_seq,
+            _voice_commands,
+            _voice_seq,
         ):
             store.clear()
         _safety_event_order.clear()
@@ -297,6 +309,15 @@ def load_from_db() -> None:
             _sensing_result_ids.add(result.resultId)
             _next_sensing_seq = max(_next_sensing_seq, doc["seq"] + 1)
 
+    def load_voice_commands() -> None:
+        global _next_voice_seq
+        for doc in db.find_all(db.VOICE_COMMANDS, sort_field="seq", newest_limit=_LOAD_LIMIT_VOICE_COMMANDS):
+            command = VoiceCommand.model_validate(_without_id(doc, "seq", "receivedAtTime"))
+            _voice_commands[command.voiceId] = command
+            _voice_order.append(command.voiceId)
+            _voice_seq[command.voiceId] = doc["seq"]
+            _next_voice_seq = max(_next_voice_seq, doc["seq"] + 1)
+
     with _lock:
         load("인덕션 상태", load_telemetry)
         load("제어 명령", load_commands)
@@ -311,6 +332,7 @@ def load_from_db() -> None:
         load("전등·정수기 상태", load_device_states)
         load("AI 판단 기록", load_ai_decisions)
         load("최종 재실 판단 결과", load_sensing_results)
+        load("음성 명령", load_voice_commands)
 
     logger.info(
         "DB에서 불러옴: 안전 이벤트 %d건, 제어 명령 %d건, 조리 세션 %d건, 낙상 사건 %d건",
@@ -775,3 +797,50 @@ def list_sensing_results() -> list[SensingResult]:
     """메모리에 있는 최근 결과 (오래된 것부터)"""
     with _lock:
         return list(_sensing_results)
+
+
+# ---------------------------------------------------------------------------
+# v0.6: 음성 명령
+# ---------------------------------------------------------------------------
+
+def _persist_voice_command(command: VoiceCommand, seq: int) -> None:
+    received = datetime.fromisoformat(command.receivedAt)
+    db.upsert(db.VOICE_COMMANDS, command.voiceId, {"seq": seq, "receivedAtTime": received, **command.model_dump()})
+
+
+def save_voice_command(command: VoiceCommand) -> None:
+    global _next_voice_seq
+    with _lock:
+        seq = _voice_seq.get(command.voiceId)
+        if seq is None:
+            seq = _next_voice_seq
+            _next_voice_seq += 1
+            _voice_order.append(command.voiceId)
+            _voice_seq[command.voiceId] = seq
+        _voice_commands[command.voiceId] = command
+    _persist_voice_command(command, seq)
+
+
+def get_voice_command(voice_id: str) -> Optional[VoiceCommand]:
+    with _lock:
+        return _voice_commands.get(voice_id)
+
+
+def transition_voice_command(voice_id: str, expected: set[str], **changes) -> Optional[VoiceCommand]:
+    """현재 상태가 expected 중 하나일 때만 바꾸고 바뀐 기록을 돌려줍니다. 아니면 None.
+    판정 엔진 응답·사용자 확인·시간 초과가 동시에 일어나도 한 가지만 반영되도록 합니다."""
+    with _lock:
+        command = _voice_commands.get(voice_id)
+        if command is None or command.status not in expected:
+            return None
+        updated = command.model_copy(update=changes)
+        _voice_commands[voice_id] = updated
+        seq = _voice_seq[voice_id]
+    _persist_voice_command(updated, seq)
+    return updated
+
+
+def list_voice_commands() -> list[VoiceCommand]:
+    """오래된 것부터 순서대로 돌려줍니다."""
+    with _lock:
+        return [_voice_commands[v] for v in _voice_order if v in _voice_commands]

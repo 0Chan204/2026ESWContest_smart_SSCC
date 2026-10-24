@@ -161,6 +161,7 @@ def publish_device_command(device_id: str, payload: dict) -> None:
     result.wait_for_publish(timeout=5)
 
 
-def publish_json(topic: str, payload: dict, qos: int = 1, retain: bool = False) -> None:
-    """JSON 메시지를 발행합니다. 주기적으로 보내는 메시지용이라 전달 완료를 기다리지 않습니다. (v0.4)"""
-    _client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=qos, retain=retain)
+def publish_json(topic: str, payload: dict, qos: int = 1, retain: bool = False):
+    """JSON 메시지를 발행합니다. 전달 완료를 기다리지 않습니다. (v0.4)
+    돌려주는 값의 rc가 0이 아니면 보내지 못한 것입니다 (브로커 연결 끊김 등)."""
+    return _client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=qos, retain=retain)
