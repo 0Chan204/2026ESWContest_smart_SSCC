@@ -14,13 +14,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app import db, edge_service, fall_service, mqtt_client, state_store, weather_service, ws_hub
+from app import db, edge_service, fall_service, mqtt_client, state_store, voice_service, weather_service, ws_hub
 from app.config import settings
-from app.routers import ai, dashboard, device, home_devices, sensing, stream, weather
+from app.routers import ai, dashboard, device, home_devices, sensing, stream, voice, weather
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-API_VERSION = "0.5.0"
+API_VERSION = "0.6.0"
 
 # 태그 순서/설명: Swagger UI에서 이 순서 그대로 큰 섹션 헤더로 표시됩니다.
 # 각 엔드포인트의 태그는 app/routers/*.py 의 데코레이터(tags=[...])에서 지정합니다.
@@ -38,6 +38,11 @@ TAGS_METADATA = [
         "name": "AI 중앙 제어",
         "description": "AI 중앙 판정 엔진 연동. 판단에 쓸 기기 상태·최종 재실 판단 결과 조회, 판단 결과 수신(서버가 가전 제어 실행), "
         "판단 기록과 사용자 피드백 조회. 취침 소등, 부재 시 화구 차단·화력 복구, 낙상, 물 출수 시나리오를 처리합니다.",
+    },
+    {
+        "name": "음성 명령",
+        "description": "대시보드 음성 명령(인식된 전체 문장) 수신과 AI 판정 엔진 전달, 확인 창 처리, 기록 조회. "
+        "진행 상황은 WebSocket voice.status로 알립니다 (docs/VOICE.md).",
     },
     {
         "name": "AI 재실 판단",
@@ -72,6 +77,7 @@ async def lifespan(app: FastAPI):
     db.connect()                             # MongoDB 연결 (실패하거나 설정이 없으면 메모리로 동작)
     state_store.load_from_db()               # 저장돼 있던 데이터를 메모리로 불러오기
     fall_service.resume_pending_incidents()  # 응답 대기 중이던 낙상 사건의 타이머 다시 걸기
+    voice_service.resume_pending()           # 판단·확인을 기다리던 음성 명령의 시간 초과 타이머 다시 걸기
     mqtt_client.start()
     weather_task = None
     if settings.WEATHER_ENABLED:             # 날씨를 주기적으로 미리 받아 캐시 (인터넷 불안정 대비)
@@ -102,6 +108,7 @@ app.include_router(home_devices.router, prefix=settings.API_PREFIX)
 app.include_router(ai.router, prefix=settings.API_PREFIX)
 app.include_router(sensing.router, prefix=settings.API_PREFIX)
 app.include_router(weather.router, prefix=settings.API_PREFIX)
+app.include_router(voice.router, prefix=settings.API_PREFIX)
 app.include_router(stream.router, prefix=settings.API_PREFIX)
 
 

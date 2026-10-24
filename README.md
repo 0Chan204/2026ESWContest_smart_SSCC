@@ -304,6 +304,18 @@ curl -X POST http://127.0.0.1:8000/api/v1/presence \
 - 위치는 `.env`의 `WEATHER_LOCATION_NAME` / `WEATHER_LAT` / `WEATHER_LON` (기본 서울). 로직은 `app/weather_service.py`.
 - 시간대별 예보(v0.4.3): `weather.hourly`에 지금 시간부터 12시간치(`WEATHER_HOURLY_HOURS`)의 기온·날씨·강수 확률을 담습니다.
 
+## 9-2-1. 음성 명령 (v0.6)
+
+```
+대시보드 ──HTTP POST /api/v1/voice/commands──> 서버 ──MQTT home/voice/request──> AI 판정 엔진
+AI 판정 엔진 ──HTTP POST /api/v1/ai/decisions (voiceId)──> 서버 ──WebSocket voice.status──> 대시보드
+```
+
+- 대시보드가 브라우저 음성 인식으로 만든 전체 문장을 받아 저장(`voice_commands`, 30일 보관)하고 AI 판정 엔진에 전달합니다.
+- 판정 엔진의 답변·제어를 실행하고, `requiresConfirmation: true`면 대시보드 확인 창에서 "실행"을 누른 뒤 실행합니다.
+- 판정 엔진 응답이 10초 안에 없으면 `timeout`, 확인 창은 30초 안에 답이 없으면 자동 취소합니다.
+- 형식: `docs/VOICE.md`, 로직: `app/voice_service.py`, 가짜 판정 엔진: `tests/simulate_voice_ai.py`
+
 ## 9-3. 엣지 노드 · 최종 재실 판단 결과 (v0.4)
 
 ```

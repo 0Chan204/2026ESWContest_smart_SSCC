@@ -37,6 +37,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `device_states` | 기기 ID | 전등·정수기의 최신 상태 (v0.3) | 전등·정수기 제어, AI 중앙 제어 |
 | `ai_decisions` | 판단 ID | AI 중앙 판정 엔진의 판단과 실행 결과, 피드백 (v0.3) | AI 중앙 제어 |
 | `sensing_results` | 결과 ID | 재실 판단 담당이 보낸 최종 재실 판단 결과 (v0.4, 자동 삭제) | AI 중앙 제어 |
+| `voice_commands` | 음성 명령 ID | 대시보드 음성 명령 문장과 처리 결과 (v0.6, 30일 뒤 자동 삭제) | 음성 명령 |
 
 엣지 노드가 보내는 원본 메시지(features)는 저장하지 않고, 서버 메모리에서 합쳐 전달만 합니다
 (`docs/EDGE-MQTT.md`).
@@ -293,6 +294,36 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 재실 판단 담당이 MQTT(`home/edge/result`)로 보낸 결과를 그대로 저장합니다. 형식이 확정되기 전이라 위에 없는 필드도
 함께 저장됩니다. `savedAtTime`은 자동 삭제(TTL)용 날짜 값이고 API 응답에는 포함되지 않습니다.
 
+### voice_commands (v0.6)
+
+```json
+{
+  "_id": "voice-20261024-1a2b3c4d",
+  "seq": 1,
+  "receivedAtTime": "2026-10-24T12:00:00.250Z",
+  "voiceId": "voice-20261024-1a2b3c4d",
+  "text": "욕실 조명 켜줘", "lang": "ko-KR", "confidence": 0.92, "source": "voice",
+  "recognizedAt": "2026-10-24T21:00:00+09:00",
+  "receivedAt": "2026-10-24T12:00:00.250+00:00",
+  "expiresAt": "2026-10-24T12:00:10.250+00:00",
+  "status": "executed",
+  "decisionId": "dec-voice-001",
+  "answer": "욕실 조명을 켤게요.",
+  "requiresConfirmation": true,
+  "confirmText": "욕실 조명을 켤까요?",
+  "confirmDeadline": "2026-10-24T12:00:32.300+00:00",
+  "confirmedAt": "2026-10-24T12:00:05.100+00:00",
+  "pendingActions": [],
+  "actions": [ { "device": "light", "deviceId": "light-00", "action": "on", "status": "sent", "commandId": "cmd-20261024-..." } ],
+  "updatedAt": "2026-10-24T12:00:05.200+00:00"
+}
+```
+
+대시보드가 보낸 음성 명령 문장과 처리 결과입니다 (`docs/VOICE.md`). `status`는 received / thinking / confirm_required /
+executed / answered / cancelled / timeout / failed 중 하나입니다. `pendingActions`는 사용자 확인을 기다리는 제어로,
+확인 대기 중에 서버를 다시 켜도 이어서 실행할 수 있도록 저장합니다. 음성 문장은 개인정보라 `receivedAtTime` 기준
+30일(`VOICE_COMMAND_TTL_DAYS`) 뒤 자동 삭제됩니다.
+
 ## 인덱스
 
 | 컬렉션 | 인덱스 | 용도 |
@@ -307,6 +338,8 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `ai_decisions` | `seq` | 받은 순서대로 불러오기 |
 | `sensing_results` | `seq` | 받은 순서대로 불러오기 |
 | `sensing_results` | `savedAtTime` (TTL) | 보관 기간(`SENSING_RESULT_TTL_DAYS`, 기본 7일)이 지난 결과 자동 삭제 |
+| `voice_commands` | `seq` | 받은 순서대로 불러오기 |
+| `voice_commands` | `receivedAtTime` (TTL) | 보관 기간(`VOICE_COMMAND_TTL_DAYS`, 기본 30일)이 지난 음성 명령 자동 삭제 |
 
 인덱스는 서버가 DB에 연결될 때 자동으로 만들어집니다.
 

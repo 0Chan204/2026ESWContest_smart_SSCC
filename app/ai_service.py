@@ -18,6 +18,8 @@ AI 중앙 판정 엔진과 연동하는 서비스입니다. (v0.3)
 - restore_power  : HomeVIS가 인덕션을 끄거나 낮추기 직전 화력으로 다시 켭니다.
 - weatherBriefing: true면 미리 받아 둔 날씨로 안내를 만들어 대시보드(weather.briefing)와 응답(weather)에 담습니다.
 - announcement   : 판정 엔진이 만든 안내 문장을 대시보드(ai.announcement)로 보냅니다. 대시보드가 표시하고 음성으로 읽습니다.
+- voiceId        : (v0.6) 음성 명령에 대한 판단. 답변·제어 결과를 음성 명령에 연결하고 대시보드에 voice.status로 알립니다.
+                   requiresConfirmation=true면 제어를 보류하고 사용자 확인을 받은 뒤 실행합니다 (app/voice_service.py).
 - expiresAt      : 이 시각이 지나서 도착한 판단은 실행하지 않고 status=expired로 기록합니다.
                    (네트워크가 끊겼다가 늦게 재전송된 판단이 엉뚱한 때 실행되지 않도록)
                    낙상(fall_detected)은 늦게 도착해도 안전을 위해 항상 실행합니다.
@@ -36,6 +38,7 @@ from app import (
     home_device_service,
     safety_service,
     state_store,
+    voice_service,
     weather_service,
     ws_hub,
 )
@@ -154,7 +157,7 @@ def _is_expired(request: AiDecisionRequest) -> bool:
     return datetime.now(timezone.utc) > expires
 
 
-def _record_expired(request: AiDecisionRequest) -> AiDecisionRecord:
+def _record_expired(request: AiDecisionRequest, why: Optional[str] = None) -> AiDecisionRecord:
     """만료된 판단: 가전 제어·안내 없이 기록만 남깁니다."""
     record = AiDecisionRecord(
         decisionId=request.decisionId,
@@ -168,10 +171,12 @@ def _record_expired(request: AiDecisionRequest) -> AiDecisionRecord:
         announcement=request.announcement,
         expiresAt=request.expiresAt,
         status="expired",
+        voiceId=request.voiceId,
+        requiresConfirmation=request.requiresConfirmation,
     )
     logger.warning(
-        "만료 시각(%s)이 지나 도착한 AI 판단이라 실행하지 않습니다 (decisionId=%s, scenario=%s)",
-        request.expiresAt,
+        "%s 실행하지 않습니다 (decisionId=%s, scenario=%s)",
+        why or f"만료 시각({request.expiresAt})이 지나 도착한 AI 판단이라",
         request.decisionId,
         request.scenario,
     )
@@ -189,6 +194,17 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
 
     if _is_expired(request):
         return _record_expired(request), False
+
+    if request.voiceId is not None:
+        # 음성 명령에 대한 판단: 아직 판단을 기다리는 음성 명령일 때만 실행합니다.
+        claimed = voice_service.claim_for_decision(
+            request.voiceId, request.decisionId, request.announcement, request.actions,
+            request.requiresConfirmation, request.room,
+        )
+        if claimed is None:
+            return _record_expired(request, why="음성 명령이 이미 끝난 뒤(시간 초과·다른 판단) 도착한 판단이라"), False
+        if claimed.status == "confirm_required":
+            return _record_awaiting_confirmation(request), False
 
     results: list[AiActionResult] = []
     fall_incident_id: Optional[str] = None
@@ -246,6 +262,8 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
         fallIncidentId=fall_incident_id,
         announcement=request.announcement,
         expiresAt=request.expiresAt,
+        voiceId=request.voiceId,
+        requiresConfirmation=request.requiresConfirmation,
     )
 
     if request.scenario != FALL_SCENARIO:
@@ -266,21 +284,95 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
         )
 
     if request.announcement:
-        # 대시보드가 화면에 표시하고 음성으로 읽습니다.
-        ws_hub.broadcast_threadsafe(
-            "ai.announcement",
-            {
-                "decisionId": request.decisionId,
-                "scenario": request.scenario,
-                "room": request.room,
-                "text": request.announcement,
-                "announcedAt": record.receivedAt,
-            },
-        )
+        _announce(request, record.receivedAt)
 
     state_store.save_ai_decision(record)
     ws_hub.broadcast_threadsafe("ai.decision", record.model_dump())
+    if request.voiceId is not None:
+        voice_service.finish(request.voiceId, results)
     return record, False
+
+
+def _announce(request: AiDecisionRequest, announced_at: str) -> None:
+    """대시보드가 화면에 표시하고 음성으로 읽습니다.
+    음성 명령의 답변이면 voiceId가 들어 있으니, 대시보드는 voice.status의 answer와 중복 재생하지 않습니다."""
+    ws_hub.broadcast_threadsafe(
+        "ai.announcement",
+        {
+            "decisionId": request.decisionId,
+            "scenario": request.scenario,
+            "room": request.room,
+            "text": request.announcement,
+            "announcedAt": announced_at,
+            "voiceId": request.voiceId,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# v0.6: 음성 명령 확인 단계
+# ---------------------------------------------------------------------------
+
+def _pending_result(action: AiAction, room: Optional[str]) -> AiActionResult:
+    device_id = action.deviceId
+    if device_id is None:
+        device = device_registry.find_device(action.device, room)
+        device_id = device.deviceId if device is not None else None
+    return AiActionResult(device=action.device, deviceId=device_id, action=action.action, status="pending",
+                          message="사용자 확인 대기")
+
+
+def _record_awaiting_confirmation(request: AiDecisionRequest) -> AiDecisionRecord:
+    """확인이 필요한 판단: 제어를 보류하고 기록만 남깁니다. 실행은 사용자가 확인하면 execute_confirmed()가 합니다."""
+    record = AiDecisionRecord(
+        decisionId=request.decisionId,
+        scenario=request.scenario,
+        confidence=request.confidence,
+        reason=request.reason,
+        timestamp=request.timestamp,
+        room=request.room,
+        receivedAt=_now_iso(),
+        weatherBriefing=request.weatherBriefing,
+        actions=[_pending_result(a, request.room) for a in request.actions],
+        announcement=request.announcement,
+        expiresAt=request.expiresAt,
+        status="awaiting_confirmation",
+        voiceId=request.voiceId,
+        requiresConfirmation=True,
+    )
+    state_store.save_ai_decision(record)
+    ws_hub.broadcast_threadsafe("ai.decision", record.model_dump())
+    return record
+
+
+def execute_confirmed(voice) -> list[AiActionResult]:
+    """사용자가 확인 창에서 "실행"을 누른 음성 명령의 보류된 제어를 실행합니다."""
+    record = state_store.get_ai_decision(voice.decisionId) if voice.decisionId else None
+    if record is None:
+        logger.error("확인한 음성 명령의 판단 기록이 없습니다 (voiceId=%s)", voice.voiceId)
+        return []
+    request = AiDecisionRequest(
+        decisionId=record.decisionId,
+        scenario=record.scenario,
+        confidence=record.confidence,
+        reason=record.reason,
+        timestamp=record.timestamp,
+        room=record.room,
+        actions=voice.pendingActions,
+        announcement=record.announcement,
+        voiceId=voice.voiceId,
+        requiresConfirmation=True,
+    )
+    results = [_execute(action, request) for action in request.actions]
+    event = _emit_decision_event(request, results)
+    if request.announcement:
+        _announce(request, _now_iso())
+    updated = state_store.update_ai_decision(
+        record.decisionId, actions=results, status="executed", eventId=event.eventId
+    )
+    if updated is not None:
+        ws_hub.broadcast_threadsafe("ai.decision", updated.model_dump())
+    return results
 
 
 def _emit_decision_event(request: AiDecisionRequest, results: list[AiActionResult]) -> SafetyEvent:

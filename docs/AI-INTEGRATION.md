@@ -1,4 +1,4 @@
-# AI 중앙 판정 엔진 · 전등 · 정수기 · 환풍기 연동 명세 (v0.5)
+# AI 중앙 판정 엔진 · 전등 · 정수기 · 환풍기 연동 명세 (v0.6)
 
 모든 제어 판단은 AI 중앙 판정 엔진이 하고, 백엔드는 판단 결과를 받아 가전을 제어하고 기록합니다.
 Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기·환풍기 제어** 섹션에서 바로 호출해 볼 수 있습니다.
@@ -215,6 +215,12 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기·환풍기 제어*
   "timestamp": "2026-10-17T21:00:00+09:00", "room": "room", "actions": [] }
 ```
 
+음성 명령 (`voiceId`, `requiresConfirmation`, v0.6)
+
+- 대시보드 음성 명령의 문장은 MQTT `home/voice/request`로 받고, 판단은 이 API에 `voiceId`를 담아 보냅니다.
+- `requiresConfirmation: true`면 서버가 제어를 보류하고 사용자 확인을 받은 뒤 실행합니다.
+- 메시지 형식과 상태 흐름은 `docs/VOICE.md`에 정리되어 있습니다.
+
 ## 2. 전등 · 정수기 · 환풍기 ↔ 백엔드 (MQTT)
 
 토픽 규칙 (인덕션과 같음): `home/{구역}/{종류}/{deviceId}/{state | command | ack}`
@@ -289,8 +295,9 @@ LIGHT_FADE_SEC=3
 ## 4. 테스트용 가짜 기기
 
 ```bash
-docker compose --profile sim up -d     # 가짜 인덕션 + 전등·정수기·환풍기 + 엣지 노드 + 최종 판단까지 실행
+docker compose --profile sim up -d     # 가짜 인덕션 + 전등·정수기·환풍기 + 엣지 노드 + 최종 판단 + 음성 판정까지 실행
 python tests/simulate_home_devices.py  # Docker 없이 가짜 전등·정수기·환풍기만 실행
 python tests/simulate_edge_nodes.py    # Docker 없이 가짜 엣지 노드만 실행
 python tests/simulate_fusion.py        # Docker 없이 가짜 최종 판단만 실행
+python tests/simulate_voice_ai.py      # Docker 없이 가짜 판정 엔진(음성 명령)만 실행
 ```

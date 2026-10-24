@@ -23,3 +23,4 @@ tests
 !tests/simulate_home_devices.py
 !tests/simulate_edge_nodes.py
 !tests/simulate_fusion.py
+!tests/simulate_voice_ai.py
