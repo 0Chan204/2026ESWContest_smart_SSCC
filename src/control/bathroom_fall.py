@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from src.control.realtime_config import RealtimeConfig
 from src.control.realtime_models import SensingUpdate
 from src.control.scenario_config import ScenarioConfig
@@ -21,8 +23,11 @@ class BathroomFallScenario:
         self._duration = 0.0
         self._uncertain = False
         self._report_authorized = False
+        self._incident_id: str | None = None
+        self._await_clear = False
         self._emitted: set[str] = set()
         self._actions: list[ScenarioAction] = []
+        self.backend_response_managed = False
 
     def _interrupt(self) -> None:
         self._still_since = self._moving_since = None
@@ -44,7 +49,8 @@ class BathroomFallScenario:
             risk = RiskLevel.HIGH
         return BathroomFallDecision(self.state, risk, timestamp, self._duration,
                                     self._uncertain,
-                                    self._duration >= self.config.LONG_UNRESPONSIVE_SECONDS)
+                                    self._duration >= self.config.LONG_UNRESPONSIVE_SECONDS,
+                                    self._incident_id)
 
     def drain_actions(self) -> list[ScenarioAction]:
         actions = self._actions[:]
@@ -54,9 +60,42 @@ class BathroomFallScenario:
     def receive_backend_signal(self, signal: FallBackendSignal) -> BathroomFallDecision:
         if self._last is not None and signal.timestamp < self._last:
             raise ValueError("Backend signal cannot precede the last fall observation")
-        if self._active:
-            self._report_authorized = signal.allow_emergency_report
+        if signal.incident_id is not None and signal.incident_id != self._incident_id:
+            raise ValueError("Backend signal incident_id does not match the active fall incident")
+        if signal.caregiver_status == "safe" and self._incident_id is not None:
+            if not self.backend_response_managed and "caregiver_alert" not in self._emitted:
+                raise ValueError("Caregiver response arrived before the caregiver alert request")
+            self.state = State.RESOLVED_BY_CAREGIVER
+            self._active = False
+            self._await_clear = True
+            self._report_authorized = False
+            self._still_since = self._moving_since = None
+            self._duration = 0.0
+            self._actions = [action for action in self._actions if action.event not in {
+                "fall_user_alert_requested", "fall_caregiver_alert_requested",
+                "fall_emergency_report_requested",
+            }]
+        elif not self.backend_response_managed and self._active and (signal.caregiver_status == "no_response"
+                               or signal.allow_emergency_report):
+            if "caregiver_alert" not in self._emitted:
+                raise ValueError("Caregiver response arrived before the caregiver alert request")
+            self._report_authorized = True
             self._emit_staged_actions(signal.timestamp)
+        return self._decision(signal.timestamp)
+
+    def resolve_persisted_incident(self, signal: FallBackendSignal) -> BathroomFallDecision:
+        """Close an outbox-validated older incident after process restart."""
+        if signal.caregiver_status != "safe" or signal.incident_id is None:
+            raise ValueError("Persisted fall resolution requires a confirmed safe response")
+        if self._incident_id is not None or self._active:
+            raise ValueError("A current fall incident cannot be replaced by a persisted incident")
+        if self._last is not None and signal.timestamp < self._last:
+            raise ValueError("Backend signal cannot precede the last fall observation")
+        self._incident_id = signal.incident_id
+        self.state = State.RESOLVED_BY_CAREGIVER
+        self._await_clear = True
+        self._report_authorized = False
+        self._duration = 0.0
         return self._decision(signal.timestamp)
 
     def update_induction_state(self, timestamp: float, induction_on: bool) -> None:
@@ -75,6 +114,7 @@ class BathroomFallScenario:
         if key in self._emitted:
             return
         self._emitted.add(key)
+        action_details = {"incident_id": self._incident_id, **(details or {})}
         self._actions.append(ScenarioAction(
             timestamp=timestamp,
             scenario="bathroom_fall",
@@ -82,13 +122,14 @@ class BathroomFallScenario:
             action=action,
             target=target,
             reason=reason,
-            details=details,
+            details=action_details,
             room=room,
         ))
 
     def _start_fall_actions(self, timestamp: float, induction_on: bool) -> None:
         self._emitted.clear()
         self._report_authorized = False
+        self._incident_id = uuid4().hex
         if induction_on:
             self._emit_once(
                 "induction_off", timestamp,
@@ -110,18 +151,18 @@ class BathroomFallScenario:
                 reason="No movement after the configured fall confirmation time",
                 details={"unresponsive_seconds": self._duration, "stage": 1},
             )
-        if self._duration >= c.FALL_WARNING_SECONDS:
+        if not self.backend_response_managed and self._duration >= c.FALL_WARNING_SECONDS:
             self._emit_once(
                 "caregiver_alert", timestamp,
                 event="fall_caregiver_alert_requested", action="notify", target="caregiver",
                 reason="No movement after the configured caregiver escalation time",
                 details={"unresponsive_seconds": self._duration, "stage": 2},
             )
-        if self._duration >= c.FALL_EMERGENCY_SECONDS and self._report_authorized:
+        if not self.backend_response_managed and self._duration >= c.FALL_EMERGENCY_SECONDS and self._report_authorized:
             self._emit_once(
                 "emergency_report", timestamp,
                 event="fall_emergency_report_requested", action="report", target="emergency_service",
-                reason="Emergency threshold reached and backend authorized automatic reporting",
+                reason="Emergency threshold reached and caregiver did not respond",
                 details={"unresponsive_seconds": self._duration, "stage": 3},
             )
 
@@ -141,6 +182,13 @@ class BathroomFallScenario:
             self._interrupt()
             return self._decision(sample.timestamp)
         self._uncertain = False
+        if self._await_clear:
+            clear = sample.fall_detected is False or (self.backend_response_managed and sample.fall_detected is not True
+                                                       and sample.activity in {"walking", "standing"})
+            if clear and sample.motion_state == "moving":
+                self._await_clear = False
+                self._previous_activity = sample.activity
+            return self._decision(sample.timestamp)
         fall = sample.fall_detected is True or (
             self._previous_activity in {"standing", "walking"} and sample.activity == "lying"
         )

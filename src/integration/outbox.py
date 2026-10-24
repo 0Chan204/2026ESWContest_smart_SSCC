@@ -30,6 +30,8 @@ class Outbox:
             CREATE TABLE IF NOT EXISTS audit (
                 id INTEGER PRIMARY KEY, kind TEXT NOT NULL, at REAL NOT NULL, detail TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS decisions_status ON decisions(status);
+            CREATE INDEX IF NOT EXISTS audit_time ON audit(at);
         """)
         current = self.db.execute("SELECT value FROM metadata WHERE key='mode'").fetchone()
         if current and current[0] != mode:
@@ -62,15 +64,36 @@ class Outbox:
                         encode(result.source), "blocked" if result.payload is None else "pending",
                         result.diagnostic, now, result.source["timestamp"] + ttl))
 
-    def rows(self):
+    def rows(self, status=None):
         records = []
-        for row in self.db.execute("SELECT * FROM decisions ORDER BY rowid"):
+        query = "SELECT * FROM decisions" + (" WHERE status=?" if status else "") + " ORDER BY rowid"
+        for row in self.db.execute(query, (status,) if status else ()):
             record = dict(row)
             for name in ("payload", "source", "response"):
                 if record[name] is not None:
                     record[name] = json.loads(record[name])
             records.append(record)
         return records
+
+    def get_metadata(self, key):
+        row = self.db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def set_metadata(self, key, value):
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO metadata VALUES (?, ?)", (key, encode(value)))
+
+    def update_fall(self, **values):
+        record = self.fall_incident()
+        if record is not None:
+            self.set_metadata("fall_incident", {**record, **values})
+
+    def prune_audit(self, before):
+        # Keep delivery identities for deduplication; trim high-volume telemetry only.
+        with self.db:
+            self.db.execute("DELETE FROM audit WHERE at < ? AND kind IN "
+                            "('evaluation','device_received','location_received','location_applied','diagnostic')",
+                            (before,))
 
     def update(self, identity, **values):
         permitted = {"status", "diagnostic", "attempts", "next_attempt", "response", "http_status"}
@@ -90,14 +113,39 @@ class Outbox:
         row = self.db.execute("SELECT value FROM metadata WHERE key='water_reservation'").fetchone()
         return None if row is None else json.loads(row[0])
 
-    def latch_fall(self, timestamp):
+    def latch_fall(self, timestamp, incident_id=None):
         """One durable unresolved incident until a real backend reconciliation contract exists."""
+        current = self.fall_incident()
+        if current is not None:
+            return current
+        record = {"local_incident_id": incident_id or "fall-" + uuid4().hex,
+                  "started_at": timestamp, "status": "start_contract_unconfirmed",
+                  "decisionId": None, "fallIncidentId": None}
         with self.db:
-            self.db.execute("INSERT OR IGNORE INTO metadata VALUES ('fall_incident', ?)",
-                            (encode({"local_incident_id": "fall-" + uuid4().hex,
-                                     "started_at": timestamp, "status": "start_contract_unconfirmed",
-                                     "decisionId": None, "fallIncidentId": None}),))
+            self.db.execute("INSERT OR REPLACE INTO metadata VALUES ('fall_incident', ?)",
+                            (encode(record),))
+        return record
 
     def fall_incident(self):
         row = self.db.execute("SELECT value FROM metadata WHERE key='fall_incident'").fetchone()
-        return None if row is None else json.loads(row[0])
+        record = None if row is None else json.loads(row[0])
+        return None if record is None or record["status"] == "resolved" else record
+
+    def resolve_fall(self, incident_id, timestamp):
+        record = self.fall_incident()
+        if record is None or record["local_incident_id"] != incident_id:
+            raise ValueError("Cannot resolve an unknown fall incident")
+        resolved = {**record, "status": "resolved", "resolved_at": timestamp,
+                    "resolution": "caregiver_confirmed_safe"}
+        with self.db:
+            self.db.execute("UPDATE metadata SET value=? WHERE key='fall_incident'",
+                            (encode(resolved),))
+        return resolved
+
+    def has_fall_action(self, incident_id, event):
+        for row in self.db.execute("SELECT source FROM decisions"):
+            source = json.loads(row[0])
+            if (source.get("scenario") == "bathroom_fall" and source.get("event") == event
+                    and (source.get("details") or {}).get("incident_id") == incident_id):
+                return True
+        return False

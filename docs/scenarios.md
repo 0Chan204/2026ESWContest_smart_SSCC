@@ -1,5 +1,11 @@
 # Additional central-controller scenarios
 
+The direct-controller examples below preserve the original internal stage API.
+The continuous runner now follows the team's backend v0.5 workflow: one
+`fall_detected` decision, backend-owned SMS/escalation, and incident polling for
+`resolved`. It does not send the local caregiver/report stages. See
+[continuous runner](continuous_runner.md) for the current deployment behavior.
+
 `CentralController.update_sensing`, `update_appliance`, and `tick` continue to
 return the existing kitchen `RealtimeDecision`. New results are separate:
 
@@ -83,11 +89,16 @@ requests; a new lying episode may generate a new request.
 The standard location is `toilet`. Existing `BathroomFallScenario`, `bathroom_decision`,
 and `bathroom_fall` history/config keys remain compatibility identifiers, not backend scenario enums.
 The existing AI scenario owns detection, state transitions and recovery decisions. HTTP integration delegates
-follow-up actions to the backend and does **not** send the local notification/report/blink requests described below.
-Fall state transmission and incident synchronization schemas are unprovided; only that transport contract is pending.
-No guessed endpoint or POST is created. The runtime records AI transitions, including RECOVERED, in the local
+caregiver contact, emergency reporting, and device execution to the backend and does **not** send the local
+caregiver/report/blink/stove requests described below. The first user alert is handled locally by the
+integration runtime through `AlertService` (message generation and WAV synthesis); audio playback remains
+the host's responsibility. The runtime accepts an injected `fall_alert_service` to select an LLM/TTS engine;
+without one it uses `LLM_PROVIDER` (or the existing fallback message when unset) and `Pyttsx3TTS`.
+Fall state transmission, caregiver response ingestion, incident synchronization, and device-action schemas
+are unprovided; no guessed endpoint or POST is created. The runtime records AI transitions, including RECOVERED, in the local
 `fall_state_changed` audit with measurement time. RECOVERED is not backend incident closure or cancellation of reports.
-The unresolved local incident latch continues to guard other automatic commands until a confirmed close contract exists.
+The unresolved local incident latch continues to guard other automatic commands. A host-supplied, correlated
+`safe` caregiver result resolves the local latch; a sensor-only RECOVERED state does not.
 
 An explicit fall event or a fresh standing/walking-to-lying transition starts
 FALL_SUSPECTED. Stillness alone never starts an incident. Subsequent continuous
@@ -96,17 +107,30 @@ FALL_EMERGENCY at 30. At 60 seconds long_unresponsive is also set. Warning and
 emergency map to the existing HIGH alert risk. Recovery requires five seconds
 of moving samples without a current explicit fall event.
 
-In the legacy direct-call interface, the same three thresholds create local requests without changing the existing
-risk decision: FALL_CONFIRMED requests a user notification, FALL_WARNING requests
-a caregiver notification, and FALL_EMERGENCY may request an emergency report.
-The last request is emitted only after the backend supplies an explicit gate:
+The same three thresholds create local requests without changing the existing risk decision:
+FALL_CONFIRMED requests a user notification/TTS at 5 seconds, FALL_WARNING requests a caregiver
+notification at 10 seconds, and FALL_EMERGENCY may request an emergency report at 30 seconds.
+The last request is emitted only after the backend reports that the caregiver did not respond:
 
 ```python
-controller.update_fall_backend_signal(
-    FallBackendSignal(timestamp=now, allow_emergency_report=True)
-)
-requests = controller.drain_scenario_actions()
+incident_id = controller.bathroom_decision.incident_id
+controller.update_fall_backend_signal(FallBackendSignal(
+    timestamp=now, caregiver_status="no_response", incident_id=incident_id,
+))
+# A confirmed safe response instead ends the incident:
+# controller.update_fall_backend_signal(FallBackendSignal(
+#     timestamp=now, caregiver_status="safe", incident_id=incident_id,
+# ))
 ```
+
+An integration host passes the same signal to `runtime.receive_fall_backend_signal(signal)`;
+the runtime requires a matching incident ID. A `safe` response produces `RESOLVED_BY_CAREGIVER`,
+clears the unresolved local guard, and prevents escalation. `no_response` enables the report
+request only after the 30-second stillness threshold; it does not claim that a report was sent.
+An incident ID persisted in the local outbox can still be closed by a matching `safe` result after restart;
+an old `no_response` result cannot recreate a missing stillness history.
+The older explicit `allow_emergency_report=True` direct-call gate is retained for compatibility,
+but is not accepted by the integration runtime without an explicit caregiver status.
 
 At incident start, a fresh ON stove state adds a `stove` (`room=kitchen`) `turn_off`
 request and a `light` (`room=toilet`) `blink` request is always added. Every request is

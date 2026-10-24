@@ -1,0 +1,77 @@
+# Run: python -m src.integration
+# The URLs/topics/scenario names must match the board's deployed services.
+[backend]
+mode = "live"
+base_url = "http://localhost:8000"
+data_dir = "output/integration"
+poll_interval = 2.0
+http_timeout = 3.0
+# Wi-Fi occupancy_server waits up to 2s for node features before publishing.
+allowed_lateness = 4.0
+evaluation_audit_interval = 1.0
+device_max_age = 20.0
+temperature_is_celsius = true
+water_readiness_mode = "backend_idle"
+backend_restore = true
+backend_v05 = true
+rule_confidence_policy = "observed"
+stove_reduce_steps = 1
+# Verified against HomeVIS-Backend develop 3a23128, docs/AI-INTEGRATION.md v0.5.
+backend_fall_scenario = "fall_detected"
+fall_status_path = "/api/v1/fall-incidents/{incident_id}"
+
+[mqtt]
+host = "localhost"
+port = 1883
+client_id = "homevis-ai"
+# Verified against HomeVIS-AI_Wifi main f73c0ff, src/mqtt_util.py.
+location_topic = "wifi/occupancy/state"
+# The current Wi-Fi project publishes location only. Enable an agreed behavior producer here.
+behavior_topic = ""
+fall_status_topic = ""
+tls = false
+queue_size = 1000
+max_payload_bytes = 65536
+join_wait_seconds = 0.25
+
+[runtime]
+tick_interval = 0.1
+status_interval = 5.0
+audit_retention_days = 7
+# Or "backend": GET /api/v1/sensing/results (home/edge/result stored by backend).
+sensing_source = "mqtt"
+sensing_poll_interval = 1.0
+
+[actions.light_auto_on]
+scenario = "light_auto_on"
+device = "light"
+internal_action = "turn_on"
+action = "on"
+room = "room"
+
+[actions.light_auto_off]
+scenario = "light_auto_off"
+device = "light"
+internal_action = "turn_off"
+action = "off"
+room = "room"
+
+[actions.bedtime_light_off]
+scenario = "bedtime_light_off"
+device = "light"
+internal_action = "turn_off"
+action = "off"
+room = "room"
+
+[actions.kitchen_leave_reduce_power]
+scenario = "stove_absence"
+device = "stove"
+internal_action = "reduce_power"
+action = "set_level"
+room = "kitchen"
+
+[actions.kitchen_return_restore]
+scenario = "stove_absence"
+device = "stove"
+action = "restore_power"
+room = "kitchen"

@@ -70,8 +70,12 @@ class ScenarioAction:
 
 @dataclass(frozen=True)
 class FallBackendSignal:
+    """Host-supplied caregiver result; the boolean gate is legacy direct-call support."""
+
     timestamp: float
-    allow_emergency_report: bool = True
+    allow_emergency_report: bool = False
+    caregiver_status: str | None = None
+    incident_id: str | None = None
 
     def __post_init__(self) -> None:
         if (isinstance(self.timestamp, bool)
@@ -80,6 +84,15 @@ class FallBackendSignal:
             raise ValueError("timestamp must be a finite number")
         if type(self.allow_emergency_report) is not bool:
             raise ValueError("allow_emergency_report must be boolean")
+        if self.caregiver_status not in {None, "safe", "no_response"}:
+            raise ValueError("caregiver_status must be safe or no_response")
+        if self.caregiver_status == "safe" and self.allow_emergency_report:
+            raise ValueError("safe caregiver response cannot authorize a report")
+        if self.incident_id is not None and (not isinstance(self.incident_id, str)
+                                             or not self.incident_id.strip()):
+            raise ValueError("incident_id must be a non-empty string")
+        if self.caregiver_status is not None and self.incident_id is None:
+            raise ValueError("caregiver_status requires an incident_id")
 
 
 class BathroomFallState(str, Enum):
@@ -89,6 +102,7 @@ class BathroomFallState(str, Enum):
     FALL_WARNING = "FALL_WARNING"
     FALL_EMERGENCY = "FALL_EMERGENCY"
     RECOVERED = "RECOVERED"
+    RESOLVED_BY_CAREGIVER = "RESOLVED_BY_CAREGIVER"
 
 
 @dataclass(frozen=True)
@@ -99,6 +113,7 @@ class BathroomFallDecision:
     unresponsive_seconds: float = 0
     sensor_uncertain: bool = False
     long_unresponsive: bool = False
+    incident_id: str | None = None
 
     def to_risk_decision(self) -> RiskDecision:
         return RiskDecision(
@@ -108,5 +123,6 @@ class BathroomFallDecision:
             decision_context={"scenario": "bathroom_fall", "state": self.state.value,
                               "risk": self.risk.value, "timestamp": self.timestamp,
                               "sensor_uncertain": self.sensor_uncertain,
-                              "long_unresponsive": self.long_unresponsive},
+                              "long_unresponsive": self.long_unresponsive,
+                              "incident_id": self.incident_id},
         )

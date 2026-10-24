@@ -7,6 +7,29 @@ HomeVIS는 Wi-Fi 센싱 추론 모듈의 최종 위치 결과와 가전 상태�
 백엔드 클라이언트, 측정 시각 기반 판단 런타임, SQLite outbox, MockBackend를 포함합니다.
 실제 Wi-Fi 신호 측정·분류와 가전 명령 실행은 외부 센싱 모듈 및 백엔드가 담당합니다.
 
+## 연속 실행
+
+Python 3.11 이상에서 한 번 설치하고 `.env.example`을 `.env`로 복사해 보드 주소를 설정합니다.
+
+```sh
+python -m pip install -r requirements-runtime.txt
+python -m src.integration
+```
+
+기본은 **live·무기한 실행**입니다. MQTT `wifi/occupancy/state`와 백엔드 기기 정보를 계속 받아
+탐지하고, 모든 기기 제어는 `POST /api/v1/ai/decisions`로 보냅니다. 종료는 `Ctrl+C`입니다.
+브로커·백엔드·Wi-Fi 추론 서버는 실행 중이어야 합니다. 한 명령은 이 AI 수신·판단 프로세스를 실행합니다.
+
+```sh
+python -m src.integration --mode mock --duration 15
+python -m src.integration --sensing-source backend
+```
+
+두 번째 명령은 백엔드에 저장된 `home/edge/result` 센싱을 HTTP로 받습니다.
+설정은 [config/homevis.toml](config/homevis.toml), 상태는 `output/integration/live/status.json`에서 확인합니다.
+낙상 사건 조회·재시작 복구, TTS 전달, 인증·TLS, 테스트 방법은 [연속 실행 안내](docs/continuous_runner.md)에 있습니다.
+현재 팀 Wi-Fi 코드는 위치만 발행하므로 행동이 필요한 출수·취침·낙상에는 추가 실제 행동 입력이 필요합니다.
+
 ## 주요 기능
 
 | 기능 | 동작과 필요한 입력 |
@@ -21,8 +44,9 @@ HomeVIS는 Wi-Fi 센싱 추론 모듈의 최종 위치 결과와 가전 상태�
 | 백엔드 연동 | 기기 상태 조회, 판단 요청 전달, 송신 전 재검증, 제한된 재시도와 디스크 예약 |
 
 내부 요청 생성과 백엔드 전송은 별도 조건을 따릅니다. 계산된 AI confidence는 그대로 전달하고,
-별도 점수가 없는 규칙 결과만 `null`로 보냅니다. 미확정 제어 라우트와 정수기 준비 조건은 계속 차단합니다.
-낙상 시작·회복은 AI가 판단하며, 상태 전달 규격·사건 동기화와 자동 화력 복구에는 추가 계약이 필요합니다.
+live 실행기의 규칙형 출력은 실제 위치·행동 입력의 신뢰도를 전송합니다. 백엔드 v0.5는 `null`을 허용하지 않습니다.
+기존 직접 호출용 `IntegrationConfig()`와 Mock 데모의 `null` 정책은 호환용으로 유지합니다.
+낙상 시작은 AI가 판단하고, 최초 요청 이후 단계 알림·신고 상태와 사용자 확인은 백엔드가 관리합니다.
 
 ## 처리 구조
 
@@ -46,7 +70,7 @@ LLM은 안내문 생성·자연어 피드백 해석에 사용하며, 위험 상�
 
 ## 설치와 빠른 실행
 
-Python 3.10 이상을 사용합니다. 명령은 `README.md`, `src/`, `tests/`가 있는 저장소 루트에서
+연속 실행기는 Python 3.11 이상을 사용합니다. 명령은 `README.md`, `src/`, `tests/`가 있는 저장소 루트에서
 실행합니다. Mock 데모는 표준 라이브러리로 실행되며 실제 백엔드, 가전, LLM 모델, GPU가 필요하지 않습니다.
 
 ```sh
@@ -81,9 +105,9 @@ python -m examples.backend_integration_demo --with-mock-behavior
 | 기본 | 위치만 공급. 기기 조회 5회, POST 0건. 행동이 필요한 기능은 `missing_inputs`에 표시 |
 | `--with-mock-behavior` | 별도 가상 행동 공급. 기기 조회 5회, 120mL 출수·날씨 안내 요청 1건을 Mock에 접수 |
 
-`room`은 기본적으로 취침·기상 판단에 쓰는 방입니다. `idle`은 출수 준비 조건이 아닙니다.
+`room`은 기본적으로 취침·기상 판단에 쓰는 방입니다. 이 기존 Mock 데모는 `idle`을 출수 준비 조건으로 쓰지 않습니다.
 데모는 별도의 가상 기기 준비 필드 `mock_readiness=ready`를 사용하며, 이는 실제 백엔드 필드가 아닙니다.
-규칙 confidence의 `null`은 합의된 기본 전송 정책입니다. 출수량은 `ScenarioConfig`의 120mL 기본값을 사용합니다.
+규칙 confidence의 `null`은 이 기존 Mock 데모의 호환 정책이며 실제 백엔드 v0.5에 전송하지 않습니다. 출수량은 `ScenarioConfig`의 120mL 기본값을 사용합니다.
 낙상에 필요한 motion/fall 정보는 이 데모에도 없습니다.
 
 기본 데모 저장소는 임시 디렉터리입니다. `--data-dir output/demo`를 추가하면 outbox와 일일 예약을
@@ -116,8 +140,8 @@ API를 사용합니다. 공통 `BaseLLMAdapter` 계약을 사용하므로 기존
 python -m pip install -r requirements.txt
 ```
 
-PowerShell에서 EXAONE을 선택하는 예시는 다음과 같습니다. `.env.example`은 설정 예시일 뿐 자동으로
-로딩되지 않으므로 실제 실행 환경에 변수를 주입해야 합니다.
+PowerShell에서 EXAONE을 선택하는 예시는 다음과 같습니다. 연속 실행기는 `.env`도 읽습니다.
+기존 개별 예제·연결 테스트는 아래처럼 실행 환경에 변수를 설정합니다.
 
 ```powershell
 $env:LLM_PROVIDER = "exaone"
@@ -222,7 +246,7 @@ Pi의 `features` 배열 대신 추론이 완료된 최종 위치 JSON을 입력�
 위치 JSON에는 `activity`, `motion_state`, `fall_detected`가 없습니다. 취침·기상·낙상 기능은 필요한
 실제 행동 입력이 별도로 있어야 하며, 미측정 행동의 confidence 기여도는 0입니다.
 [BehaviorObservation](src/integration/sensing.py)은 행동의 측정 시각·만료·공간·유효성을 검사하는
-입력 경계입니다. 실제 행동 수신 어댑터는 아직 연결되지 않았습니다.
+입력 경계입니다. 연속 실행기는 백엔드 결과 또는 설정한 별도 MQTT 행동 토픽을 이 경계에 연결합니다.
 센싱 행동은 `ingest_location(..., behavior=...) → SensingUpdate.activity`로 반영됩니다.
 실제 `idle → sitting/lying` 측정이 들어오면 사용자 행동만 갱신하며 기기의 전원·level·출수 기록은 바꾸지 않습니다.
 위치만 있으면 행동은 `unknown`/미관측이며, GET 응답의 status를 행동 측정으로 복제하지 않습니다.
@@ -239,15 +263,15 @@ Pi의 `features` 배열 대신 추론이 완료된 최종 위치 JSON을 입력�
 GET 응답의 `items[]`에서 `device/deviceId/room/online/is_on/current_state/control_state/updatedAt`을
 읽습니다. `room` 관측은 취침·기상에 연결되고, 전등 상태와 공간은 조명 평가·송신 재검증에 사용합니다.
 인덕션 `level`은 모델과 판단 결과에 단계 값으로 보존합니다. 단계의 최대값이나 W 환산을 추정하지 않습니다.
-`temperature`는 원문을 보존하며 단위 확인 전에는 섭씨 판단에 사용하지 않습니다.
+`temperature`는 원문을 보존하며, live 프로필에서는 백엔드 스키마에서 확인한 섭씨 단위를 사용합니다.
 백엔드의 `user/homevis/null`은 원본 제어 주체로 보존하고, 화력 감소·사용자 개입 상태로 임의 변환하지 않습니다.
 
 ### 전체 요청과 서버 응답 예시
 
 아래는 부분 필드 예시가 아닌 **실제 Mock 데모가 직렬화한 전체 POST 본문**입니다.
 가상 시각을 `2026-10-17T07:00:00+09:00`로 고정한 별도 행동 데모에서 생성됩니다.
-합의된 confidence 정책에 따라 별도 점수가 없는 규칙 출수는 `null`입니다.
-기존 AI 점수가 있는 결과는 그 숫자를 유지합니다. 백엔드 제어용 새 점수나 고정값은 만들지 않습니다.
+이 예시는 기존 직접 호출용 Mock 호환 정책의 `confidence=null`을 사용하며 live 전송 예시가 아닙니다.
+현재 실행기는 백엔드 모델에 맞춰 규칙 출력에도 측정된 입력 신뢰도를 넣습니다. 기존 가중합 점수는 유지합니다.
 아래 예시는 Mock 검증 결과이며, 실서버 검증을 수행했다는 뜻은 아닙니다.
 
 <!-- mock-water-request -->
@@ -312,11 +336,11 @@ GET 응답의 `items[]`에서 `device/deviceId/room/online/is_on/current_state/c
 | --- | --- |
 | 구역·기기 | `room/kitchen/toilet`, `stove/light/water_purifier`를 기준으로 사용 |
 | 출수 요청 | `water_dispense / water_purifier / dispense`, AI가 결정한 수량과 `weatherBriefing` 전달 |
-| 정수기 준비 상태 | `idle` 및 사용자 행동은 준비 조건이 아님. 별도의 실제 준비 필드·조건 미제공으로 기본 출수 보류 |
-| 온도·출력 | 온도 단위, level 범위 및 W 대응 미정. 원본 단계·온도를 보존하고 추정값을 만들지 않음 |
-| confidence | 계산된 값은 유지, 점수 없는 규칙 결과만 `null`. 기존 threshold·학습·이력 유지 |
-| 출수 외 제어 | 허용 scenario/action 목록 미제공. 기본 라우트는 비워 두며 서로 다른 동작을 대체하지 않음 |
-| 낙상 | AI가 시작·상태 전이·회복을 판단하고 기록. 전송 규격만 미확정. 후속 제어·문자·신고 및 사건 종료는 백엔드 담당 |
+| 정수기 준비 상태 | live는 기기의 `status=idle`·online·freshness 확인. 사용자 행동과 구분 |
+| 온도·출력 | 섭씨 및 level 1~9 확인. W 환산은 검증된 설정이 있을 때만 적용 |
+| confidence | 기존 점수 유지. live 규칙 출력은 관측 신뢰도, 직접 호출용 Mock은 기존 null 정책 |
+| 출수 외 제어 | 전등 on/off, stove_absence의 set_level/restore_power로 연결 |
+| 낙상 | fall_detected 1회 전송, 백엔드 사건 조회로 resolved 반영. 단계 타이머는 백엔드 소유 |
 
 기존 `bedroom/bathroom/water_dispenser` 입력은 경계에서 표준 이름으로 정규화합니다.
 이미 저장된 요청의 ID·본문·원본 source·과거 출수 기록은 변경하지 않습니다.
@@ -329,15 +353,14 @@ GET 응답의 `items[]`에서 `device/deviceId/room/online/is_on/current_state/c
 python -m src.integration --mode mock --duration 3
 ```
 
-이 CLI는 기기 조회·주기적 판단 호스트이며 센싱 수신부는 포함하지 않습니다. 실제 입력 연결은 같은 실행
-스레드에서 `runtime.ingest_location(...)`과 `runtime.run_once()`를 호출합니다.
+이 CLI는 MQTT 또는 백엔드 HTTP 센싱 수신, 기기 조회, 주기적 판단, 전송을 함께 실행합니다.
 실제 서버는 `--mode live --base-url <URL>` 또는 `HOMEVIS_BACKEND_URL`로 지정합니다.
-인증 헤더와 배포별 매핑은 [IntegrationConfig](src/integration/config.py)에 주입합니다.
-[.env.example](.env.example)은 참고 파일이며 자동으로 읽지 않습니다.
+인증은 환경변수, 배포별 매핑은 [실행 설정](config/homevis.toml)에서 지정합니다.
+`.env`는 자동으로 읽고 기존 OS 환경변수를 우선합니다.
 
 outbox와 출수 예약은 `output/integration/<mode>/outbox.sqlite3`에 저장합니다.
 Mock과 Live 저장소는 분리되며, 재시도·재시작에서도 원본 ID와 본문을 유지하고 만료된 명령은 보내지 않습니다.
-기본 정렬 지연은 2초입니다. 센싱 자체의 전환 확인과 AI 위치 확인 시간도 함께 고려해야 합니다.
+실행기 정렬 지연은 4초, 기존 직접 호출 기본값은 2초입니다. 센싱 자체의 전환 확인 시간도 고려해야 합니다.
 시간순 기기 상태, 취침 구간 검증, 송신 재검증 및 복구 정책은 [백엔드 통합 문서](docs/backend_integration.md)를 참고하세요.
 
 ## 프로젝트 구조와 테스트
@@ -372,11 +395,14 @@ pytest는 unittest 클래스와 함수형 통합 테스트를 함께 실행합�
 
 ## 현재 연동 범위
 
-판단 엔진, 백엔드 HTTP 클라이언트와 Mock 경로는 구현되어 있습니다. 실제 연결에는 위치·행동 수신 방식,
-출수 외 제어 라우트, 별도의 정수기 준비 조건, 온도 단위와 updatedAt 갱신 기준,
-자동 복구 제어 이력, 낙상 상태 전달·사용자 확인·사건 동기화 형식과 명령 실행 ACK 계약이 필요합니다.
-AI 낙상 감지·회복 판단은 기존 상태 머신에 구현되어 있으며, 미정인 것은 백엔드 전달·동기화 규격입니다.
+팀 백엔드 develop의 AI 연동 v0.5와 실제 Wi-Fi 토픽을 확인해 연속 실행기에 연결했습니다.
+낙상 최초 결정, 기기 제어, 위험·낙상 안내 문장은 백엔드 API로 전달합니다. 백엔드의
+사용자/보호자 응답은 사건 조회로 반영하며 AI가 2·3차 문자·신고 타이머를 중복 수행하지 않습니다.
+기존 LLM/TTS를 별도 작업 스레드에서 사용하고 문장은 `announcement`로 대시보드에 전달합니다.
+로컬 WAV 자동 재생은 하지 않습니다. 직접 컨트롤러 호출의 기존 내부 단계 API는 유지합니다.
 기존 피드백 API는 사용할 수 있지만 백엔드 yes/no 피드백 자동 연결은 구현되어 있지 않습니다.
 
-백엔드 서버, 실제 Wi-Fi 추론, MQTT 제어, LG OS 전용 코드와 실가전 실행 검증은 이 저장소의 구현 범위에
-포함되지 않습니다. Mock 접수 결과로 실제 소등·출수·화력 변경의 완료를 판단할 수 없습니다.
+실제 행동 생산자, 와트 측정/검증된 단계 환산이 없는 기능은 입력 부족으로 보류할 수 있습니다.
+확인한 백엔드의 자동 신고는 상태·이벤트 기록까지이며 실제 119 연동은 미구현입니다.
+MQTT/HTTP 로컬 소켓과 백엔드 모델 검증은 실가전·LG OS 보드 실증을 대신하지 않습니다.
+`sent` 응답만으로 실제 소등·출수·화력 변경 완료를 판단하지 않습니다.

@@ -36,6 +36,8 @@ class CentralController:
                  confidence_config: ConfidenceConfig | None = None,
                  confidence_data_dir: str | Path | None = None,
                  feedback_llm: BaseLLMAdapter | None = None,
+                 decision_history: DecisionHistoryStorage | None = None,
+                 routine_storage: RoutineStorage | None = None,
                  user_id: str = DEFAULT_USER_ID,
                  water_dispenser_available: bool | None = None) -> None:
         self.engine = engine or RuleBasedDecisionEngine()
@@ -44,7 +46,7 @@ class CentralController:
         data_dir = (Path(confidence_data_dir) if confidence_data_dir is not None else
                     Path(__file__).resolve().parents[2] / "output" / "confidence")
         self.weight_manager = WeightManager(confidence_config, data_dir / "user_weights.json")
-        self.decision_history = DecisionHistoryStorage(data_dir / "decision_history.jsonl")
+        self.decision_history = decision_history if decision_history is not None else DecisionHistoryStorage(data_dir / "decision_history.jsonl")
         self.feedback_storage = FeedbackStorage(data_dir / "feedback.jsonl")
         self.feedback_manager = FeedbackManager(
             self.decision_history, self.weight_manager, self.feedback_storage
@@ -65,7 +67,7 @@ class CentralController:
             confidence_config,
             self.feedback_manager.feedback_score,
         )
-        self.routine_manager = RoutineManager(RoutineStorage(data_dir / "routines.jsonl"))
+        self.routine_manager = RoutineManager(routine_storage if routine_storage is not None else RoutineStorage(data_dir / "routines.jsonl"))
         self.realtime_engine = RealtimeDecisionEngine(
             config,
             confidence_service=self.confidence_service,
@@ -165,7 +167,18 @@ class CentralController:
 
     def update_fall_backend_signal(self, signal: FallBackendSignal) -> BathroomFallDecision:
         self.bathroom_decision = self.bathroom_fall.receive_backend_signal(signal)
+        if signal.caregiver_status == "safe":
+            self.scenario_actions[:] = [action for action in self.scenario_actions
+                                        if action.event not in {
+                                            "fall_user_alert_requested",
+                                            "fall_caregiver_alert_requested",
+                                            "fall_emergency_report_requested",
+                                        }]
         self.scenario_actions.extend(self.bathroom_fall.drain_actions())
+        return self.bathroom_decision
+
+    def resolve_persisted_fall(self, signal: FallBackendSignal) -> BathroomFallDecision:
+        self.bathroom_decision = self.bathroom_fall.resolve_persisted_incident(signal)
         return self.bathroom_decision
 
     def drain_device_commands(self) -> list[DeviceCommand]:

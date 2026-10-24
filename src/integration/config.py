@@ -27,7 +27,7 @@ class IntegrationConfig:
     level_to_watts: dict[int, float] = field(default_factory=dict)
     watts_field: str | None = None
     water_ready_states: tuple[str, ...] = ()
-    # Agreed contract: keep computed AI scores; only unscored rule results use null.
+    # Legacy direct-call policy. The continuous v0.5 profile uses measured evidence.
     rule_confidence_policy: str = "null"  # "block" remains an explicit deployment opt-out.
     fall_owner: str = "backend"  # Follow-up response owner, NOT the fall/recovery decision maker.
     device_ids: dict[str, str] = field(default_factory=lambda: {
@@ -36,8 +36,22 @@ class IntegrationConfig:
     # (internal scenario, internal action) -> (backend scenario, device, action, room).
     # Empty until the full backend contract supplies approved names.
     action_routes: dict[tuple[str, str], tuple[str, str, str, str]] = field(default_factory=dict)
-    # A separate, confirmed device-readiness field; status/idle describes user activity.
+    # Legacy explicit readiness field; v0.5 has a separate backend_idle mode.
     water_ready_field: str | None = None
+    # The long-running host opts into the supplied backend workflow. Direct
+    # callers retain their existing explicit-contract configuration.
+    water_readiness_mode: str = "explicit"
+    backend_fall_scenario: str | None = None
+    fall_actions: tuple[dict, ...] = (
+        {"device": "stove", "action": "turn_off"},
+        {"device": "light", "action": "blink", "durationSeconds": 10},
+    )
+    backend_restore: bool = False
+    async_alerts: bool = False
+    evaluation_audit_interval: float = 0.0
+    backend_v05: bool = False
+    stove_reduce_steps: int = 1
+    fall_status_path: str | None = None
 
     def __post_init__(self):
         if self.mode not in {"mock", "live"}:
@@ -52,13 +66,24 @@ class IntegrationConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive")
-        for name in ("allowed_lateness", "behavior_max_skew"):
+        for name in ("allowed_lateness", "behavior_max_skew", "evaluation_audit_interval"):
             if not isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be nonnegative")
         if type(self.max_attempts) is not int or self.max_attempts < 1:
             raise ValueError("max_attempts must be a positive integer")
-        if self.rule_confidence_policy not in {"block", "null"}:
-            raise ValueError("rule confidence must be blocked or explicitly nullable")
+        if self.rule_confidence_policy not in {"block", "null", "observed"}:
+            raise ValueError("rule confidence policy must be block, null or observed")
+        if type(self.stove_reduce_steps) is not int or not 1 <= self.stove_reduce_steps <= 8:
+            raise ValueError("stove_reduce_steps must be 1..8")
+        if self.water_readiness_mode not in {"explicit", "backend_idle"}:
+            raise ValueError("invalid water_readiness_mode")
+        if self.backend_fall_scenario is not None and not self.backend_fall_scenario.strip():
+            raise ValueError("backend_fall_scenario must not be empty")
+        if self.fall_status_path is not None and (
+                not self.fall_status_path.startswith("/") or self.fall_status_path.startswith("//")
+                or "{incident_id}" not in self.fall_status_path
+                or "?" in self.fall_status_path or "#" in self.fall_status_path):
+            raise ValueError("fall_status_path requires a relative API path with {incident_id}")
         if self.water_ready_field is not None and (
                 not isinstance(self.water_ready_field, str) or not self.water_ready_field
                 or self.water_ready_field == "status"):

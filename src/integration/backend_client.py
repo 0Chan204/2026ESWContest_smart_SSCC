@@ -4,9 +4,14 @@ from http.client import HTTPException
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.parse import quote, urlencode
 
 from .config import IntegrationConfig
 from .schemas import ContractError, decision_payload, decision_response, device_items
+
+
+def _reject_nonfinite(value):
+    raise ValueError("nonfinite JSON number")
 
 
 class BackendError(RuntimeError):
@@ -34,7 +39,8 @@ class UrllibTransport:
         request = Request(url, data=body, headers=headers, method=method)
         try:
             with self.opener.open(request, timeout=timeout) as response:
-                return HTTPResult(response.status, json.loads(response.read().decode("utf-8")))
+                return HTTPResult(response.status, json.loads(response.read().decode("utf-8"),
+                                                             parse_constant=_reject_nonfinite))
         except HTTPError as exc:
             raise BackendError(f"backend HTTP {exc.code}",
                                retryable=exc.code in {408, 429} or 500 <= exc.code < 600) from exc
@@ -73,6 +79,27 @@ class BackendClient:
             raise BackendError(f"device states HTTP {response.status}",
                                retryable=response.status in {408, 429} or response.status >= 500)
         return device_items(response.body)
+
+    def fetch_fall_status(self, incident_id: str) -> dict:
+        if self.config.fall_status_path is None:
+            raise BackendError("fall status API is not configured")
+        path = self.config.fall_status_path.replace("{incident_id}", quote(incident_id, safe=""))
+        response = self._request("GET", path)
+        if response.status != 200:
+            raise BackendError(f"fall status HTTP {response.status}",
+                               retryable=response.status in {408, 429} or response.status >= 500)
+        if not isinstance(response.body, dict):
+            raise ContractError("fall status must be an object")
+        return response.body
+
+    def fetch_sensing_results(self, since: float) -> list[dict]:
+        from .schemas import iso_time
+        response = self._request("GET", "/api/v1/sensing/results?" + urlencode({"since": iso_time(since), "limit": 5000}))
+        if response.status != 200:
+            raise BackendError(f"sensing results HTTP {response.status}", retryable=True)
+        if not isinstance(response.body, dict) or not isinstance(response.body.get("items"), list):
+            raise ContractError("sensing results require items[]")
+        return response.body["items"]
 
     def post_decision(self, payload: dict) -> HTTPResult:
         body = decision_payload(payload, allow_null_confidence=self.config.rule_confidence_policy == "null")

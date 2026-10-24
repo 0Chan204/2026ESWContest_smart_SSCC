@@ -29,20 +29,41 @@ class DecisionMapper:
         self.config = config
         self.history = history
 
-    def map(self, output, *, emergency=False) -> MappedDecision:
+    def map(self, output, *, emergency=False, evidence_confidence=None, stove_level=None) -> MappedDecision:
         identity = source_id(output)
         source = {"type": type(output).__name__, **output.to_dict()}
 
         def blocked(reason):
             return MappedDecision(identity, None, reason, source)
 
+        rule_confidence = None
+        if not isinstance(output, AutomationAction) and self.config.rule_confidence_policy == "observed":
+            if evidence_confidence is None:
+                return blocked("measured_rule_confidence_missing")
+            rule_confidence = evidence_confidence
+            source["confidence_basis"] = "minimum_observed_location_and_behavior_confidence"
+            source["input_confidence"] = evidence_confidence
+
         if isinstance(output, ScenarioAction) and output.scenario == "bathroom_fall":
+            if self.config.backend_fall_scenario and output.event == "fall_detected":
+                incident_id = (output.details or {}).get("incident_id")
+                if not incident_id:
+                    return blocked("fall_incident_id_missing")
+                identity = "fall:" + incident_id
+                body = decision_payload({
+                    "decisionId": "dec-" + hashlib.sha256(identity.encode()).hexdigest()[:32],
+                    "scenario": self.config.backend_fall_scenario,
+                    "confidence": rule_confidence, "reason": output.reason,
+                    "timestamp": iso_time(output.timestamp), "room": "toilet",
+                    "actions": [] if self.config.backend_v05 else list(self.config.fall_actions), "weatherBriefing": False,
+                }, allow_null_confidence=self.config.rule_confidence_policy == "null")
+                return MappedDecision(identity, body, None, source)
             return blocked("backend_managed_fall:local_stage_not_sent")
         if emergency and getattr(output, "action", None) == "restore_power":
             return blocked("emergency_active:restore_suppressed")
-        if getattr(output, "action", None) == "restore_power":
+        if getattr(output, "action", None) == "restore_power" and not self.config.backend_restore:
             return blocked("restore_control_provenance_unconfirmed")
-        confidence = None
+        confidence = rule_confidence
         if isinstance(output, AutomationAction):
             confidence = output.confidence
             record = self.history.get(output.action_id)
@@ -70,7 +91,10 @@ class DecisionMapper:
             scenario, device, action, internal_room = route
             internal_room = canonical_room(internal_room)
             # A configured route is not permission to change command semantics.
-            if action != output.action:
+            allowed_alias = self.config.backend_v05 and (
+                (device == "light" and (output.action, action) in {("turn_on", "on"), ("turn_off", "off")})
+                or (device == "stove" and output.action == "reduce_power" and action == "set_level"))
+            if action != output.action and not allowed_alias:
                 return blocked("action_semantics_mismatch")
             try:
                 room = self.config.backend_room(internal_room)
@@ -84,10 +108,18 @@ class DecisionMapper:
                     or target_room != internal_room):
                 return blocked("target_mapping_mismatch")
             actions = [{"device": device, "action": action}]
+            if self.config.backend_v05 and action == "set_level":
+                if type(stove_level) is not int or not 1 < stove_level <= 9:
+                    return blocked("stove_level_unavailable_or_minimum")
+                actions[0]["level"] = max(1, stove_level - self.config.stove_reduce_steps)
         body = decision_payload({
             "decisionId": "dec-" + hashlib.sha256(identity.encode()).hexdigest()[:32],
             "scenario": scenario, "confidence": confidence, "reason": reason,
             "timestamp": iso_time(output.timestamp), "room": room,
             "actions": actions, "weatherBriefing": weather,
         }, allow_null_confidence=self.config.rule_confidence_policy == "null")
+        if self.config.backend_v05:
+            body["expiresAt"] = iso_time(output.timestamp + self.config.command_ttl)
+            for action in body["actions"]:
+                action["deviceId"] = self.config.device_ids[action["device"]]
         return MappedDecision(identity, body, None, source)

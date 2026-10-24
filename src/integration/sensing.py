@@ -16,6 +16,7 @@ class LocationObservation:
     valid: bool
     diagnostic: str | None
     sample: SensingUpdate
+    valid_until: float | None = None
 
 
 def location_observation(payload: dict, received_at: float, config: IntegrationConfig) -> LocationObservation:
@@ -24,6 +25,7 @@ def location_observation(payload: dict, received_at: float, config: IntegrationC
     if "features" in payload:
         raise ContractError("expected final location JSON, not Pi features")
     timestamp = measured_time(payload.get("time"))
+    valid_until = measured_time(payload["valid_until"]) if "valid_until" in payload else None
     raw_location = payload.get("location")
     if not isinstance(raw_location, str):
         raise ContractError("location must be a string")
@@ -48,10 +50,12 @@ def location_observation(payload: dict, received_at: float, config: IntegrationC
     # No enumerated reason allowlist: config_mismatch and detailed node errors survive.
     if reason:
         diagnostic = diagnostic or "sensing_reason_present"
+    if valid_until is not None and received_at >= valid_until:
+        diagnostic = diagnostic or "location_result_expired"
     valid = diagnostic is None
     sample = SensingUpdate(location, timestamp, confidence=confidence if confidence is not None else 0.0,
                            detected=valid, observation_valid=valid, activity_observed=False)
-    return LocationObservation(deepcopy(payload), timestamp, received_at, valid, diagnostic, sample)
+    return LocationObservation(deepcopy(payload), timestamp, received_at, valid, diagnostic, sample, valid_until)
 
 
 @dataclass(frozen=True)
