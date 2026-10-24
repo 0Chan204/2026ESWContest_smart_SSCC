@@ -14,6 +14,10 @@ const FOCUSABLE =
 export function useDismissable(open: boolean, onClose: () => void) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const previousFocusRef = useRef<Element | null>(null)
+  // onClose 는 부모가 그릴 때마다 새로 만들어질 수 있다. 효과를 다시 돌리면 포커스가 창으로 튀므로
+  // (예: 슬라이더를 키보드로 조작하는 중 기기 상태가 바뀌면) 최신 값만 ref 로 들고 있는다
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) return
@@ -25,7 +29,7 @@ export function useDismissable(open: boolean, onClose: () => void) {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         event.stopPropagation()
-        onClose()
+        onCloseRef.current()
         return
       }
       if (event.key !== 'Tab') return
@@ -52,7 +56,7 @@ export function useDismissable(open: boolean, onClose: () => void) {
       const previous = previousFocusRef.current
       if (previous instanceof HTMLElement) previous.focus()
     }
-  }, [open, onClose])
+  }, [open])
 
   return containerRef
 }

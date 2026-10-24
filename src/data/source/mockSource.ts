@@ -299,8 +299,15 @@ export function createMockSource(): DataSource {
       if (!d || (d.kind !== 'fan' && d.kind !== 'light') || !d.online) throw new Error('제어할 수 없는 기기입니다.')
       if (control.on !== undefined) { d.on = control.on; d.auto = false }
       if (d.kind === 'fan' && control.speed) { d.speed = control.speed; d.on = true; d.auto = false }
-      if (d.kind === 'light' && control.brightness !== undefined) {
-        d.brightness = Math.min(100, Math.max(10, Math.round(control.brightness))); d.on = true; d.auto = false
+      if (d.kind === 'light') {
+        // 직접 조작하면 절전 상태가 풀린다. 0% 는 끄기, 그 밖은 10~100%
+        d.saving = false
+        if (control.brightness !== undefined) {
+          const b = Math.round(control.brightness)
+          if (b <= 0) d.on = false
+          else { d.brightness = Math.min(100, Math.max(10, b)); d.on = true }
+          d.auto = false
+        } else if (d.on && d.brightness < 10) d.brightness = 100
       }
       emit({ event: 'device.updated', data: d })
     },
@@ -386,9 +393,9 @@ export function createMockSource(): DataSource {
         }
         presence.bathroom = { ...presence.bathroom, present: true, observedAt: detectedAt }
         setLocation('bathroom')
-        const light = devices.find((x) => x.kind === 'light')
+        const light = devices.find((x) => x.kind === 'light' && x.room === 'bathroom')
         if (light && light.kind === 'light' && light.auto && !light.on) {
-          light.on = true
+          light.on = true; light.saving = false
           emit({ event: 'device.updated', data: light })
         }
         const e = emitEvent('fall_detected', 'danger', 'bathroom', {

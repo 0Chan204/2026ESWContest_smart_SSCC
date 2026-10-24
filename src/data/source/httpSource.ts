@@ -1,6 +1,6 @@
 import type {
   Burner, BurnerState, Contact, ContactSaveResult, CookingSession, Device, FallIncident, FallPolicy,
-  FallStatus, InductionDevice, KitchenPolicy, LightDevice, Location, Presence, Publisher, PurifierDevice,
+  FallStatus, FanDevice, InductionDevice, KitchenPolicy, LightDevice, Location, Presence, Publisher, PurifierDevice,
   HourlyWeather, RoomId, SafetyEvent, SafetyEventType, Severity, Weather, Zone,
 } from '@/types'
 import type { DataSource, DeviceControl, Snapshot, StreamMessage } from './types'
@@ -12,7 +12,7 @@ import type { DataSource, DeviceControl, Snapshot, StreamMessage } from './types
  *                       · /policies/kitchen-absence · /policies/fall-safety · /sensing/results/latest
  *   subscribe      WS   /stream  (끊기면 다시 연결, ?since={마지막 이벤트 id} 로 놓친 안전 이벤트 받기)
  *                  GET  /devices  (15초마다 — 기기 응답 없음 판정은 서버가 하고, 바뀐 것만 알린다)
- *   controlDevice  POST /devices/{id}/commands  (전등 on/off 만. 인덕션은 조회 전용, 환풍기는 백엔드에 없음)
+ *   controlDevice  POST /devices/{id}/commands  (전등 on · off · fadeout, 환풍기 on · off · set_speed. 인덕션·정수기는 조회 전용)
  *   submitFeedback POST /safety-events/{id}/feedback
  *   saveContact    PUT  /user | /guardian
  *   savePolicy     PUT  /policies/kitchen-absence
@@ -159,6 +159,32 @@ function mapHourly(v: unknown): HourlyWeather[] | undefined {
 
 const ROOM_NAME: Record<RoomId, string> = { kitchen: '주방', bathroom: '욕실', bedroom: '침실', living: '거실' }
 
+// ── 전등 · 환풍기 ──────────────────────────────────────────────────────────
+/**
+ * 백엔드 전등이 받을 수 있는 밝기는 세 가지뿐이다 (임의 밝기 명령 없음).
+ *   0 = off · 20 = fadeout(절전 밝기로 서서히, 전원은 켜진 채) · 100 = on
+ */
+const LIGHT_STEPS = [0, 20, 100] as const
+const SAVING_BRIGHTNESS = 20
+
+/** 전등 상태(current_state 또는 WS device.state) → 켜짐 · 밝기 · 절전 */
+function mapLightState(st: Obj, savingFlag?: unknown): Pick<LightDevice, 'on' | 'brightness' | 'saving'> {
+  const on = st.power === 'on'
+  if (!on) return { on: false, brightness: 0, saving: false }
+  // 밝기를 보내지 않는 전등은 켜져 있으면 100%. fadeout 중이면 곧 절전 밝기가 되므로 그 값을 먼저 보여준다
+  const reported = Math.max(0, Math.min(100, num(st.brightness, 100)))
+  const fading = st.mode === 'fadeout'
+  const brightness = fading ? Math.min(reported, SAVING_BRIGHTNESS) : reported
+  const saving = savingFlag === true || fading || (brightness > 0 && brightness <= SAVING_BRIGHTNESS)
+  return { on: true, brightness: brightness > 0 ? brightness : SAVING_BRIGHTNESS, saving }
+}
+
+type BackendSpeed = 'low' | 'mid' | 'high'
+const SPEED_FROM: Record<BackendSpeed, FanDevice['speed']> = { low: 1, mid: 2, high: 3 }
+const SPEED_TO: Record<FanDevice['speed'], BackendSpeed> = { 1: 'low', 2: 'mid', 3: 'high' }
+const mapSpeed = (v: unknown, fallback: FanDevice['speed']): FanDevice['speed'] =>
+  v === 'low' || v === 'mid' || v === 'high' ? SPEED_FROM[v] : fallback
+
 // ── 데이터 소스 ────────────────────────────────────────────────────────────
 export function createHttpSource(base: string): DataSource {
   const root = base.replace(/\/+$/, '')
@@ -197,6 +223,8 @@ export function createHttpSource(base: string): DataSource {
 
   // 화면 형식 기기 목록과 인덕션 온도 기록 (새로고침해도 그래프가 이어지도록 소스가 들고 있는다)
   let devices: Device[] = []
+  /** 이 화면에서 보낸 명령 id (기기 응답의 lastControl 로 '직접 조작'인지 알아본다). 최근 50개만 */
+  const sentCommands = new Set<string>()
   const tempHistory = new Map<string, number[]>()
   let fallPolicyRaw: Obj = { userAlertWaitSec: 30, autoReportSec: 60 }
 
@@ -231,9 +259,19 @@ export function createHttpSource(base: string): DataSource {
         return [d]
       }
       if (info.device === 'light') {
+        // 아직 상태를 받지 못한 전등은 is_on 만 본다
+        const st = isObj(info.current_state) ? cur : { power: info.is_on === true ? 'on' : 'off' }
         const d: LightDevice = {
-          id, kind: 'light', name: `${ROOM_NAME[room]} 조명`, room, online,
-          on: info.is_on === true, brightness: 100, auto, dimmable: false,
+          id, kind: 'light', name: `${ROOM_NAME[room]} 조명`, room, online, auto,
+          ...mapLightState(st, cur.powerSaving), brightnessSteps: [...LIGHT_STEPS],
+        }
+        return [d]
+      }
+      if (info.device === 'fan') {
+        const d: FanDevice = {
+          id, kind: 'fan', name: `${ROOM_NAME[room]} 환풍기`, room, online, auto,
+          on: isObj(info.current_state) ? cur.power === 'on' : info.is_on === true,
+          speed: mapSpeed(cur.speed, 2),
         }
         return [d]
       }
@@ -333,7 +371,16 @@ export function createHttpSource(base: string): DataSource {
         const st = isObj(data.state) ? data.state : null
         if (!d || !st) return []
         let next: Device | null = null
-        if (d.kind === 'light') next = { ...d, online: true, on: st.power === 'on' }
+        // 화면에서 보낸 명령의 결과면 '직접 조작', 서버 자동 조치(system)면 '자동'으로 본다
+        const lc = isObj(st.lastControl) ? st.lastControl : null
+        const auto = lc && typeof lc.commandId === 'string' && sentCommands.has(lc.commandId) ? false
+          : lc?.publisher === 'system' ? true : d.kind === 'light' || d.kind === 'fan' ? d.auto : false
+        if (d.kind === 'light' && (st.power === 'on' || st.power === 'off')) {
+          next = { ...d, online: true, auto, ...mapLightState(st) }
+        }
+        if (d.kind === 'fan' && (st.power === 'on' || st.power === 'off')) {
+          next = { ...d, online: true, auto, on: st.power === 'on', speed: mapSpeed(st.speed, d.speed) }
+        }
         if (d.kind === 'purifier') {
           const ml = optNum(st.lastDispensedMl)
           next = { ...d, online: true, dispensing: st.status === 'dispensing',
@@ -407,13 +454,42 @@ export function createHttpSource(base: string): DataSource {
   }
 
   // ── 동작 ────────────────────────────────────────────────────────────────
+  async function command(deviceId: string, body: { type: string; speed?: BackendSpeed }) {
+    const r = await send('POST', `/devices/${encodeURIComponent(deviceId)}/commands`, body)
+    if (isObj(r) && typeof r.commandId === 'string') {
+      sentCommands.add(r.commandId)
+      if (sentCommands.size > 50) sentCommands.delete(sentCommands.values().next().value!)
+    }
+  }
+
+  /**
+   * 전등·환풍기 제어. 실제 상태는 기기 응답(WS device.state)이 오면 바뀐다.
+   * - 전등 { on }         → on(100%) / off
+   * - 전등 { brightness } → 가장 가까운 단계로: 0 → off, 20 → fadeout(절전), 100 → on.
+   *                         꺼진 전등은 fadeout 을 받지 않으므로(전원이 켜져 있어야 낮출 수 있음) on 다음 fadeout
+   * - 환풍기 { on }       → on(지난 풍량) / off
+   * - 환풍기 { speed }    → set_speed (꺼져 있어도 보낸다 — 기기가 그 풍량으로 켠다)
+   */
   async function controlDevice(deviceId: string, control: DeviceControl): Promise<void> {
     const d = devices.find((x) => x.id === deviceId)
     if (!d) throw new ApiError('등록되지 않은 기기예요.')
-    if (d.kind !== 'light') throw new ApiError('이 기기는 화면에서 제어할 수 없어요.')
-    if (control.on === undefined) throw new ApiError('전등은 켜기·끄기만 할 수 있어요.')
-    await send('POST', `/devices/${encodeURIComponent(deviceId)}/commands`, { type: control.on ? 'on' : 'off' })
-    // 실제 상태는 기기 응답(device.state)이 오면 바뀐다
+    if (d.kind === 'light') {
+      if (control.brightness !== undefined) {
+        const target = LIGHT_STEPS.reduce((best, s) => (Math.abs(s - control.brightness!) < Math.abs(best - control.brightness!) ? s : best), 100)
+        if (target === 0) return command(deviceId, { type: 'off' })
+        if (target === 100) return command(deviceId, { type: 'on' })
+        if (!d.on) await command(deviceId, { type: 'on' })
+        return command(deviceId, { type: 'fadeout' })
+      }
+      if (control.on === undefined) throw new ApiError('전등은 켜기·끄기와 절전만 할 수 있어요.')
+      return command(deviceId, { type: control.on ? 'on' : 'off' })
+    }
+    if (d.kind === 'fan') {
+      if (control.speed !== undefined) return command(deviceId, { type: 'set_speed', speed: SPEED_TO[control.speed] })
+      if (control.on === undefined) throw new ApiError('환풍기는 켜기·끄기와 풍량만 바꿀 수 있어요.')
+      return command(deviceId, { type: control.on ? 'on' : 'off' })
+    }
+    throw new ApiError('이 기기는 화면에서 제어할 수 없어요.')
   }
 
   async function submitFeedback(eventId: string, verdict: 'approved' | 'rejected') {

@@ -3,13 +3,14 @@ import { RefreshCw } from 'lucide-react'
 import { Sheet } from '@/components/ui/Sheet'
 import { Toggle } from '@/components/ui/Toggle'
 import { Segmented } from '@/components/ui/Segmented'
+import { BrightnessSlider } from '@/components/ui/BrightnessSlider'
 import { Sparkline } from '@/components/ui/Sparkline'
 import { Button } from '@/components/ui/Button'
 import { ListGroup, ListRow } from '@/components/ui/List'
 import { DEVICE_GLYPH } from '@/components/DeviceIcon'
 import { useHome } from '@/store/HomeStore'
 import { usePreferences } from '@/store/PreferencesContext'
-import { summarize } from '@/lib/device'
+import { lightLevel, savingLevel, summarize } from '@/lib/device'
 import { BURNER_LABEL, PUBLISHER_LABEL, ROOM_LABEL } from '@/lib/labels'
 import { formatDuration, formatWhen } from '@/lib/format'
 import type { Device } from '@/types'
@@ -71,8 +72,8 @@ export function DeviceSheet({ deviceId, onClose }: { deviceId: string | null; on
           <ListGroup className="mt-6">
             <ListRow big={big} title="전원" trailing={<Toggle checked={d.on} disabled={!d.online} size={big ? 'lg' : 'md'} label="환풍기 전원" onChange={(v) => controlDevice(d.id, { on: v })} />} />
           </ListGroup>
-          <ListGroup title="풍량" className="mt-6" bodyClassName="p-2" footer="조리를 시작하면 자동으로 켜져요. 직접 바꾸면 자동 운전이 잠시 꺼져요.">
-            <Segmented label="풍량" size={big ? 'lg' : 'md'} value={d.speed}
+          <ListGroup title="풍량" className="mt-6" bodyClassName="p-2" footer={d.room === 'kitchen' ? '조리를 시작하면 자동으로 켜져요. 직접 바꾸면 자동 운전이 잠시 꺼져요.' : '풍량을 고르면 그 풍량으로 켜져요.'}>
+            <Segmented label="풍량" size={big ? 'lg' : 'touch'} value={d.speed}
               options={[{ value: 1, label: '약' }, { value: 2, label: '중' }, { value: 3, label: '강' }]}
               onChange={(v) => d.online && controlDevice(d.id, { speed: v })} />
           </ListGroup>
@@ -84,14 +85,13 @@ export function DeviceSheet({ deviceId, onClose }: { deviceId: string | null; on
           <ListGroup className="mt-6">
             <ListRow big={big} title="전원" trailing={<Toggle checked={d.on} disabled={!d.online} size={big ? 'lg' : 'md'} label="조명 전원" onChange={(v) => controlDevice(d.id, { on: v })} />} />
           </ListGroup>
-          {d.dimmable !== false && <ListGroup title="밝기" className="mt-6" bodyClassName="px-4 py-4" footer="사람이 들어오면 켜지고, 나가면 꺼져요.">
-            <label className="flex items-center gap-4">
-              <input type="range" min={10} max={100} step={10} value={d.brightness} disabled={!d.online}
-                onChange={(e) => controlDevice(d.id, { brightness: Number(e.target.value) })}
-                className="h-2 min-w-0 flex-1 cursor-pointer" aria-label="밝기" />
-              <span className="tabular w-12 text-right text-[0.9375rem] text-ink-2">{d.brightness}%</span>
-            </label>
-          </ListGroup>}
+          <ListGroup title="밝기" className="mt-6" bodyClassName="p-2"
+            footer={d.brightnessSteps ? '끔 · 절전 20% · 100% 중에서 골라요. 절전은 천천히 어두워져요.' : '사람이 들어오면 켜지고, 나가면 꺼져요.'}>
+            <BrightnessSlider size={big ? 'lg' : 'md'} label={`${d.name} 밝기`} disabled={!d.online}
+              value={lightLevel(d)} steps={d.brightnessSteps} savingLevel={savingLevel(d)}
+              onToggle={() => void controlDevice(d.id, { on: !d.on })}
+              onCommit={(v) => void controlDevice(d.id, v <= 0 ? { on: false } : { brightness: v })} />
+          </ListGroup>
         </>
       )}
     </Sheet>

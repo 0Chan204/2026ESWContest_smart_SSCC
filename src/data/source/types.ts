@@ -39,7 +39,7 @@ export type StreamMessage =
   | { event: 'fall.incident'; data: FallIncident }
   /** (FE 확장) 기기 온라인 상태 변경 */
   | { event: 'connection.changed'; data: { deviceId: string; online: boolean } }
-  /** (FE 확장) 정수기·환풍기·욕실 조명 상태 */
+  /** 정수기·환풍기·조명 상태 (백엔드 device.state 를 화면 기기 형식으로 바꾼 것) */
   | { event: 'device.updated'; data: Device }
   /** (FE 확장) 중앙제어가 판단한 사용자 위치 */
   | { event: 'location.updated'; data: { location: Location; observedAt: string } }
@@ -70,7 +70,7 @@ export interface DataSource {
   readonly kind: 'mock' | 'http'
   loadSnapshot(): Promise<Snapshot>
   subscribe(listener: (message: StreamMessage) => void): () => void
-  /** 환풍기·욕실 조명만 허용. 인덕션은 원격 제어하지 않는다(조회 전용 결정). */
+  /** 환풍기·조명만 허용. 인덕션·정수기는 원격 제어하지 않는다(조회 전용 결정). */
   controlDevice(deviceId: string, control: DeviceControl): Promise<void>
   submitFeedback(eventId: string, verdict: 'approved' | 'rejected'): Promise<SafetyEvent['feedback']>
   saveContact(kind: 'user' | 'guardian', contact: Contact): Promise<ContactSaveResult>

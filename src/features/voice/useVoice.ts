@@ -73,13 +73,14 @@ export function useVoice(): VoiceController {
       }[intent.reply]
       return finish(text)
     }
-    const device = h.devices.find((d) => d.id === intent.deviceId)
-    if (!device || !device.online) return finish('지금은 그 기기와 연결이 끊겨 있어요.')
+    const device = h.devices.find((d) => d.kind === intent.device && d.room === intent.room)
+    if (!device) return finish('그 기기는 아직 등록되어 있지 않아요.')
+    if (!device.online) return finish('지금은 그 기기와 연결이 끊겨 있어요.')
     setState('recognized')
     setPending({
       message: intent.confirm,
       run: () => {
-        void h.controlDevice(intent.deviceId, { on: intent.on })
+        void h.controlDevice(device.id, { on: intent.on })
         setPending(null)
         finish(`${withObjectParticle(device.name)} ${intent.on ? '켰어요' : '껐어요'}.`)
       },

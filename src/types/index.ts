@@ -2,7 +2,7 @@
  * 프론트엔드 도메인 타입.
  *
  * 인덕션·안전 이벤트·세션·낙상·정책은 백엔드 v0.2.1(app/schemas.py)과 필드명·값을 맞췄다.
- * 백엔드가 아직 제공하지 않는 정보(정수기·환풍기·욕실 조명, 위치, 안내 문장)는
+ * 백엔드가 아직 제공하지 않는 정보(위치, 안내 문장 등)는
  * 임베디드/중앙제어 파트 설계(중간발표 자료)를 따라 프론트 확장 필드로 둔다.
  */
 
@@ -72,10 +72,16 @@ export interface FanDevice extends DeviceBase {
 export interface LightDevice extends DeviceBase {
   kind: 'light'
   on: boolean
+  /** 밝기 % (켜져 있을 때 의미가 있다) */
   brightness: number
   auto: boolean
-  /** 밝기 조절 가능 여부. 백엔드 전등은 켜기/끄기만 지원해 false (기본 true) */
-  dimmable?: boolean
+  /**
+   * 고를 수 있는 밝기 단계(%, 0 = 끔). 백엔드 전등은 끔 · 절전 20% · 100% 만 지원해 [0, 20, 100].
+   * 없으면 10% 단위로 자유롭게 조절 (시연 데이터)
+   */
+  brightnessSteps?: number[]
+  /** 절전 밝기로 낮춘 상태 (사람이 없어 HomeVIS 가 낮췄거나 절전을 고름) */
+  saving?: boolean
 }
 
 export type Device = InductionDevice | PurifierDevice | FanDevice | LightDevice

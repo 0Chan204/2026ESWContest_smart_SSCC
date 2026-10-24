@@ -25,7 +25,8 @@ export function BathroomPage() {
   const [eventId, setEventId] = useState<string | null>(null)
   const p = presence.bathroom
   const pending = fall?.status === 'pending'
-  const lights = devices.filter((d) => d.room === 'bathroom')
+  // 욕실 조명 · 환풍기
+  const bathDevices = devices.filter((d) => d.room === 'bathroom')
   const recent = events.filter((e) => e.room === 'bathroom').slice(0, 8)
   const lastFall = events.find((e) => e.type === 'fall_detected')
   const Icon = pending ? TriangleAlert : p?.present ? User : PersonStanding
@@ -60,8 +61,11 @@ export function BathroomPage() {
             )}
           </Card>
 
-          <div className={cn('grid shrink-0 gap-3', elderly ? 'grid-cols-2 auto-rows-[160px]' : 'grid-cols-2 auto-rows-[156px] md:grid-cols-4 wall:short:auto-rows-[132px]')}>
-            {lights.map((d) => <DeviceTile key={d.id} device={d} big={elderly} onOpen={() => setDeviceId(d.id)} />)}
+          {/* 기기 수에 맞춰 한 줄로 (일반: 기기 + 재실 + 단계 2칸, 어르신: 기기 + 재실) */}
+          <div style={{ ['--cols' as string]: bathDevices.length + (elderly ? 1 : 3) }}
+            className={cn('grid shrink-0 grid-cols-2 gap-3 md:grid-cols-[repeat(var(--cols),minmax(0,1fr))]',
+              elderly ? 'auto-rows-[160px]' : 'auto-rows-[156px] wall:short:auto-rows-[132px]')}>
+            {bathDevices.map((d) => <DeviceTile key={d.id} device={d} big={elderly} onOpen={() => setDeviceId(d.id)} />)}
             <Tile big={elderly} icon={Radar} glyph="text-brand-ink" name="재실 감지" on={!!p?.present}
               state={!p ? '확인 중' : p.present ? '사람 있음' : `비어 있음${p.absentSec > 0 ? ` · ${formatDuration(p.absentSec)}` : ''}`} />
             {!elderly && (

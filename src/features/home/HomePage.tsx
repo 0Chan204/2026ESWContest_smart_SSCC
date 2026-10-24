@@ -31,12 +31,14 @@ function presenceText(p: Presence | undefined) {
 }
 
 /* ── 일반 모드 ──────────────────────────────────────────────────────────────
-   v2 배치: 1행 = 집 상태 | 위치(누르면 크게 보기), 2행 = 기기 카드 한 줄.
+   v2 배치: 1행 = 집 상태 | 위치 평면도(조명 켜고 끄기, 크게 보기), 2행 = 기기 카드 한 줄.
    최근 기록은 기록 탭에서만 본다.
    ───────────────────────────────────────────────────────────────────────── */
 function HomeNormal() {
   const navigate = useNavigate()
-  const { overallRisk, devices, presence, location, kitchenPhase, induction, fall, contacts, refresh } = useHome()
+  const { overallRisk, devices: all, presence, location, kitchenPhase, induction, fall, contacts, refresh } = useHome()
+  // 조명은 평면도에서 조작하므로 기기 줄에는 인덕션 · 정수기 · 환풍기만
+  const devices = all.filter((d) => d.kind !== 'light')
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [mapOpen, setMapOpen] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -71,20 +73,23 @@ function HomeNormal() {
             </ul>
           </Card>
 
-          <button type="button" onClick={() => setMapOpen(true)} aria-label={`지금 위치 ${LOCATION_LABEL[location]} · 크게 보기`}
-            className="press flex flex-col rounded-2xl bg-surface p-5 text-left md:col-span-5 wall:min-h-0 wall:short:p-4">
-            <span className="flex w-full items-center justify-between gap-3">
-              <span className="text-[1.0625rem] font-semibold text-ink">지금 위치</span>
-              <span className="flex items-center gap-2 text-[0.9375rem] font-semibold text-brand-ink">
-                {LOCATION_LABEL[location]}<Maximize2 className="h-4 w-4 text-ink-3" aria-hidden="true" />
-              </span>
-            </span>
-            <HomeMap className="mt-3 h-40 w-full md:h-auto md:min-h-36 md:flex-1 wall:min-h-0" />
-            <span className="mt-3 grid w-full grid-cols-2 gap-x-3 text-[0.8125rem]">
-              <span className="min-w-0"><span className="block text-ink-3">주방</span><span className="block truncate font-medium text-ink">{presenceText(presence.kitchen)}</span></span>
-              <span className="min-w-0"><span className="block text-ink-3">욕실</span><span className="block truncate font-medium text-ink">{presenceText(presence.bathroom)}</span></span>
-            </span>
-          </button>
+          {/* 위치 + 조명: 평면도의 전구를 눌러 켜고 끈다. 밝기·환풍기는 '크게 보기'에서 */}
+          <Card className="flex flex-col p-5 md:col-span-5 wall:min-h-0 wall:short:p-4">
+            <div className="-my-1.5 flex w-full items-center justify-between gap-3">
+              <h2 className="min-w-0 truncate text-[1.0625rem] font-semibold text-ink">
+                지금 위치 <span className="font-semibold text-brand-ink">{LOCATION_LABEL[location]}</span>
+              </h2>
+              <button type="button" onClick={() => setMapOpen(true)}
+                className="press -mr-2 flex min-h-11 shrink-0 items-center gap-1.5 rounded-[10px] px-2 text-[0.9375rem] font-semibold text-brand-ink">
+                <Maximize2 className="h-4 w-4" aria-hidden="true" />크게 보기
+              </button>
+            </div>
+            <HomeMap className="mt-3 h-44 w-full md:h-auto md:min-h-40 md:flex-1 wall:min-h-0" />
+            <div className="mt-3 grid w-full grid-cols-2 gap-x-3 text-[0.8125rem]">
+              <p className="min-w-0"><span className="block text-ink-3">주방</span><span className="block truncate font-medium text-ink">{presenceText(presence.kitchen)}</span></p>
+              <p className="min-w-0"><span className="block text-ink-3">욕실</span><span className="block truncate font-medium text-ink">{presenceText(presence.bathroom)}</span></p>
+            </div>
+          </Card>
         </div>
 
         {/* 2행: 기기 카드 (v2 형태) */}
@@ -94,7 +99,7 @@ function HomeNormal() {
               <RefreshCw className={cn('h-4 w-4', checking && 'spin-slow')} aria-hidden="true" />{checking ? '확인 중…' : '다시 확인'}
             </button>
           }>기기 <span className="font-normal text-ink-3">{devices.length}</span></SectionTitle>
-          {/* 기기 수만큼 칸을 나눈다 (목업 4대 · 백엔드 기본 3대) */}
+          {/* 기기 수만큼 칸을 나눈다 (최대 4칸 — 시연·백엔드 모두 인덕션 · 정수기 · 환풍기 2대) */}
           <div style={{ ['--cols' as string]: Math.min(Math.max(devices.length, 1), 4) }}
             className="grid grid-cols-2 gap-4 auto-rows-[158px] md:grid-cols-[repeat(var(--cols),minmax(0,1fr))] wall:short:auto-rows-[144px]">
             {devices.map((d) => <DeviceCard key={d.id} device={d} onOpen={() => setDeviceId(d.id)} />)}

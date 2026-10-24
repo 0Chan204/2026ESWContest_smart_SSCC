@@ -44,12 +44,16 @@ export function seedDevices(): Device[] {
       burner: { burnerId: 'burner-1', deviceState: 'on', level: 4, temperature: 97.5, activeSec: 720 },
       lastControl: 'user', alarm: false, tempHistory: history,
     },
+    // 백엔드 기본 구성(device_registry)과 같은 순서 · 배치: 침실·욕실 조명, 정수기, 주방·욕실 환풍기
+    // 침실은 비어 있어 HomeVIS 가 절전 밝기로 낮춰 둔 상태
+    { id: 'light-bed-01', kind: 'light', name: '침실 조명', room: 'bedroom', online: true, on: true, brightness: 20, auto: true, saving: true },
+    { id: 'light-bath-01', kind: 'light', name: '욕실 조명', room: 'bathroom', online: true, on: false, brightness: 80, auto: true },
     {
       id: 'purifier-01', kind: 'purifier', name: '정수기', room: 'kitchen', online: true,
       dispensing: false, lastDispense: { at: isoAt(1, 7, 42), ml: 250, auto: true }, autoDispensedToday: false,
     },
     { id: 'fan-01', kind: 'fan', name: '주방 환풍기', room: 'kitchen', online: true, on: true, speed: 2, auto: true },
-    { id: 'light-bath-01', kind: 'light', name: '욕실 조명', room: 'bathroom', online: true, on: false, brightness: 80, auto: true },
+    { id: 'fan-bath-01', kind: 'fan', name: '욕실 환풍기', room: 'bathroom', online: true, on: false, speed: 1, auto: true },
   ]
 }
 

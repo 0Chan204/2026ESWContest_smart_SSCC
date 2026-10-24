@@ -19,6 +19,8 @@ export function Toggle({ checked, onChange, label, disabled, size = 'md' }: {
       onClick={(e) => { e.stopPropagation(); onChange(!checked) }}
       className={cn(
         'relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-40',
+        // 보이는 크기는 iOS 그대로, 누르는 범위는 44px 이상으로 넓힌다
+        "before:absolute before:-inset-[7px] before:content-['']",
         lg ? 'h-[38px] w-[64px]' : 'h-[31px] w-[51px]',
         checked ? 'bg-switch' : 'bg-track',
       )}

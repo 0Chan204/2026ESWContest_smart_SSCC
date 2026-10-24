@@ -6,7 +6,8 @@ export function Segmented<T extends string | number>({ value, options, onChange,
   options: { value: T; label: string }[]
   onChange: (v: T) => void
   label: string
-  size?: 'md' | 'lg'
+  /** md 36px · touch 44px(터치 패널) · lg 48px(어르신) */
+  size?: 'md' | 'touch' | 'lg'
   className?: string
 }) {
   return (
@@ -20,7 +21,7 @@ export function Segmented<T extends string | number>({ value, options, onChange,
           onClick={() => onChange(o.value)}
           className={cn(
             'flex-1 rounded-[8px] font-semibold transition-colors',
-            size === 'lg' ? 'min-h-12 text-[1.0625rem]' : 'min-h-9 text-[0.875rem]',
+            size === 'lg' ? 'min-h-12 text-[1.0625rem]' : size === 'touch' ? 'min-h-11 text-[0.9375rem]' : 'min-h-9 text-[0.875rem]',
             value === o.value ? 'bg-thumb text-ink shadow-[var(--shadow-thumb)]' : 'text-ink',
           )}
         >
