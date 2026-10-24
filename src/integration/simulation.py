@@ -45,7 +45,8 @@ class SimulationBackend(MockBackend):
                 self.accepted[payload["decisionId"]] = deepcopy(payload), deepcopy(response.body)
                 actions = response.body["actions"] if payload["scenario"] == self.fall_scenario else payload["actions"]
                 for action in actions:
-                    item = next(d for d in self.snapshot["items"] if d["device"] == action["device"])
+                    item = next(d for d in self.snapshot["items"] if d["device"] == action["device"]
+                                and (not action.get("deviceId") or d["deviceId"] == action["deviceId"]))
                     if action["action"] in {"turn_on", "on"}:
                         item["is_on"] = True
                     elif action["action"] in {"turn_off", "off"}:

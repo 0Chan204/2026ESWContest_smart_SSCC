@@ -5,7 +5,7 @@ import os
 from src.llm.adapters.base import BaseLLMAdapter
 
 
-LLM_PROVIDERS = ("none", "gemini", "qwen", "llama", "exaone")
+LLM_PROVIDERS = ("none", "gemini", "qwen", "llama", "exaone", "gpt")
 
 
 def resolve_llm_provider(name: str | None = None) -> str:
@@ -35,6 +35,10 @@ def create_llm(name: str | None = None) -> BaseLLMAdapter | None:
     if normalized == "exaone":
         from src.llm.adapters.exaone import EXAONEAdapter
         return EXAONEAdapter()
+
+    if normalized == "gpt":
+        from src.llm.adapters.gpt import GPTAdapter
+        return GPTAdapter()
 
     raise ValueError(
         f"Unknown LLM '{normalized}'. "

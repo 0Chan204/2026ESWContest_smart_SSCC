@@ -27,7 +27,7 @@ class StateMapper:
         appliance = None
         device = canonical_device(item["device"])
         timestamp = measured_time(item["updatedAt"])
-        if c.device_ids.get(device) != item["deviceId"]:
+        if not c.accepts_device(device, item["deviceId"]):
             diagnostics.append(f"unmapped_device:{item['deviceId']}")
         try:
             room = c.internal_room(item["room"])
@@ -49,7 +49,7 @@ class StateMapper:
                 watts = number(state[c.watts_field], c.watts_field)
             elif type(state.get("level")) is int and state["level"] in c.level_to_watts:
                 watts = c.level_to_watts[state["level"]]
-            if watts is None:
+            if watts is None and c.automation_profile == "legacy":
                 diagnostics.append("power_watts_unmeasured")
             temperature = None
             if state.get("temperature") is not None:

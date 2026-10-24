@@ -29,6 +29,15 @@ python -m src.integration --sensing-source backend
 설정은 [config/homevis.toml](config/homevis.toml), 상태는 `output/integration/live/status.json`에서 확인합니다.
 낙상 사건 조회·재시작 복구, TTS 전달, 인증·TLS, 테스트 방법은 [연속 실행 안내](docs/continuous_runner.md)에 있습니다.
 현재 팀 Wi-Fi 코드는 위치만 발행하므로 행동이 필요한 출수·취침·낙상에는 추가 실제 행동 입력이 필요합니다.
+일반 전등 자동 점·소등과 인덕션 감소·복구는 기본 `location_level_v1` 프로필로
+위치와 실제 기기 상태만 사용합니다. 등록된 각 구역 전등은 재실 5초/부재 30초 확인 후,
+인덕션은 이탈 40초/복귀 5초 확인 후 신뢰도·안전 조건을 만족하면 백엔드에 요청합니다.
+측정 시각 정렬(기본 4초)과 통신 지연은 별도로 더해집니다.
+
+현재 위치 기반 자동화는 **사용자 1명**을 전제로 합니다. 여러 사람의 위치를 개별 추적하지 않습니다.
+센싱 미수신이나 `unknown/empty`만으로 외출·부재를 확정하지 않으며, 제어에는 유효한 위치와
+최신 기기 상태가 필요합니다. 인덕션을 자동으로 켜지 않습니다. 복구는 HomeVIS가 낮춘
+화력이 실제 상태에 반영되었고, 사용자가 복귀했으며, 온도 등 안전 조건을 만족할 때만 요청합니다.
 
 ## 주요 기능
 
@@ -121,12 +130,12 @@ python test_realtime.py --llm none --tts dry-run
 
 `dry-run`은 테스트용 WAV를 생성하며 파일을 자동 재생하지 않습니다.
 실제 OS 음성은 `--tts pyttsx3`를 사용합니다. `python -m pip install -r requirements.txt`는
-선택적 TTS, Gemini 및 EXAONE API 의존성을 설치합니다. Gemini adapter는 Vertex AI의 `GOOGLE_CLOUD_PROJECT`와
+선택적 TTS, Gemini·EXAONE·GPT API 의존성을 설치합니다. Gemini adapter는 Vertex AI의 `GOOGLE_CLOUD_PROJECT`와
 선택적인 `GOOGLE_CLOUD_LOCATION`을 사용합니다. Qwen adapter는 별도 로컬 모델과
 `torch`, `transformers`, `accelerate`가 필요합니다. `llama` adapter는 placeholder입니다.
 기본 `--llm none` 경로는 이러한 모델과 인증을 요구하지 않습니다.
 
-## Qwen / EXAONE 선택
+## Qwen / EXAONE / GPT 선택
 
 EXAONE은 로컬 모델을 다운로드하거나 GPU에 적재하지 않고 FriendliAI의 OpenAI 호환 Chat Completions
 API를 사용합니다. 공통 `BaseLLMAdapter` 계약을 사용하므로 기존 안내문 생성, 위험 경고, TTS 입력 및
@@ -165,7 +174,7 @@ API나 로컬 모델 없이 기본 안내문을 사용합니다.
 
 | 환경변수 | 기본값 | 의미 |
 | --- | --- | --- |
-| `LLM_PROVIDER` | `none` | `none`, `qwen`, `exaone` 등 기존 provider 선택 |
+| `LLM_PROVIDER` | `none` | `none`, `qwen`, `exaone`, `gpt` 등 provider 선택 |
 | `FRIENDLI_API_KEY` | 없음 | EXAONE 선택 시 필수인 Personal API Key |
 | `EXAONE_MODEL` | `LGAI-EXAONE/EXAONE-4.0-32B` | FriendliAI 모델 ID |
 | `EXAONE_BASE_URL` | `https://api.friendli.ai/serverless/v1` | OpenAI 호환 API base URL |
@@ -192,14 +201,89 @@ python -m unittest tests.test_exaone_adapter.EXAONELiveAPITest -v
 있으며 EXAONE 전용 실행 파이프라인은 없습니다. 실제 키는 저장소에 기록하지 마세요. `.gitignore`는
 `.env`와 `.env.*`를 제외하고 예시 파일 `.env.example`만 추적하도록 설정되어 있습니다.
 
-## 주요 설정
+### OpenAI GPT API
+
+GPT도 동일한 `BaseLLMAdapter.generate(system_prompt, user_prompt)` 경로를 사용합니다.
+OpenAI Docs의 [Responses API](https://developers.openai.com/api/docs/guides/text)를 기준으로
+기존 system/user 프롬프트를 전달하고, 완료된 assistant 메시지의 `output_text` 부분만 추출합니다.
+reasoning 항목·거절·잘린 응답·빈 응답은 TTS나 피드백 JSON으로 전달하지 않습니다.
+`store=False`로 응답 저장을 요청하지 않지만, 이것이 공급자의 모든 로그 보존을 비활성화한다는 뜻은 아닙니다.
+
+먼저 `python -m pip install -r requirements-runtime.txt`로 의존성을 설치/갱신합니다.
+Responses API를 지원하는 `openai>=1.68,<3`가 필요하며 GPT는 로컬 모델이나 GPU를 사용하지 않습니다.
+Qwen·EXAONE 구현과 중앙 판단·가중치·기기 제어·TTS 모듈은 그대로 유지됩니다.
+
+`.env`에서 다음 값을 설정하고 **기존과 동일하게** `python -m src.integration`을 실행합니다.
+
+```ini
+LLM_PROVIDER=gpt
+OPENAI_API_KEY=<OpenAI API 키>
+OPENAI_MODEL=<계정에서 사용할 수 있는 Responses API 지원 GPT 모델 ID>
+OPENAI_TIMEOUT_SECONDS=30
+OPENAI_MAX_RETRIES=2
+OPENAI_MAX_OUTPUT_TOKENS=2048
+```
+
+모델 ID는 의도치 않은 모델·비용 선택을 피하도록 필수 설정으로 두었습니다.
+`OPENAI_API_KEY`는 FriendliAI 키와 별개이며 코드·Git·로그에 넣지 마세요.
+전송 주소는 `https://api.openai.com/v1`로 고정되어 다른 용도의 `OPENAI_BASE_URL`을 상속하지 않습니다.
+GPT를 선택한 경우에만 키·모델을 검사하며, `LLM_PROVIDER` 미설정 시 기존 `none` 동작을 유지합니다.
+
+timeout은 요청별 양의 유한 초 값이고, SDK 재시도는 기본 2회(설정 범위 0~5회)입니다.
+연결 장애·timeout·429·서버 오류 등 SDK의 제한적 재시도 후에도 실패하면 기존 기본 안내문을 사용합니다.
+인증/권한, 잘못된 설정, timeout, 서비스 장애, 비정상 응답을 구분하며 다른 모델을 자동 로딩하지 않습니다.
+자연어 피드백 실패는 기존 정책대로 `unknown`으로 처리합니다. 키/모델 누락 등 초기 설정 오류는
+어댑터 생성 오류로 보고하며, 연속 실행기의 별도 안내 작업 실패가 중앙 제어 판단을 변경하지 않습니다.
+
+`OPENAI_MAX_OUTPUT_TOKENS`는 reasoning 모델의 추론 토큰도 포함합니다. 토큰 부족으로 응답이
+잘리면 기본 안내문으로 처리되므로 모델에 맞게 조정하세요. 모델별 temperature/reasoning 옵션을
+강제하지 않으며, Responses API를 지원하지 않는 모델은 설정 오류로 처리합니다.
+
+키가 필요 없는 테스트:
+
+```sh
+python -m pytest -q tests/test_gpt_adapter.py tests/test_exaone_adapter.py
+```
+
+실제 API 연결 테스트는 아래처럼 **명시적으로 실행할 때만** 요청하며 비용이 발생할 수 있습니다.
+단독 pytest/예제는 `.env`를 자동으로 읽지 않으므로 환경변수를 설정합니다.
+
+```powershell
+$env:OPENAI_API_KEY = "<OpenAI API 키>"
+$env:OPENAI_MODEL = "<사용할 GPT 모델 ID>"
+$env:RUN_GPT_API_TEST = "1"
+python -m pytest -q tests/test_gpt_adapter.py -k live_gpt_api
+Remove-Item Env:RUN_GPT_API_TEST
+```
+
+Linux/macOS에서는 키와 모델을 `export`한 뒤
+`RUN_GPT_API_TEST=1 python -m pytest -q tests/test_gpt_adapter.py -k live_gpt_api`로 실행합니다.
+기존 개별 예제도 `python test_alert.py --risk WARNING --llm gpt --tts dry-run` 또는
+`python test_realtime.py --llm gpt --tts dry-run`으로 선택할 수 있습니다. 이 예제들은 실제 API를 호출합니다.
+연속 실행기의 `--mode mock`은 기존대로 LLM을 사용하지 않습니다.
+
+## 주요 설정과 신뢰도 계산
+
+연속 실행기의 기본 프로필은 `location_level_v1`입니다. 다음 운영 값은
+[config/homevis.toml](config/homevis.toml)의 `[backend]`에서 설정합니다.
+
+| 설정 | 기본값 | 의미 |
+| --- | --- | --- |
+| `automation_profile` | `location_level_v1` | 현재 위치·기기 단계 입력용 점수. `legacy`로 기존 점수 선택 가능 |
+| `automation_absence_seconds` | 40초 | 화력 감소를 위한 최소 주방 이탈 시간 및 시간 feature의 최대 점수 기준 |
+| `automation_return_seconds` | 5초 | 화력 복구를 위한 복귀 확인 시간 |
+| `light_on_seconds` / `light_off_seconds` | 5초 / 30초 | 일반 전등 점등·소등을 위한 확인 시간 |
+| `multi_room_lights` | `true` | 백엔드에 등록된 room/kitchen/toilet의 전등을 각각 제어 |
+| `stove_reduce_steps` | 1단계 | 현재 화력보다 낮출 단계 수. 최저 1단계 미만으로 낮추지 않음 |
+
+위험 상태와 시나리오의 기존 기본값은 별도 설정입니다.
 
 | 설정 | 기본값 | 의미 |
 | --- | --- | --- |
 | `KITCHEN_SHORT_ABSENCE` | 20초 | 주방 이탈 주의 기준 |
 | `KITCHEN_WARNING_TIME` | 40초 | 주방 이탈 경고 기준 |
 | `KITCHEN_DANGER_TIME` | 60초 | 주방 장시간 이탈 위험 기준 |
-| `KITCHEN_LEAVE_FULL_SECONDS` | 60초 | 이탈 시간 feature의 최대 점수 기준 |
+| `KITCHEN_LEAVE_FULL_SECONDS` | legacy: 60초 / 운영: 40초 | 이탈 시간 feature의 최대 점수 기준. 운영 시 위 설정으로 주입 |
 | `MORNING_WATER_AMOUNT_ML` | 120mL | 새로 생성하는 기본 자동 출수 요청량 |
 
 위험 단계는 프로그램 시작 시간이 아니라 엔진이 추적하는 주방 이탈 경과시간을 기준으로 합니다.
@@ -207,11 +291,26 @@ python -m unittest tests.test_exaone_adapter.EXAONELiveAPITest -v
 위치·복귀 확인 시간, 센싱·기기 timeout, 신뢰도 검증은 계속 적용됩니다.
 불확실한 입력만으로 기존 위험 상태를 정상으로 해제하지 않습니다.
 
-시간 feature는 `clamp(leave_duration / 60, 0, 1)`로 계산하므로 20초에 약 1/3,
-40초에 약 2/3, 60초 이상에 1입니다. 실제 `reduce_power` 요청은 다른 feature와 합산한
-confidence가 기존 threshold **0.82**에 도달하고 유효한 센싱·기기 상태 등 실행 조건을 만족할 때
-생성됩니다. 전력이나 행동 입력이 부족하면 60초에도 요청이 생성되지 않을 수 있습니다.
-`reduce_power`는 특정 온도만큼 낮추거나 전원을 끄는 명령으로 변환하지 않습니다.
+운영 프로필의 화력 감소 초기 점수는 다음 가중합입니다. 각 항목은 0~1 범위입니다.
+
+```text
+confidence = 0.30 × 위치 신뢰도
+           + 0.30 × clamp(이탈 초 / 40, 0, 1)
+           + 0.10 × (관측된 화력 단계 / 9)
+           + 0.20 × 센싱 일관성
+           + 0.10 × 피드백 점수
+```
+
+위치 신뢰도·일관성이 각각 0.95, 이탈 40초, 화력 5단계, 기본 피드백 0.5이면 약 **0.881**입니다.
+감소 기준 **0.82**를 낮추지 않고 실제 관측 가능한 항목으로 도달할 수 있게 했습니다.
+전등 기준도 켜기 0.72 / 끄기 0.78, 복구 기준도 0.80으로 유지합니다. 점수는 확률이 아닌
+정책 점수이며, 사용자 피드백 학습 후에는 가중치가 달라질 수 있습니다.
+점수 외에도 최소 확인 시간·유효한 센싱·최신 기기 상태 등 실행 조건을 모두 만족해야 합니다.
+
+`legacy`는 기존 가중치와 `clamp(이탈 초 / 60, 0, 1)` 계산을 그대로 보존합니다.
+이 프로필에서는 전력(W)·행동 입력이 부족하면 제어 기준에 도달하지 못할 수 있습니다.
+새 프로필의 가중치·피드백 파일은 기존 파일과 분리하여 과거 학습값을 덮어쓰지 않습니다.
+`reduce_power`는 백엔드의 `set_level` 요청이며 특정 온도만큼 낮추거나 전원을 끄는 명령이 아닙니다.
 
 설정은 [RealtimeConfig](src/control/realtime_config.py),
 [ConfidenceConfig](src/control/confidence/config.py), [ScenarioConfig](src/control/scenario_config.py)에 있습니다.
@@ -262,7 +361,8 @@ Pi의 `features` 배열 대신 추론이 완료된 최종 위치 JSON을 입력�
 
 GET 응답의 `items[]`에서 `device/deviceId/room/online/is_on/current_state/control_state/updatedAt`을
 읽습니다. `room` 관측은 취침·기상에 연결되고, 전등 상태와 공간은 조명 평가·송신 재검증에 사용합니다.
-인덕션 `level`은 모델과 판단 결과에 단계 값으로 보존합니다. 단계의 최대값이나 W 환산을 추정하지 않습니다.
+인덕션 `level`은 모델과 판단 결과에 단계 값으로 보존합니다. 운영 프로필은 확인된 백엔드 범위 1~9를
+단계 feature로 사용하며 W로 환산하지 않습니다. 기존 `legacy` 평가도 설정으로 선택할 수 있습니다.
 `temperature`는 원문을 보존하며, live 프로필에서는 백엔드 스키마에서 확인한 섭씨 단위를 사용합니다.
 백엔드의 `user/homevis/null`은 원본 제어 주체로 보존하고, 화력 감소·사용자 개입 상태로 임의 변환하지 않습니다.
 
@@ -379,6 +479,8 @@ Mock과 Live 저장소는 분리되며, 재시도·재시작에서도 원본 ID�
 python -m pytest -q
 python -m unittest discover -s tests -v
 python -m pytest -q tests/test_backend_contract.py tests/test_backend_integration.py tests/test_runtime_regressions.py
+python -m pytest -q tests/test_location_level_automation.py tests/test_runner_network.py
+python -m pytest -q tests/test_gpt_adapter.py tests/test_exaone_adapter.py
 ```
 
 pytest는 unittest 클래스와 함수형 통합 테스트를 함께 실행합니다. unittest 명령만으로는 함수형 테스트가
@@ -387,6 +489,11 @@ pytest는 unittest 클래스와 함수형 통합 테스트를 함께 실행합�
 `test_backend_contract.py`는 실제 HTTP 클라이언트를 로컬 테스트 서버에 연결해 경로·본문·중복 응답을
 확인하고 README의 전체 JSON을 데모 결과와 대조합니다. 배포된 실제 백엔드나 실가전 검증은 아닙니다.
 `tests/manual_test.py`, `tests/manual_morning_water_test.py`는 로컬 모델을 사용하는 별도 수동 실행 파일입니다.
+
+`test_location_level_automation.py`는 위치만으로 전등 점·소등, 화력 감소·복귀 복구, 구역별 여러 전등,
+반복 이탈·재시작·안전 차단을 검증합니다. `test_gpt_adapter.py`는 프롬프트와 TTS/피드백 계약,
+오류 분류·비정상 응답·로컬 모델 미로딩 및 가짜 HTTP를 통한 SDK 재시도 한도를 검증합니다.
+실제 GPT/EXAONE 호출은 위에서 안내한 별도 환경변수로 명시적으로 활성화할 때만 수행합니다.
 
 - [실시간 판단](docs/realtime_control.md): 상태 전이, 시간 기준, 직접 호출 및 JSONL 재생
 - [Confidence 제어](docs/confidence_control.md): feature·가중치·threshold와 기존 피드백
@@ -402,7 +509,8 @@ pytest는 unittest 클래스와 함수형 통합 테스트를 함께 실행합�
 로컬 WAV 자동 재생은 하지 않습니다. 직접 컨트롤러 호출의 기존 내부 단계 API는 유지합니다.
 기존 피드백 API는 사용할 수 있지만 백엔드 yes/no 피드백 자동 연결은 구현되어 있지 않습니다.
 
-실제 행동 생산자, 와트 측정/검증된 단계 환산이 없는 기능은 입력 부족으로 보류할 수 있습니다.
+행동이 필요한 기상 출수·취침·낙상은 실제 행동 입력이 있어야 합니다. 일반 전등과 인덕션 감소·복구에는
+행동·W 입력이 필요하지 않습니다. W 기반 위험 평가 항목에는 여전히 실제 전력 측정/검증된 환산이 필요합니다.
 확인한 백엔드의 자동 신고는 상태·이벤트 기록까지이며 실제 119 연동은 미구현입니다.
 MQTT/HTTP 로컬 소켓과 백엔드 모델 검증은 실가전·LG OS 보드 실증을 대신하지 않습니다.
 `sent` 응답만으로 실제 소등·출수·화력 변경 완료를 판단하지 않습니다.

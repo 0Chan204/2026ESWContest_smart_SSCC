@@ -33,6 +33,7 @@ class ConfidenceDecisionService:
         room: str | None = None,
         user_id: str = DEFAULT_USER_ID,
         guard_reason: str | None = None,
+        device_id: str | None = None,
     ) -> AutomationDecision:
         result = self.engine.calculate(scenario, features, user_id)
         confidence = float(result["confidence"])
@@ -52,6 +53,7 @@ class ConfidenceDecisionService:
                 action=action_name,
                 reason=dict(result["features"]),
                 room=room,
+                device_id=device_id,
             )
         elif confidence >= self.config.MEDIUM_CONFIDENCE_THRESHOLD:
             outcome = "wait_for_more_evidence"
@@ -72,6 +74,9 @@ class ConfidenceDecisionService:
             action=action,
             guard_reason=guard_reason,
         )
-        self.history.save(decision.to_dict())
+        record = decision.to_dict()
+        if self.config.INPUT_PROFILE != "legacy":
+            record["input_profile"] = self.config.INPUT_PROFILE
+        self.history.save(record)
         return decision
 

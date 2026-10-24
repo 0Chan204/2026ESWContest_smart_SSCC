@@ -66,7 +66,28 @@ MQTT retained 메시지는 신규 관측으로 쓰지 않으며 다음 실제 �
 
 ## 판단과 전송
 
-가중치·임계값·시나리오 조건·FeedbackManager/WeightManager는 그대로 사용합니다.
+운영 기본값은 `automation_profile="location_level_v1"`입니다. 현재 팀 입력에서 실제로 제공되는
+위치·시간·센싱 일관성·인덕션 화력 단계로 점수를 계산합니다. 없는 행동·전력(W) 값을 채워 넣지 않습니다.
+기존 `legacy` 프로필과 임계값, FeedbackManager/WeightManager 구현은 유지합니다.
+
+| 동작 | 기본 조건 |
+| --- | --- |
+| 전등 켜기 | 해당 구역 재실 5초 이상 + confidence ≥ 0.72 |
+| 전등 끄기 | 다른 유효 구역에서 30초 이상 부재 확인 + confidence ≥ 0.78 |
+| 인덕션 감소 | 켜진 인덕션의 level 2~9 확인, 주방 이탈 40초 이상 + confidence ≥ 0.82 |
+| 인덕션 복구 | 새 주방 복귀 5초 이상 확인 + confidence ≥ 0.80 + 본 시스템의 감소 기록·관측 확인 |
+
+시간은 측정 시각 기준이며 실제 전달에는 기본 4초 정렬 버퍼와 통신 지연이 더해집니다.
+낮은 신뢰도·unknown·empty·센싱 단절은 부재로 간주하지 않습니다. 인덕션은 자동으로 켜지 않습니다.
+`multi_room_lights=true`이면 기기 조회에 등록된 room/kitchen/toilet 전등들을 각각 평가하고 정확한
+`deviceId`로 전달합니다. 등록되지 않은 구역의 전등을 가정하지 않습니다. 같은 구역의 여러 전등도 지원합니다.
+`false`이면 기존 `device_ids.light` 한 대만 사용합니다. 취침 소등을 일반 재실 켜기가 즉시 취소하지 않습니다.
+
+위 시간은 `config/homevis.toml`의 `automation_absence_seconds`, `automation_return_seconds`,
+`light_on_seconds`, `light_off_seconds`로 변경합니다. 기존 입력 전체를 사용하는 평가로 되돌리려면
+`automation_profile="legacy"`를 선택합니다. 새로운 프로필의 학습 파일은
+`user_weights.location_level_v1.json`, `feedback.location_level_v1.jsonl`로 분리되어 기존 학습값을 덮어쓰지 않습니다.
+이전 프로필 판단에 대한 피드백은 그 프로필로 처리하며 서로 다른 feature 가중치를 섞지 않습니다.
 
 | 내부 출력 | 백엔드 전송 |
 | --- | --- |
@@ -80,7 +101,8 @@ MQTT retained 메시지는 신규 관측으로 쓰지 않으며 다음 실제 �
 
 `reduce_power`의 단계 폭은 `stove_reduce_steps`로 설정합니다. 전원 차단으로 바꾸지 않습니다.
 복구는 AI가 보낸 감소 요청의 접수 기록과 이후 `homevis`·낮아진 level 관측이 모두 있어야 허용합니다.
-사용자 조작, OFF, 미해결 낙상은 복구하지 않습니다. 원래 화력 저장·기기 실행은 백엔드 책임입니다.
+사용자 조작, OFF, 미해결 낙상은 복구하지 않습니다. 운영 프로필은 온도 미측정·200℃ 이상·온도 급상승에도
+복구하지 않습니다. 원래 화력 저장·기기 실행은 백엔드 책임입니다.
 백엔드가 OFF 후 복구도 지원하지만 기존 AI의 OFF 복구 금지 조건은 유지합니다.
 
 백엔드 실제 모델은 `confidence: null`을 허용하지 않습니다. 기존 가중합 점수가 있는 출력은 그 값을 유지합니다.
@@ -90,9 +112,11 @@ MQTT retained 메시지는 신규 관측으로 쓰지 않으며 다음 실제 �
 
 정수기의 `current_state.status=idle`은 **기기의** 출수 대기 상태입니다. Wi-Fi 사용자 행동과 구분합니다.
 online·기기/구역·freshness도 확인합니다. 온도는 백엔드 스키마에서 섭씨로 확인됐습니다.
-level(1~9)을 와트로 추정하지 않습니다. 기존 주방 confidence가 필요로 하는 W 입력은
-검증된 `level_to_watts` 표나 `watts_field` 설정이 없으면 미측정으로 남습니다.
-따라서 데이터 부족으로 기존 임계값을 통과하지 못한 제어는 전송되지 않습니다.
+level(1~9)을 와트로 추정하지 않습니다. 운영 프로필의 감소 점수는
+`위치×0.30 + 이탈시간/40(최대1)×0.30 + level/9×0.10 + 일관성×0.20 + 피드백×0.10`입니다.
+위치·일관성 0.95, 40초 이탈, level 5, 초기 피드백 0.5이면 약 0.881로 감소 기준을 통과합니다.
+W는 검증된 `level_to_watts` 표나 `watts_field` 설정이 없으면 미측정으로 남지만, 운영 자동 제어의
+필수 입력은 아닙니다. W에 의존하는 기존 위험 판단 항목은 W를 제공해야 평가할 수 있습니다.
 
 일반 요청에는 `expiresAt`을 보내고 `status=expired` 응답은 재시도하지 않습니다.
 `202/sent`는 접수·전송이지 가전의 실제 동작 완료 ACK가 아닙니다.
@@ -149,6 +173,7 @@ EXAONE 실패 시 기존 문구 fallback을 사용하며 Qwen을 자동 로딩�
 ```sh
 python -m pytest -q
 python -m pytest -q tests/test_continuous_runner.py tests/test_runner_network.py
+python -m pytest -q tests/test_location_level_automation.py
 ```
 
 네트워크 테스트는 로컬 시험 MQTT 브로커/HTTP 서버만 사용합니다. paho가 없으면 MQTT 실소켓 테스트만 skip합니다.

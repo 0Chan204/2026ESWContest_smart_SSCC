@@ -9,6 +9,7 @@ import time
 from src.alert_service import AlertService
 from src.control.automation_models import LightContext
 from src.control.central_controller import CentralController
+from src.control.confidence.config import ConfidenceConfig
 from src.control.identifiers import canonical_device, device_target
 from src.control.scenario_models import BathroomFallState, FallBackendSignal
 from src.llm.factory import create_llm
@@ -43,6 +44,9 @@ class IntegrationRuntime:
         self.outbox = Outbox(config.outbox_path, config.mode)
         self.controller = controller or CentralController(
             confidence_data_dir=config.outbox_path.parent / "controller",
+            confidence_config=ConfidenceConfig.for_profile(config.automation_profile,
+                absence_seconds=config.automation_absence_seconds, return_seconds=config.automation_return_seconds,
+                light_on_seconds=config.light_on_seconds, light_off_seconds=config.light_off_seconds),
             decision_history=SQLiteDecisionHistory(self.outbox, config.outbox_path.parent / "controller" / "decision_history.jsonl")
                 if config.backend_v05 else None,
             routine_storage=SQLiteRoutineStorage(self.outbox) if config.backend_v05 else None)
@@ -82,6 +86,7 @@ class IntegrationRuntime:
         self._last_behavior_time = None
         self._last_fall_state = None
         self._light_requested = set()
+        self._light_presence = {}
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="homevis-http")
         self._poll_future = self._post_future = None
         self._post_record = None
@@ -225,10 +230,13 @@ class IntegrationRuntime:
             return
         self._backend_ok = True
         present = set()
+        expected = set(self.config.device_ids) | set(self.devices)
         for item in items:
-            kind = canonical_device(item["device"])
+            device = canonical_device(item["device"])
+            kind = self.config.device_stream(device, item["deviceId"])
+            accepted = self.config.accepts_device(device, item["deviceId"])
             if item.get("updatedAt") is None or item.get("current_state") is None:
-                if self.config.device_ids.get(kind) == item["deviceId"]:
+                if accepted:
                     present.add(kind)
                     self._record_device_fault(kind, fetched_at)
                     self.devices.pop(kind, None)
@@ -240,14 +248,14 @@ class IntegrationRuntime:
                     observation = self._restore_evidence(observation)
             except (ValueError, TypeError) as exc:
                 self.diagnostic("invalid_device_item", device_id=item["deviceId"], error=str(exc))
-                if self.config.device_ids.get(kind) == item["deviceId"]:
+                if accepted:
                     self._record_device_fault(kind, fetched_at)
                 continue
             self.outbox.audit("device_received", fetched_at, {
                 "raw": item, "measured_at": observation.measured_at, "fetched_at": fetched_at,
                 "diagnostics": observation.diagnostics,
             })
-            if self.config.device_ids.get(kind) != item["deviceId"]:
+            if not accepted:
                 self.diagnostic("unmapped_device", device_id=item["deviceId"])
                 continue
             present.add(kind)
@@ -265,7 +273,7 @@ class IntegrationRuntime:
                         and (kind != "stove" or observation.appliance is not None)):
                     self._device_faults.pop(kind, None)
             self._enqueue(kind, observation.measured_at, fetched_at, "device", observation, item)
-        for kind in self.config.device_ids.keys() - present:
+        for kind in expected - present:
             self._record_device_fault(kind, fetched_at)
             self.devices.pop(kind, None)
             self.diagnostic("device_missing", device=kind)
@@ -273,7 +281,7 @@ class IntegrationRuntime:
     def poll_failed(self, reason="backend_poll_failed", *, failed_at=None):
         self._backend_ok = False
         failed_at = self.clock() if failed_at is None else failed_at
-        for kind in self.config.device_ids:
+        for kind in set(self.config.device_ids) | set(self.devices):
             self._record_device_fault(kind, failed_at)
         self.diagnostic(reason)
 
@@ -287,7 +295,8 @@ class IntegrationRuntime:
                 and 0 <= self.clock() - observation.measured_at < self.config.device_max_age):
             eligible = bool(raw["online"] and raw["is_on"] and raw["control_state"] == "homevis"
                             and type(level) is int and type(record.get("previous_level")) is int
-                            and level < record["previous_level"])
+                            and level < record["previous_level"]
+                            and (record.get("requested_level") is None or level == record["requested_level"]))
             if raw["control_state"] == "user" or not raw["is_on"]:
                 self.outbox.set_metadata("stove_reduction", None)
         if observation.appliance is not None:
@@ -404,7 +413,14 @@ class IntegrationRuntime:
         }
 
     def _evaluate_light(self, timestamp):
-        observation, decision = self.evaluated_devices.get("light"), self.last_decision
+        for stream, observation in tuple(self.evaluated_devices.items()):
+            if stream == "light" or stream.startswith("light:"):
+                self._evaluate_one_light(observation, timestamp)
+
+    def _evaluate_one_light(self, observation, timestamp):
+        decision = self.last_decision
+        if observation is not None and not decision.observation_valid:
+            self._light_presence.pop(observation.raw["deviceId"], None)
         if (observation is None or observation.diagnostics
                 or not 0 <= timestamp - observation.measured_at < self.config.device_max_age
                 or not decision.observation_valid or decision.sensing_status != "valid"
@@ -412,8 +428,12 @@ class IntegrationRuntime:
             return
         engine = self.controller.realtime_engine
         present = decision.user_location == observation.room
-        key = (observation.measured_at, engine._location_since, present)
-        self._light_requested = {item for item in self._light_requested if item[0] >= observation.measured_at}
+        device_id = observation.raw["deviceId"]
+        if present and observation.room == "room" and self.controller.bedtime_light._requested:
+            return  # Presence must not undo a sleep-triggered OFF request.
+        key = (device_id, observation.measured_at, engine._location_since, present)
+        self._light_requested = {item for item in self._light_requested
+                                 if item[0] != device_id or item[1] >= observation.measured_at}
         if key in self._light_requested:
             return
         if self.config.backend_fall_scenario:
@@ -422,9 +442,15 @@ class IntegrationRuntime:
             for record in self.outbox.db.execute(
                     "SELECT payload FROM decisions WHERE expires_at>? AND status IN ('pending','sending','accepted')", (timestamp,)):
                 if record[0] is not None and any(a["device"] == "light" and a["action"] == desired
+                                               and a.get("deviceId", self.config.device_ids["light"]) == device_id
                                                for a in json.loads(record[0])["actions"]):
                     return
         duration = 0 if engine._location_since is None else timestamp - engine._location_since
+        if self.config.automation_profile == "location_level_v1":
+            previous = self._light_presence.get(device_id)
+            if previous is None or previous[0] != present:
+                self._light_presence[device_id] = (present, engine._candidate_since or timestamp)
+            duration = max(0, timestamp - self._light_presence[device_id][1])
         sample = engine._sensing
         activity_confidence = (sample.activity_confidence or 0.0) if (
             sample.activity_observed and sample.activity_valid_until is not None
@@ -434,6 +460,7 @@ class IntegrationRuntime:
             timestamp=timestamp, presence_duration=duration if present else 0,
             absence_duration=0 if present else duration, location_confidence=sample.confidence,
             activity_confidence=activity_confidence,
+            device_id=device_id if self.config.multi_room_lights else None,
             sensor_consistency=self.controller.feature_extractor.sensor_consistency(
                 engine._sensor_history, decision.user_location)))
         if result.action:
@@ -493,6 +520,14 @@ class IntegrationRuntime:
             stove = self.evaluated_devices.get("stove")
             level = None if stove is None else stove.raw["current_state"].get("level")
             result = self.decision_mapper.map(output, emergency=emergency, evidence_confidence=evidence, stove_level=level)
+            if (self.config.automation_profile == "location_level_v1" and result.payload is not None
+                    and getattr(output, "device", None) == "stove"):
+                desired = result.payload["actions"][0]["action"]
+                inflight = self.outbox.db.execute(
+                    "SELECT payload FROM decisions WHERE status IN ('pending','sending')")
+                if any(raw[0] is not None and any(a["device"] == "stove" and a["action"] == desired
+                       for a in json.loads(raw[0])["actions"]) for raw in inflight):
+                    result = replace(result, payload=None, diagnostic="stove_command_in_flight")
             if (self._is_backend_fall({"source_id": result.source_id, "payload": result.payload})
                     and self.outbox.fall_incident().get("confidence") is None):
                 self.outbox.update_fall(confidence=result.payload["confidence"])
@@ -682,11 +717,12 @@ class IntegrationRuntime:
             if action["action"] == "restore_power":
                 if not self.config.backend_restore or not self.outbox.get_metadata("stove_reduction"):
                     return "restore_control_provenance_unconfirmed"
-            observation = self.devices.get(action["device"])
-            if action["device"] in self._device_faults:
+            stream = self.config.device_stream(action["device"], action.get("deviceId", self.config.device_ids[action["device"]]))
+            observation = self.devices.get(stream)
+            if stream in self._device_faults:
                 return "device_state_unavailable"
-            if (action["device"] in self._conflicts and observation is not None
-                    and observation.measured_at <= self._conflicts[action["device"]]):
+            if (stream in self._conflicts and observation is not None
+                    and observation.measured_at <= self._conflicts[stream]):
                 return "conflicting_device_state"
             if (observation is None or not observation.raw["online"] or observation.room is None
                     or not 0 <= now - observation.measured_at < self.config.device_max_age):
@@ -707,6 +743,22 @@ class IntegrationRuntime:
                             or engine._sensing.location != "kitchen" or engine.last_user_location != "kitchen"
                             or engine.current_state == "DANGER"):
                         return "restore_not_confirmed_safe"
+                    if self.config.automation_profile == "location_level_v1":
+                        temperature = evidence.appliance.temperature_c
+                        if temperature is None or temperature >= engine.config.HIGH_TEMPERATURE_C:
+                            return "restore_temperature_unsafe_or_missing"
+                        if (engine._candidate != "kitchen" or engine._candidate_since is None
+                                or engine._now - engine._candidate_since < self.config.automation_return_seconds):
+                            return "return_not_confirmed"
+                        prior = self.evaluated_devices.get("stove")
+                        if prior is not None and prior.appliance is not None:
+                            prior_temperature = prior.appliance.temperature_c
+                            elapsed = observation.measured_at - prior.measured_at
+                            if (prior_temperature is not None and 0 < elapsed < self.config.device_max_age
+                                    and (temperature - prior_temperature) / elapsed >= engine.config.RISING_TEMPERATURE_C_PER_SECOND):
+                                return "restore_temperature_rising"
+                        if engine._temperature_rate is not None and engine._temperature_rate >= engine.config.RISING_TEMPERATURE_C_PER_SECOND:
+                            return "restore_temperature_rising"
                 if action["action"] in {"reduce_power", "set_level"} and (
                         engine._sensing.location == "kitchen" or engine.last_user_location == "kitchen"):
                     return "user_returned_to_kitchen"
@@ -733,6 +785,8 @@ class IntegrationRuntime:
                     if engine._sensing.location == target_room:
                         return "user_returned_to_light_room"
                 elif scenario == "light_auto_on" and action["action"] in {"turn_on", "on"}:
+                    if target_room == "room" and self.controller.bedtime_light._requested:
+                        return "bedtime_light_off_has_priority"
                     if engine._sensing.location != target_room or engine.last_user_location != target_room:
                         return "user_left_light_room"
                 else:
@@ -805,9 +859,12 @@ class IntegrationRuntime:
                 if action["device"] != "stove" or action["status"] != "sent":
                     continue
                 if action["action"] in {"reduce_power", "set_level"}:
+                    requested_level = next((item.get("level") for item in row["payload"]["actions"]
+                                            if item["device"] == "stove" and item["action"] == action["action"]), None)
                     self.outbox.set_metadata("stove_reduction", {
                         "decisionId": row["payload"]["decisionId"], "requested_at": row["source"]["timestamp"],
-                        "previous_level": row["source"].get("previous_level"), "accepted_at": self.clock()})
+                        "previous_level": row["source"].get("previous_level"), "requested_level": requested_level,
+                        "accepted_at": self.clock()})
                 elif action["action"] in {"restore_power", "turn_off"}:
                     self.outbox.set_metadata("stove_reduction", None)
         partial = any(action["status"] != "sent" for action in response.body["actions"])

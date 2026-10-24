@@ -45,9 +45,10 @@ class CentralController:
         confidence_config = confidence_config or ConfidenceConfig()
         data_dir = (Path(confidence_data_dir) if confidence_data_dir is not None else
                     Path(__file__).resolve().parents[2] / "output" / "confidence")
-        self.weight_manager = WeightManager(confidence_config, data_dir / "user_weights.json")
+        profile_suffix = "" if confidence_config.INPUT_PROFILE == "legacy" else "." + confidence_config.INPUT_PROFILE
+        self.weight_manager = WeightManager(confidence_config, data_dir / f"user_weights{profile_suffix}.json")
         self.decision_history = decision_history if decision_history is not None else DecisionHistoryStorage(data_dir / "decision_history.jsonl")
-        self.feedback_storage = FeedbackStorage(data_dir / "feedback.jsonl")
+        self.feedback_storage = FeedbackStorage(data_dir / f"feedback{profile_suffix}.jsonl")
         self.feedback_manager = FeedbackManager(
             self.decision_history, self.weight_manager, self.feedback_storage
         )
@@ -263,6 +264,12 @@ class CentralController:
         else:
             device_action = "turn_off"
             guard = "already_off" if not context.light_on else None
+        policy = self.confidence_service.config
+        if policy.INPUT_PROFILE == "location_level_v1":
+            duration = context.presence_duration if context.user_present else context.absence_duration
+            required = policy.LIGHT_PRESENCE_FULL_SECONDS if context.user_present else policy.LIGHT_LEAVE_FULL_SECONDS
+            if duration < required:
+                guard = "location_hold_time_not_met"
         decision = self.confidence_service.score(
             scenario=scenario,
             features=features,
@@ -272,6 +279,7 @@ class CentralController:
             action_name=device_action,
             user_id=target_user,
             guard_reason=guard,
+            device_id=context.device_id,
         )
         if decision.action is not None:
             self.automation_actions.append(decision.action)

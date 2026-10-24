@@ -16,6 +16,13 @@ backend_restore = true
 backend_v05 = true
 rule_confidence_policy = "observed"
 stove_reduce_steps = 1
+automation_profile = "location_level_v1"
+automation_absence_seconds = 40.0
+automation_return_seconds = 5.0
+light_on_seconds = 5.0
+light_off_seconds = 30.0
+# Discover registered lights in room/kitchen/toilet; send only through the backend.
+multi_room_lights = true
 # Verified against HomeVIS-Backend develop 3a23128, docs/AI-INTEGRATION.md v0.5.
 backend_fall_scenario = "fall_detected"
 fall_status_path = "/api/v1/fall-incidents/{incident_id}"

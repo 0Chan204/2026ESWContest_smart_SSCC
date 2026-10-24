@@ -35,7 +35,17 @@ class FeatureExtractor:
         sensor_consistency: float,
         previous_homevis_action: bool,
         feedback_score: float,
+        current_stove_level: int | None = None,
     ) -> dict[str, float]:
+        if self.config.INPUT_PROFILE == "location_level_v1":
+            return {
+                "location": _clamp(location_confidence),
+                "duration": _clamp(leave_duration / self.config.KITCHEN_LEAVE_FULL_SECONDS),
+                # An observed ordinal stage, never a watts estimate.
+                "stove_level": current_stove_level / 9 if type(current_stove_level) is int
+                    and 1 <= current_stove_level <= 9 else 0.0,
+                "consistency": _clamp(sensor_consistency), "feedback": _clamp(feedback_score),
+            }
         return {
             "location": _clamp(location_confidence),
             "duration": _clamp(leave_duration / self.config.KITCHEN_LEAVE_FULL_SECONDS),
@@ -67,6 +77,14 @@ class FeatureExtractor:
         }
 
     def light(self, context: LightContext, feedback_score: float) -> tuple[str, dict[str, float]]:
+        if self.config.INPUT_PROFILE == "location_level_v1":
+            duration = context.presence_duration if context.user_present else context.absence_duration
+            limit = self.config.LIGHT_PRESENCE_FULL_SECONDS if context.user_present else self.config.LIGHT_LEAVE_FULL_SECONDS
+            return ("light_auto_on" if context.user_present else "light_auto_off"), {
+                "location": _clamp(context.location_confidence),
+                "presence_duration" if context.user_present else "leave_duration": _clamp(duration / limit),
+                "consistency": _clamp(context.sensor_consistency), "feedback": _clamp(feedback_score),
+            }
         common = {
             "location": _clamp(context.location_confidence),
             "consistency": _clamp(context.sensor_consistency),

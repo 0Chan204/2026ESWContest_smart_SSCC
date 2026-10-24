@@ -19,6 +19,7 @@ class AutomationAction:
     action: str
     reason: dict[str, float]
     room: str | None = None
+    device_id: str | None = None
 
     def __post_init__(self) -> None:
         device, room = device_target(self.device, self.room)
@@ -26,7 +27,10 @@ class AutomationAction:
         object.__setattr__(self, "room", room)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        if self.device_id is None:
+            data.pop("device_id")
+        return data
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,7 @@ class LightContext:
     location_confidence: float = 1.0
     activity_confidence: float = 0.0
     sensor_consistency: float = 1.0
+    device_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.room or not isinstance(self.room, str):

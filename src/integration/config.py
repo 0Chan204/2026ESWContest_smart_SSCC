@@ -52,6 +52,12 @@ class IntegrationConfig:
     backend_v05: bool = False
     stove_reduce_steps: int = 1
     fall_status_path: str | None = None
+    automation_profile: str = "legacy"
+    automation_absence_seconds: float = 40.0
+    automation_return_seconds: float = 5.0
+    light_on_seconds: float = 5.0
+    light_off_seconds: float = 30.0
+    multi_room_lights: bool = False
 
     def __post_init__(self):
         if self.mode not in {"mock", "live"}:
@@ -62,7 +68,8 @@ class IntegrationConfig:
                 raise ValueError("live mode requires an explicit HTTP(S) backend URL without credentials")
             if url.query or url.fragment or url.path.rstrip("/"):
                 raise ValueError("base_url must be an origin; API paths are fixed")
-        for name in ("poll_interval", "http_timeout", "retry_interval", "command_ttl", "device_max_age"):
+        for name in ("poll_interval", "http_timeout", "retry_interval", "command_ttl", "device_max_age",
+                     "automation_absence_seconds", "automation_return_seconds", "light_on_seconds", "light_off_seconds"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -73,6 +80,10 @@ class IntegrationConfig:
             raise ValueError("max_attempts must be a positive integer")
         if self.rule_confidence_policy not in {"block", "null", "observed"}:
             raise ValueError("rule confidence policy must be block, null or observed")
+        if self.automation_profile not in {"legacy", "location_level_v1"}:
+            raise ValueError("unsupported automation profile")
+        if type(self.multi_room_lights) is not bool:
+            raise ValueError("multi_room_lights must be boolean")
         if type(self.stove_reduce_steps) is not int or not 1 <= self.stove_reduce_steps <= 8:
             raise ValueError("stove_reduce_steps must be 1..8")
         if self.water_readiness_mode not in {"explicit", "backend_idle"}:
@@ -106,3 +117,11 @@ class IntegrationConfig:
 
     def backend_room(self, room: str) -> str:
         return self.internal_room(room)
+
+    def device_stream(self, device: str, device_id: str) -> str:
+        if device == "light" and self.multi_room_lights and device_id != self.device_ids.get("light"):
+            return "light:" + device_id
+        return device
+
+    def accepts_device(self, device: str, device_id: str) -> bool:
+        return self.device_ids.get(device) == device_id or (self.multi_room_lights and device == "light")

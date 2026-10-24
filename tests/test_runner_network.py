@@ -15,6 +15,7 @@ import pytest
 
 from src.alert_service import AlertService
 from src.control import CentralController
+from src.control.confidence.config import ConfidenceConfig
 from src.control.realtime_config import RealtimeConfig
 from src.control.scenario_models import DeviceCommand, ScenarioAction
 from src.integration import IntegrationRuntime
@@ -63,7 +64,7 @@ def read_packet(sock):
 class TestBroker:
     __test__ = False
 
-    def __init__(self, *, disconnect_first=False):
+    def __init__(self, *, disconnect_first=False, location_only=False):
         self.socket = socket.socket()
         self.socket.bind(("127.0.0.1", 0))
         self.socket.listen(2)
@@ -74,6 +75,7 @@ class TestBroker:
         self.topics = []
         self.errors = []
         self.disconnect_first = disconnect_first
+        self.location_only = location_only
         self.thread = Thread(target=self.run, daemon=True)
         self.thread.start()
 
@@ -105,6 +107,8 @@ class TestBroker:
                         payload = {"time": iso_time(now), "location": "room", "location_confidence": .99,
                             "behavior": {"time": iso_time(now), "valid_until": iso_time(now + 3),
                                          "location": "room", "confidence": .99, "activity": "walking"}}
+                        if self.location_only:
+                            payload.pop("behavior")
                         topic = topics[0].encode()
                         conn.sendall(mqtt_packet(0x30, struct.pack("!H", len(topic)) + topic + json.dumps(payload).encode()))
                         if self.disconnect_first and self.sessions == 1 or self.stop.wait(.05):
@@ -177,13 +181,15 @@ def test_real_mqtt_reconnect_resubscribes_without_publishing_commands():
 def test_real_mqtt_to_engine_to_http_light_control(tmp_path, http_backend):
     pytest.importorskip("paho.mqtt.client")
     url, backend, received = http_backend
-    broker = TestBroker()
+    broker = TestBroker(location_only=True)
     settings = load_settings(environ={}, mode="live", base_url=url, data_dir=tmp_path)
-    settings = replace(settings, integration=replace(settings.integration, allowed_lateness=.1, poll_interval=.1),
+    settings = replace(settings, integration=replace(settings.integration, allowed_lateness=.1, poll_interval=.1, light_on_seconds=.1),
                        mqtt=replace(settings.mqtt, host="127.0.0.1", port=broker.port, join_wait_seconds=0),
                        tick_interval=.02)
     source = MQTTSource(settings.mqtt)
-    controller = CentralController(config=RealtimeConfig(SENSING_CONFIRM_TIME=.1), confidence_data_dir=tmp_path / "controller")
+    controller = CentralController(config=RealtimeConfig(SENSING_CONFIRM_TIME=.1),
+        confidence_config=ConfidenceConfig.for_profile("location_level_v1", light_on_seconds=.1),
+        confidence_data_dir=tmp_path / "controller")
     runtime = IntegrationRuntime(settings.integration, BackendClient(settings.integration), controller=controller,
         fall_alert_service=AlertService(LLMMessageGenerator(), DryRunTTS(), tmp_path / "audio"))
     host = ContinuousHost(settings, runtime, source)
@@ -195,6 +201,7 @@ def test_real_mqtt_to_engine_to_http_light_control(tmp_path, http_backend):
         assert sum(p["scenario"] == "light_auto_on" for p in posts) == 1
         assert all(path == "/api/v1/ai/decisions" for method, path, _ in received if method == "POST")
         assert backend.snapshot["items"][1]["is_on"]
+        assert controller.realtime_engine._sensing.activity_observed is False
         assert not broker.errors
     finally:
         broker.close()

@@ -93,8 +93,33 @@ class ConfidenceConfig:
     LIGHT_LEAVE_FULL_SECONDS: float = 30.0
     MAX_STOVE_POWER_WATTS: float = 1800.0
     SENSOR_HISTORY_SIZE: int = 5
+    INPUT_PROFILE: str = "legacy"
+
+    @classmethod
+    def for_profile(cls, profile: str, *, absence_seconds=40.0, return_seconds=5.0,
+                    light_on_seconds=5.0, light_off_seconds=30.0):
+        if profile == "legacy":
+            return cls()
+        if profile != "location_level_v1":
+            raise ValueError("unsupported automation profile")
+        weights = _default_weights()
+        weights["kitchen_leave_reduce_power"] = {
+            "location": .30, "duration": .30, "stove_level": .10,
+            "consistency": .20, "feedback": .10,
+        }
+        weights["light_auto_on"] = {
+            "location": .40, "presence_duration": .30, "consistency": .20, "feedback": .10,
+        }
+        weights["light_auto_off"] = {
+            "location": .35, "leave_duration": .35, "consistency": .20, "feedback": .10,
+        }
+        return cls(INPUT_PROFILE=profile, SCENARIO_WEIGHTS=weights,
+                   KITCHEN_LEAVE_FULL_SECONDS=absence_seconds, KITCHEN_RETURN_FULL_SECONDS=return_seconds,
+                   LIGHT_PRESENCE_FULL_SECONDS=light_on_seconds, LIGHT_LEAVE_FULL_SECONDS=light_off_seconds)
 
     def __post_init__(self) -> None:
+        if self.INPUT_PROFILE not in {"legacy", "location_level_v1"}:
+            raise ValueError("unsupported automation profile")
         scalars = (
             "MEDIUM_CONFIDENCE_THRESHOLD", "FEEDBACK_LEARNING_RATE",
             "FEEDBACK_APPLY_THRESHOLD", "FEEDBACK_REVIEW_THRESHOLD", "MIN_WEIGHT",

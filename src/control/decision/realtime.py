@@ -229,6 +229,16 @@ class RealtimeDecisionEngine:
                 guard = "stove_off"
             elif self._user_override or appliance.control_state == "USER_OVERRIDE":
                 guard = "user_override"
+            if extractor.config.INPUT_PROFILE == "location_level_v1":
+                if (self._candidate != "kitchen" or self._candidate_since is None
+                        or timestamp - self._candidate_since < max(self.config.RETURN_CONFIRM_TIME,
+                                                                  extractor.config.KITCHEN_RETURN_FULL_SECONDS)
+                        or return_duration < extractor.config.KITCHEN_RETURN_FULL_SECONDS):
+                    guard = "return_not_confirmed"
+                elif appliance.temperature_c is None or appliance.temperature_c >= self.config.HIGH_TEMPERATURE_C:
+                    guard = "restore_temperature_unsafe_or_missing"
+                elif self._temperature_rate is not None and self._temperature_rate >= self.config.RISING_TEMPERATURE_C_PER_SECOND:
+                    guard = "restore_temperature_rising"
             decision = service.score(
                 scenario=scenario, features=features, timestamp=timestamp,
                 device="stove", action_name="restore_power", room="kitchen", user_id=self.user_id,
@@ -252,6 +262,7 @@ class RealtimeDecisionEngine:
                                  else sensing.activity_confidence),
             leave_duration=self.current_absence_duration,
             current_stove_power=appliance.power_watts,
+            current_stove_level=appliance.level,
             outside_home=self.last_user_location == "outside",
             sensor_consistency=consistency,
             previous_homevis_action=self._homevis_reduced,
@@ -266,6 +277,13 @@ class RealtimeDecisionEngine:
             guard = "appliance_stale"
         elif self._homevis_reduced:
             guard = "already_reduced"
+        if extractor.config.INPUT_PROFILE == "location_level_v1":
+            if sensing.location != self.last_user_location or self._candidate != self.last_user_location:
+                guard = "location_transition_unconfirmed"
+            elif type(appliance.level) is not int or not 2 <= appliance.level <= 9:
+                guard = "stove_level_unavailable_or_minimum"
+            elif self.current_absence_duration < extractor.config.KITCHEN_LEAVE_FULL_SECONDS:
+                guard = "absence_hold_time_not_met"
         decision = service.score(
             scenario=scenario, features=features, timestamp=timestamp,
             device="stove", action_name="reduce_power", room="kitchen", user_id=self.user_id,

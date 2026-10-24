@@ -89,6 +89,10 @@ class DecisionMapper:
             if route is None:
                 return blocked("scenario_action_contract_unconfirmed")
             scenario, device, action, internal_room = route
+            if (self.config.multi_room_lights and isinstance(output, AutomationAction)
+                    and output.scenario in {"light_auto_on", "light_auto_off"} and device == "light"
+                    and output.device_id is not None):
+                internal_room = output.room
             internal_room = canonical_room(internal_room)
             # A configured route is not permission to change command semantics.
             allowed_alias = self.config.backend_v05 and (
@@ -121,5 +125,5 @@ class DecisionMapper:
         if self.config.backend_v05:
             body["expiresAt"] = iso_time(output.timestamp + self.config.command_ttl)
             for action in body["actions"]:
-                action["deviceId"] = self.config.device_ids[action["device"]]
+                action["deviceId"] = (getattr(output, "device_id", None) or self.config.device_ids[action["device"]])
         return MappedDecision(identity, body, None, source)
