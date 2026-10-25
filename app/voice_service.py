@@ -20,6 +20,7 @@
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -34,8 +35,14 @@ WAITING_AI = {"received", "thinking"}
 WAITING_CONFIRM = {"confirm_required"}
 
 _ROOM_LABEL = {"room": "방", "kitchen": "주방", "toilet": "욕실"}
-_DEVICE_LABEL = {"light": "조명", "fan": "환풍기", "water_purifier": "정수기", "stove": "인덕션"}
+_DEVICE_LABEL = {
+    "light": "조명", "fan": "환풍기", "water_purifier": "정수기", "stove": "인덕션", "air_purifier": "공기청정기",
+}
+_MODE_LABEL = {"auto": "자동", "manual": "수동"}
 _SPEED_LABEL = {"low": "약", "mid": "중", "high": "강"}
+
+# 시작어 "홈비스" (v0.7). 음성 인식이 "홈 비스", "홈비즈", "홈비쓰", "홈비스야", "HomeVIS"처럼 적어도 시작어로 봅니다.
+_WAKE_WORD = re.compile(r"^\s*(?:홈\s*비\s*[스즈쓰]|home\s*vis)(?:야|아)?[\s,.!?~·]*", re.IGNORECASE)
 
 
 class UnknownVoiceCommand(Exception):
@@ -51,6 +58,18 @@ class VoiceCommandError(Exception):
 
 class VoicePublishFailed(Exception):
     pass
+
+
+class EmptyVoiceCommand(Exception):
+    """시작어만 있고 명령 문장이 없음"""
+
+
+def strip_wake_word(text: str) -> tuple[str, bool]:
+    """문장 앞의 시작어를 떼어 냅니다. (남은 문장, 시작어가 있었는지)"""
+    match = _WAKE_WORD.match(text)
+    if match is None:
+        return text.strip(), False
+    return text[match.end():].strip(), True
 
 
 def _now() -> datetime:
@@ -84,6 +103,8 @@ def request_message(command: VoiceCommand) -> dict:
     return {
         "voiceId": command.voiceId,
         "text": command.text,
+        "rawText": command.rawText,
+        "wakeWord": command.wakeWord,
         "lang": command.lang,
         "confidence": command.confidence,
         "source": command.source,
@@ -94,11 +115,17 @@ def request_message(command: VoiceCommand) -> dict:
 
 
 def create_command(request: VoiceCommandIn) -> VoiceCommand:
-    """문장을 저장하고 판정 엔진에 MQTT로 보냅니다. 보내지 못하면 failed로 남기고 VoicePublishFailed"""
+    """문장을 저장하고 판정 엔진에 MQTT로 보냅니다. 보내지 못하면 failed로 남기고 VoicePublishFailed.
+    문장 앞의 시작어("홈비스")는 떼어 내고 wakeWord=true로 표시합니다. 시작어만 있으면 EmptyVoiceCommand"""
+    text, wake_word = strip_wake_word(request.text)
+    if not text:
+        raise EmptyVoiceCommand(request.text)
     now = _now()
     command = VoiceCommand(
         voiceId=_new_voice_id(),
-        text=request.text,
+        text=text,
+        rawText=request.text,
+        wakeWord=wake_word,
         lang=request.lang,
         confidence=request.confidence,
         source=request.source,
@@ -162,6 +189,8 @@ def _target_label(action: AiAction, room: Optional[str]) -> str:
 def _action_phrase(action: AiAction) -> tuple[str, str]:
     """(확인 질문용 동사구, 여러 개를 묶을 때 쓰는 명사구)"""
     a = action.action
+    if a == "turn_on" and action.level:
+        return f"{action.level}단으로 켤까요", f"{action.level}단으로 켜기"
     if a in ("on", "turn_on"):
         return "켤까요", "켜기"
     if a in ("off", "turn_off"):
@@ -173,6 +202,9 @@ def _action_phrase(action: AiAction) -> tuple[str, str]:
     if a == "set_speed":
         speed = _SPEED_LABEL.get(action.speed or "", action.speed or "")
         return f"풍량을 {speed}{_particle(speed, '으로', '로')} 바꿀까요", f"풍량 {speed}"
+    if a == "set_mode":
+        mode = _MODE_LABEL.get(action.mode or "", action.mode or "")
+        return f"{mode} 모드로 바꿀까요", f"{mode} 모드"
     if a == "set_level":
         return f"화력 {action.level}단으로 바꿀까요", f"화력 {action.level}단"
     if a == "restore_power":
@@ -188,8 +220,10 @@ def build_confirm_text(actions: list[AiAction], room: Optional[str]) -> str:
         action = actions[0]
         target = _target_label(action, room)
         verb, _ = _action_phrase(action)
-        if action.action == "set_speed":
+        if action.action in ("set_speed", "set_level"):
             return f"{target} {verb}?"
+        if action.action == "set_mode":
+            return f"{target}{_particle(target, '을', '를')} {verb}?"
         if action.action == "dispense":
             return f"{target}에서 {verb}?"
         return f"{target}{_particle(target, '을', '를')} {verb}?"

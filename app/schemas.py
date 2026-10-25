@@ -34,11 +34,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DeviceState = Literal["off", "on", "overheated", "cooling"]
 
-# v0.3: 가전 종류 (app/device_registry.py 참고). v0.5: 환풍기(fan) 추가
-DeviceType = Literal["stove", "light", "water_purifier", "fan"]
+# v0.3: 가전 종류 (app/device_registry.py 참고). v0.5: 환풍기(fan), v0.7: 공기청정기(air_purifier) 추가
+DeviceType = Literal["stove", "light", "water_purifier", "fan", "air_purifier"]
 
 # v0.5: 환풍기 풍량 (약 / 중 / 강)
 FanSpeed = Literal["low", "mid", "high"]
+
+# v0.7: 공기청정기 운전 모드 (auto: 공기질에 따라 기기가 스스로 켜고 끔 / manual: 수동)
+AirPurifierMode = Literal["auto", "manual"]
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +117,9 @@ class CommandRecord(BaseModel):
 
     commandId: str
     status: Literal["pending", "sent", "acked", "rejected", "failed", "timeout"]
-    # turn_on/turn_off/set_level: 인덕션, on/off/blink/fadeout: 전등, dispense: 정수기, on/off/set_speed: 환풍기
-    type: Literal["turn_on", "turn_off", "set_level", "on", "off", "blink", "fadeout", "dispense", "set_speed"]
+    # turn_on/turn_off/set_level: 인덕션, on/off/blink/fadeout: 전등, dispense: 정수기, on/off/set_speed: 환풍기,
+    # on/off/set_mode: 공기청정기
+    type: Literal["turn_on", "turn_off", "set_level", "on", "off", "blink", "fadeout", "dispense", "set_speed", "set_mode"]
     level: Optional[int] = None
     # user: 사용자(대시보드), system: 서버 자체 조치(낙상 비상 차단 등), ai: AI 중앙 판정 엔진의 판단
     actor: Literal["user", "system", "ai"]
@@ -131,6 +135,8 @@ class CommandRecord(BaseModel):
     # v0.5 추가
     brightness: Optional[int] = None
     speed: Optional[FanSpeed] = None
+    # v0.7 추가
+    mode: Optional[AirPurifierMode] = None
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +164,27 @@ class FanState(BaseModel):
     lastControl: Optional[LastControl] = None
 
 
+class AirQuality(BaseModel):
+    """공기청정기 센서 값 (v0.7). 좋음/나쁨 판단 기준은 임베디드가 정합니다."""
+
+    model_config = ConfigDict(extra="allow")
+
+    pm25: Optional[float] = Field(default=None, ge=0, description="초미세먼지 PM2.5 (㎍/㎥)")
+    pm10: Optional[float] = Field(default=None, ge=0, description="미세먼지 PM10 (㎍/㎥)")
+    level: Optional[Literal["good", "normal", "bad"]] = Field(default=None, description="공기질 등급")
+
+
+class AirPurifierState(BaseModel):
+    """공기청정기 -> 서버 state 토픽 메시지 (v0.7)
+    공기질이 나쁘면 기기가 스스로 켜고 lastControl.publisher를 system으로 보냅니다."""
+
+    reportedAt: str
+    power: Literal["on", "off"]
+    mode: Optional[AirPurifierMode] = Field(default=None, description="auto(공기질 자동) / manual(수동)")
+    airQuality: Optional[AirQuality] = None
+    lastControl: Optional[LastControl] = None
+
+
 class WaterPurifierState(BaseModel):
     """정수기 -> 서버 state 토픽 메시지"""
 
@@ -167,11 +194,11 @@ class WaterPurifierState(BaseModel):
     lastControl: Optional[LastControl] = None
 
 
-HomeDeviceCommandType = Literal["on", "off", "blink", "fadeout", "dispense", "set_speed"]
+HomeDeviceCommandType = Literal["on", "off", "blink", "fadeout", "dispense", "set_speed", "set_mode"]
 
 
 class HomeDeviceCommandRequest(BaseModel):
-    """전등·정수기·환풍기 제어 요청 (대시보드 REST, AI 판단 실행에 공통 사용)"""
+    """전등·정수기·환풍기·공기청정기 제어 요청 (대시보드 REST, AI 판단 실행에 공통 사용)"""
 
     type: HomeDeviceCommandType
     durationSec: Optional[int] = Field(
@@ -179,10 +206,11 @@ class HomeDeviceCommandRequest(BaseModel):
     )
     amountMl: Optional[int] = Field(default=None, ge=1, le=2000, description="dispense 출수량(ml). 필수")
     speed: Optional[FanSpeed] = Field(default=None, description="set_speed 풍량 low / mid / high. 필수")
+    mode: Optional[AirPurifierMode] = Field(default=None, description="공기청정기 set_mode 운전 모드 auto / manual. 필수")
 
 
 class HomeDeviceCommandOut(BaseModel):
-    """서버 -> 전등·정수기 command 토픽 메시지"""
+    """서버 -> 전등·정수기·환풍기·공기청정기 command 토픽 메시지"""
 
     commandId: str
     issuedAt: str
@@ -192,10 +220,11 @@ class HomeDeviceCommandOut(BaseModel):
     amountMl: Optional[int] = None
     brightness: Optional[int] = Field(default=None, description="on: 100, fadeout: 절전 밝기(기본 20)")
     speed: Optional[FanSpeed] = None
+    mode: Optional[AirPurifierMode] = None
 
 
 class HomeDeviceAck(BaseModel):
-    """전등·정수기·환풍기 -> 서버 ack 토픽 메시지. state는 처리 후 기기 상태(LightState/WaterPurifierState/FanState 형식)"""
+    """전등·정수기·환풍기·공기청정기 -> 서버 ack 토픽 메시지. state는 처리 후 기기 상태(각 기기의 state 형식)"""
 
     commandId: str
     result: Literal["applied", "rejected", "failed"]
@@ -555,7 +584,8 @@ class FallPolicy(BaseModel):
 # ---------------------------------------------------------------------------
 
 AiActionName = Literal[
-    "turn_on", "turn_off", "set_level", "restore_power", "on", "off", "blink", "fadeout", "dispense", "set_speed"
+    "turn_on", "turn_off", "set_level", "restore_power", "on", "off", "blink", "fadeout", "dispense", "set_speed",
+    "set_mode",
 ]
 
 
@@ -569,13 +599,15 @@ class AiAction(BaseModel):
     durationSec: Optional[int] = Field(default=None, ge=1, le=600, description="blink 시간(초). 없으면 기본 10초")
     amountMl: Optional[int] = Field(default=None, ge=1, le=2000, description="dispense 출수량(ml). 필수")
     speed: Optional[FanSpeed] = Field(default=None, description="환풍기 set_speed 풍량 low / mid / high. 필수")
+    mode: Optional[AirPurifierMode] = Field(default=None, description="공기청정기 set_mode 운전 모드 auto / manual. 필수")
 
 
 class AiDecisionRequest(BaseModel):
     decisionId: str = Field(..., min_length=1, max_length=100, description="판단 id. 같은 id로 다시 보내면 다시 실행하지 않음")
     scenario: str = Field(
         ...,
-        description="bedtime_light_off / stove_absence / fall_detected / water_dispense / power_saving / power_saving_end 등",
+        description="bedtime_light_off / stove_absence / fall_detected / water_dispense / power_saving / power_saving_end / "
+        "away_all_off / voice_command 등",
     )
     confidence: float = Field(..., ge=0.0, le=1.0)
     reason: Optional[str] = None
@@ -776,7 +808,9 @@ class VoiceCommand(BaseModel):
     """저장된 음성 명령 1건"""
 
     voiceId: str
-    text: str
+    text: str = Field(..., description="시작어를 뗀 명령 문장 (판정 엔진에 전달하는 문장)")
+    rawText: Optional[str] = Field(default=None, description="대시보드가 보낸 원문 (v0.7)")
+    wakeWord: bool = Field(default=False, description="문장 앞에 시작어(홈비스)가 있었으면 true (v0.7)")
     lang: str = "ko-KR"
     confidence: Optional[float] = None
     source: str = "voice"

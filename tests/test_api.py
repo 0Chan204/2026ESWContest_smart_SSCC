@@ -82,7 +82,7 @@ def test_swagger_is_grouped_by_feature(client):
         "음성 명령",
         "AI 재실 판단",
         "인덕션 제어",
-        "전등·정수기·환풍기 제어",
+        "가전 제어",
         "대시보드 화면",
         "안전 이벤트",
     ]

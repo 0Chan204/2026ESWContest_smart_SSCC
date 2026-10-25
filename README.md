@@ -315,6 +315,13 @@ AI 판정 엔진 ──HTTP POST /api/v1/ai/decisions (voiceId)──> 서버 �
 - 판정 엔진의 답변·제어를 실행하고, `requiresConfirmation: true`면 대시보드 확인 창에서 "실행"을 누른 뒤 실행합니다.
 - 판정 엔진 응답이 10초 안에 없으면 `timeout`, 확인 창은 30초 안에 답이 없으면 자동 취소합니다.
 - 형식: `docs/VOICE.md`, 로직: `app/voice_service.py`, 가짜 판정 엔진: `tests/simulate_voice_ai.py`
+- v0.7 시작어: 문장 앞의 "홈비스"를 서버가 떼고 `wakeWord: true`로 전달. 음성으로 인덕션을 켜면 항상 확인 창을 거칩니다.
+
+## 9-2-2. 공기청정기 · 외출 시 전체 가전 끄기 (v0.7)
+
+- 공기청정기 `air-01`(방): 공기질 판단과 자동 작동은 기기가 하고, 서버는 상태(공기질 포함)를 저장·대시보드에 전달합니다.
+  홈 화면 on/off는 `POST /api/v1/devices/air-01/commands`. "인덕션이 켜지면 공기청정기 켜기"는 AI 판정 엔진이 판단합니다.
+- AI 판단 `scenario: "away_all_off"`: 켜져 있는 인덕션·전등·환풍기·공기청정기를 모두 끕니다 (정수기 제외, 인덕션 화력 저장).
 
 ## 9-3. 엣지 노드 · 최종 재실 판단 결과 (v0.4)
 

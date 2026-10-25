@@ -21,6 +21,7 @@ TOILET_LIGHT = "light-00"
 WATER = "water-01"
 KITCHEN_FAN = "fan-01"
 TOILET_FAN = "fan-02"
+AIR = "air-01"
 
 
 def _decision(decision_id: str, scenario: str, actions: list[dict], **extra) -> dict:
@@ -60,6 +61,7 @@ def test_device_states_list_every_device(client):
         ("water_purifier", WATER),
         ("fan", KITCHEN_FAN),
         ("fan", TOILET_FAN),
+        ("air_purifier", AIR),
     ]
     assert all(d["online"] is False and d["is_on"] is False for d in items)
 
@@ -312,7 +314,7 @@ def test_dashboard_device_commands(client, published):
 
 def test_snapshot_includes_all_devices(client):
     devices = client.get(f"{PREFIX}/snapshot").json()["devices"]
-    assert {d["deviceId"] for d in devices} == {STOVE, LIGHT, TOILET_LIGHT, WATER, KITCHEN_FAN, TOILET_FAN}
+    assert {d["deviceId"] for d in devices} == {STOVE, LIGHT, TOILET_LIGHT, WATER, KITCHEN_FAN, TOILET_FAN, AIR}
 
 
 # ---------------------------------------------------------------------------

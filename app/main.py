@@ -20,7 +20,7 @@ from app.routers import ai, dashboard, device, home_devices, sensing, stream, vo
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-API_VERSION = "0.6.0"
+API_VERSION = "0.7.0"
 
 # 태그 순서/설명: Swagger UI에서 이 순서 그대로 큰 섹션 헤더로 표시됩니다.
 # 각 엔드포인트의 태그는 app/routers/*.py 의 데코레이터(tags=[...])에서 지정합니다.
@@ -55,8 +55,8 @@ TAGS_METADATA = [
         "상태 조회는 서버가 받아둔 최신 값을 돌려줍니다.",
     },
     {
-        "name": "전등·정수기·환풍기 제어",
-        "description": "전등·정수기·환풍기와 전체 가전 목록 조회, 사용자의 직접 제어. 가전과 서버 사이 통신은 MQTT입니다.",
+        "name": "가전 제어",
+        "description": "전등·정수기·환풍기·공기청정기와 전체 가전 목록 조회, 사용자의 직접 제어. 가전과 서버 사이 통신은 MQTT입니다.",
     },
     {
         "name": "대시보드 화면",
