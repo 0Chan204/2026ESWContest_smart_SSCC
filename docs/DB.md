@@ -34,7 +34,7 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
 | `fall_incidents` | 사건 ID | 낙상 사건과 확인 토큰 | 낙상 사고 감지 |
 | `sms_logs` | 발송 기록 ID | 문자 발송 이력 | 회원 정보 |
 | `runtime_state` | 고정 키 | 진행 중인 세션, 복구용 화력 | 내부용 |
-| `device_states` | 기기 ID | 전등·정수기의 최신 상태 (v0.3) | 전등·정수기 제어, AI 중앙 제어 |
+| `device_states` | 기기 ID | 전등·정수기·환풍기·공기청정기의 최신 상태 (v0.3, v0.7 공기질 포함) | 가전 제어, AI 중앙 제어 |
 | `ai_decisions` | 판단 ID | AI 중앙 판정 엔진의 판단과 실행 결과, 피드백 (v0.3) | AI 중앙 제어 |
 | `sensing_results` | 결과 ID | 재실 판단 담당이 보낸 최종 재실 판단 결과 (v0.4, 자동 삭제) | AI 중앙 제어 |
 | `voice_commands` | 음성 명령 ID | 대시보드 음성 명령 문장과 처리 결과 (v0.6, 30일 뒤 자동 삭제) | 음성 명령 |
@@ -302,7 +302,8 @@ HomeVIS 백엔드의 MongoDB 컬렉션 구조입니다. 코드에서는 `app/sta
   "seq": 1,
   "receivedAtTime": "2026-10-24T12:00:00.250Z",
   "voiceId": "voice-20261024-1a2b3c4d",
-  "text": "욕실 조명 켜줘", "lang": "ko-KR", "confidence": 0.92, "source": "voice",
+  "text": "욕실 조명 켜줘", "rawText": "홈비스, 욕실 조명 켜줘", "wakeWord": true,
+  "lang": "ko-KR", "confidence": 0.92, "source": "voice",
   "recognizedAt": "2026-10-24T21:00:00+09:00",
   "receivedAt": "2026-10-24T12:00:00.250+00:00",
   "expiresAt": "2026-10-24T12:00:10.250+00:00",

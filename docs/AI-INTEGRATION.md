@@ -1,7 +1,7 @@
-# AI 중앙 판정 엔진 · 전등 · 정수기 · 환풍기 연동 명세 (v0.6)
+# AI 중앙 판정 엔진 · 가전 연동 명세 (v0.7)
 
 모든 제어 판단은 AI 중앙 판정 엔진이 하고, 백엔드는 판단 결과를 받아 가전을 제어하고 기록합니다.
-Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기·환풍기 제어** 섹션에서 바로 호출해 볼 수 있습니다.
+Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** 섹션에서 바로 호출해 볼 수 있습니다.
 
 ## 1. 판정 엔진 → 백엔드 (REST)
 
@@ -21,12 +21,18 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기·환풍기 제어*
       "control_state": "user", "updatedAt": "..." },
     { "device": "water_purifier", "deviceId": "water-01", "room": "kitchen", "online": true, "is_on": false,
       "current_state": { "reportedAt": "...", "status": "idle", "lastDispensedMl": 250 },
-      "control_state": null, "updatedAt": "..." }
+      "control_state": null, "updatedAt": "..." },
+    { "device": "air_purifier", "deviceId": "air-01", "room": "room", "online": true, "is_on": true,
+      "current_state": { "reportedAt": "...", "power": "on", "mode": "auto",
+                         "airQuality": { "pm25": 42, "pm10": 60, "level": "bad" } },
+      "control_state": "homevis", "updatedAt": "..." }
   ]
 }
 ```
 
-- `is_on`: 인덕션은 화구가 켜져 있으면, 전등·환풍기는 켜져 있으면(절전 밝기여도 켜짐), 정수기는 출수 중이면 `true`
+- `is_on`: 인덕션은 화구가 켜져 있으면, 전등·환풍기·공기청정기는 켜져 있으면(절전 밝기여도 켜짐), 정수기는 출수 중이면 `true`
+- 공기청정기 `current_state.airQuality`: 기기가 보낸 공기질(`pm25`, `pm10`, `level`). 공기질이 나빠 기기가 스스로 켜면
+  `control_state`가 `homevis`입니다 (사용자가 켠 것이 아님)
 - 전등 `current_state.brightness`: 밝기(%). 밝기를 보내지 않는 전등은 켜져 있으면 100, 꺼져 있으면 0으로 채웁니다.
   `powerSaving`: 절전(`power_saving`)으로 낮춘 전등이면 `true`
 - `control_state`: 마지막으로 상태를 바꾼 주체. `user`(사용자), `homevis`(HomeVIS 자동 제어), 기록 없으면 `null`
@@ -96,11 +102,14 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기·환풍기 제어*
 | `light` | `on`(100%), `off`, `blink`, `fadeout`(절전 밝기 20%로 서서히) | `blink`는 `durationSec` (없으면 10초) |
 | `water_purifier` | `dispense` | `amountMl` **필수** (판정 엔진이 출수량을 정함) |
 | `fan` | `on`, `off`, `set_speed` | `set_speed`는 `speed` **필수**: `low`(약) / `mid`(중) / `high`(강) |
+| `air_purifier` | `on`, `off`, `set_mode` | `set_mode`는 `mode` **필수**: `auto`(공기질 자동) / `manual` |
 
 `deviceId`는 생략할 수 있습니다(같은 `room`의 기기를 먼저 고름). 시연 구성:
-인덕션 `induction-01`(부엌), 전등 `light-01`(방)·`light-00`(화장실), 정수기 `water-01`(부엌), 환풍기 `fan-01`(부엌)·`fan-02`(화장실)
+인덕션 `induction-01`(부엌), 전등 `light-01`(방)·`light-00`(화장실), 정수기 `water-01`(부엌), 환풍기 `fan-01`(부엌)·`fan-02`(화장실),
+공기청정기 `air-01`(방)
 
-환풍기 자동 운전(조리할 때 켜기 등)은 판정 엔진이 판단해서 `fan` 동작으로 보냅니다. 백엔드는 실행만 합니다.
+환풍기 자동 운전(조리할 때 켜기 등)과 "인덕션이 켜지면 공기청정기 켜기"는 판정 엔진이 기기 상태를 보고 판단해서
+`fan` / `air_purifier` 동작으로 보냅니다. 백엔드는 실행만 합니다. 공기질이 나쁠 때 자동 작동은 공기청정기가 스스로 합니다.
 
 시나리오별 처리
 
@@ -111,6 +120,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기·환풍기 제어*
 | `water_dispense` | `actions` 실행 (예: 정수기 dispense 250ml). `weatherBriefing: true`면 날씨 안내도 함께 |
 | `power_saving` | (v0.5) `room`에 사람이 없다는 판단. 그 구역에서 켜져 있는 전등을 **20%로 서서히 낮춤**(`fadeout`, 전원은 켜진 채). `actions`는 비워도 됩니다 |
 | `power_saving_end` | (v0.5) `room`에 사람이 다시 들어왔다는 판단. **절전으로 낮췄던 전등만 100%로 복귀**. 그 사이 사용자가 끈 전등은 다시 켜지 않습니다 |
+| `away_all_off` | (v0.7) 집을 비웠다는 판단. **켜져 있는 인덕션·전등·환풍기·공기청정기를 모두 끔** (정수기 제외). `actions`는 비워도 됩니다. 인덕션은 끄기 직전 화력을 저장해 `restore_power`로 복구할 수 있습니다. `announcement`가 없으면 "외출하신 것 같아 켜져 있던 가전 N개를 껐어요."로 안내합니다 |
 | `fall_detected` | 낙상 단계별 대응 실행 (아래 표). 인덕션 `turn_off`와 전등 `blink`는 서버가 직접 하므로 `actions`는 비워도 됩니다 |
 | 그 외 | `actions` 실행 |
 
@@ -232,6 +242,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **전등·정수기·환풍기 제어*
 | 정수기 `water-01` (부엌) | `home/kitchen/water_purifier/water-01/` |
 | 환풍기 `fan-01` (부엌) | `home/kitchen/fan/fan-01/` |
 | 환풍기 `fan-02` (화장실) | `home/toilet/fan/fan-02/` |
+| 공기청정기 `air-01` (방) | `home/room/air_purifier/air-01/` |
 
 QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를 보냅니다.
 15초 이상 `state`가 오지 않으면 오프라인으로 봅니다.
@@ -248,12 +259,19 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
 // 환풍기
 { "reportedAt": "2026-10-17T18:00:00+09:00", "power": "on", "speed": "mid",
   "lastControl": { "publisher": "api", "commandId": "cmd-20261017-9a8b7c6d" } }
+// 공기청정기 (공기질이 나빠 스스로 켬)
+{ "reportedAt": "2026-10-25T14:00:00+09:00", "power": "on", "mode": "auto",
+  "airQuality": { "pm25": 42, "pm10": 60, "level": "bad" },
+  "lastControl": { "publisher": "system" } }
 ```
 
 - 전등 `power`: `on` / `off`, `brightness`: 0~100(%), `mode`: `steady` / `blink` / `fadeout`
   - 절전 밝기로 낮추는 중에는 `mode: "fadeout"`, 다 낮춘 뒤에는 `fadeout` 또는 `steady` 둘 다 됩니다. `power`는 계속 `on`
   - `brightness`를 보내지 않으면 켜져 있을 때 100으로 봅니다
 - 환풍기 `power`: `on` / `off`, `speed`: `low`(약) / `mid`(중) / `high`(강)
+- 공기청정기 `power`: `on` / `off`, `mode`: `auto` / `manual`, `airQuality`: `pm25`·`pm10`(㎍/㎥), `level`(`good` / `normal` / `bad`)
+  - 공기질 판단과 자동 작동은 기기가 합니다. 스스로 켜거나 끄면 `lastControl.publisher`를 `system`으로 보냅니다.
+  - `airQuality`에 다른 센서 값(예: `co2`)을 더 넣어도 그대로 저장·전달합니다.
 - 정수기 `status`: `idle` / `dispensing`
 - `lastControl.publisher`: 기기 버튼 등으로 직접 조작했으면 `user`, 서버 명령으로 바뀌었으면 `api`(+ `commandId`)
 - 기기가 켜진 직후처럼 아무도 조작하지 않았을 때는 `user`(commandId 없음)로 보냅니다. `system`은 기기가 스스로 안전 조치를 했을 때(과열 차단 등)만 씁니다.
@@ -265,12 +283,14 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
 { "commandId": "cmd-20261016-5e6f7a8b", "issuedAt": "...", "deviceId": "water-01", "type": "dispense", "amountMl": 250 }
 { "commandId": "cmd-20261017-2c3d4e5f", "issuedAt": "...", "deviceId": "light-01", "type": "fadeout", "brightness": 20, "durationSec": 3 }
 { "commandId": "cmd-20261017-9a8b7c6d", "issuedAt": "...", "deviceId": "fan-01", "type": "set_speed", "speed": "mid" }
+{ "commandId": "cmd-20261025-3b4c5d6e", "issuedAt": "...", "deviceId": "air-01", "type": "set_mode", "mode": "auto" }
 ```
 
 - 전등: `on`(`brightness: 100`), `off`, `blink`(`durationSec` 동안 깜빡인 뒤 원래 상태로 돌아감),
   `fadeout`(`durationSec`초 동안 `brightness`(20)까지 서서히 낮춤, 전원은 켠 채로)
 - 정수기: `dispense`(`amountMl`만큼 출수)
 - 환풍기: `on`(지난 풍량으로 켜기), `off`, `set_speed`(`speed`로 바꾸기. 꺼져 있으면 켜면서 바꿈)
+- 공기청정기: `on`, `off`, `set_mode`(`mode`로 바꾸기)
 
 **ack (기기 → 서버, 명령을 받으면 바로)**
 
@@ -283,7 +303,8 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
 
 ## 3. 기기 목록 바꾸기
 
-기본 구성은 전등 2개(`light-01` 방, `light-00` 화장실), 정수기 1개(`water-01` 부엌), 환풍기 2개(`fan-01` 부엌, `fan-02` 화장실)입니다.
+기본 구성은 전등 2개(`light-01` 방, `light-00` 화장실), 정수기 1개(`water-01` 부엌), 환풍기 2개(`fan-01` 부엌, `fan-02` 화장실),
+공기청정기 1개(`air-01` 방)입니다.
 바꾸려면 `.env`에 JSON으로 넣습니다. **값을 넣으면 기본 구성 전체를 대신하므로** 필요한 기기를 모두 적어야 합니다.
 
 ```
@@ -295,8 +316,8 @@ LIGHT_FADE_SEC=3
 ## 4. 테스트용 가짜 기기
 
 ```bash
-docker compose --profile sim up -d     # 가짜 인덕션 + 전등·정수기·환풍기 + 엣지 노드 + 최종 판단 + 음성 판정까지 실행
-python tests/simulate_home_devices.py  # Docker 없이 가짜 전등·정수기·환풍기만 실행
+docker compose --profile sim up -d     # 가짜 인덕션 + 전등·정수기·환풍기·공기청정기 + 엣지 노드 + 최종 판단 + 음성 판정까지 실행
+python tests/simulate_home_devices.py  # Docker 없이 가짜 전등·정수기·환풍기·공기청정기만 실행
 python tests/simulate_edge_nodes.py    # Docker 없이 가짜 엣지 노드만 실행
 python tests/simulate_fusion.py        # Docker 없이 가짜 최종 판단만 실행
 python tests/simulate_voice_ai.py      # Docker 없이 가짜 판정 엔진(음성 명령)만 실행

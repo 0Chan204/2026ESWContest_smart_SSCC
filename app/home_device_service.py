@@ -1,8 +1,11 @@
 """
-전등·정수기·환풍기 제어와 상태 처리를 담당합니다. (v0.3, v0.5: 환풍기·전등 밝기)
+전등·정수기·환풍기·공기청정기 제어와 상태 처리를 담당합니다. (v0.3, v0.5: 환풍기·전등 밝기, v0.7: 공기청정기)
 
 인덕션은 기존 commands_service / device_service가 그대로 처리하고,
-여기서는 그 외 가전(전등, 정수기, 환풍기)만 다룹니다. 흐름은 인덕션과 같습니다.
+여기서는 그 외 가전(전등, 정수기, 환풍기, 공기청정기)만 다룹니다. 흐름은 인덕션과 같습니다.
+
+공기청정기(v0.7)는 공기질을 기기가 스스로 판단해 켜고 끄며, 서버는 상태(공기질 포함)를 저장·전달하고
+사용자·AI 판정 엔진의 명령(on / off / set_mode)을 보냅니다.
 
 전등 밝기(v0.5): on = 100%, off = 꺼짐, fadeout = 절전 밝기(LIGHT_SAVING_BRIGHTNESS, 20%)로
 LIGHT_FADE_SEC초에 걸쳐 서서히 낮춤(power는 on 유지). 절전 판단은 AI 판정 엔진이 하고(power_saving),
@@ -23,6 +26,7 @@ from app.commands_service import CommandRejected
 from app.config import settings
 from app.rules import current_timestamp_iso, generate_command_id
 from app.schemas import (
+    AirPurifierState,
     CommandRecord,
     FanState,
     HomeDeviceAck,
@@ -39,11 +43,13 @@ ALLOWED_COMMANDS = {
     device_registry.LIGHT: ("on", "off", "blink", "fadeout"),
     device_registry.WATER_PURIFIER: ("dispense",),
     device_registry.FAN: ("on", "off", "set_speed"),
+    device_registry.AIR_PURIFIER: ("on", "off", "set_mode"),
 }
 _STATE_MODELS = {
     device_registry.LIGHT: LightState,
     device_registry.WATER_PURIFIER: WaterPurifierState,
     device_registry.FAN: FanState,
+    device_registry.AIR_PURIFIER: AirPurifierState,
 }
 LIGHT_FULL_BRIGHTNESS = 100
 
@@ -72,6 +78,8 @@ def dispatch(
         raise CommandRejected(["dispense 명령에는 출수량(amountMl)이 필요합니다."])
     if request.type == "set_speed" and request.speed is None:
         raise CommandRejected(["set_speed 명령에는 풍량(speed: low / mid / high)이 필요합니다."])
+    if request.type == "set_mode" and request.mode is None:
+        raise CommandRejected(["set_mode 명령에는 운전 모드(mode: auto / manual)가 필요합니다."])
 
     is_light = device.type == device_registry.LIGHT
     duration_sec = None
@@ -95,6 +103,7 @@ def dispatch(
         amountMl=request.amountMl if request.type == "dispense" else None,
         brightness=brightness,
         speed=request.speed if request.type == "set_speed" else None,
+        mode=request.mode if request.type == "set_mode" else None,
     )
     record = CommandRecord(
         commandId=command.commandId,
@@ -110,6 +119,7 @@ def dispatch(
         decisionId=decision_id,
         brightness=command.brightness,
         speed=command.speed,
+        mode=command.mode,
     )
     state_store.save_command(record)
     if is_light and request.type == "fadeout":

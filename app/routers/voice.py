@@ -36,9 +36,13 @@ def receive_voice_command(request: VoiceCommandIn) -> VoiceCommandAccepted:
       thinking -> (confirm_required) -> executed / answered / cancelled / timeout / failed
     - 판정 엔진에 전달하지 못하면(브로커 연결 끊김 등) 503입니다. 대시보드는 "지금은 음성 명령을 쓸 수 없어요"를 표시합니다.
     - 화면 이동 명령("주방", "설정" 등)은 대시보드에서 처리하고 보내지 않습니다.
+    - (v0.7) 문장 앞의 시작어("홈비스", "홈 비스", "홈비즈" 등)는 서버가 떼어 내고 wakeWord=true로 판정 엔진에 전달합니다.
+      시작어만 있고 뒤 문장이 없으면 422입니다.
     """
     try:
         command = voice_service.create_command(request)
+    except voice_service.EmptyVoiceCommand as exc:
+        raise HTTPException(status_code=422, detail="시작어 뒤에 명령 문장이 없습니다.") from exc
     except voice_service.VoicePublishFailed as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

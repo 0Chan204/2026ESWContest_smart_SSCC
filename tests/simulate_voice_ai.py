@@ -8,8 +8,10 @@ POST /api/v1/ai/decisions(voiceId 포함)로 돌려줍니다. 실제 판정 엔�
 단순 규칙 (실제 모델 아님):
 - "조명/불" + "켜/꺼"  -> 전등 on/off (욕실이면 light-00, 그 외 light-01), 확인 필요
 - "환풍기" + "켜/꺼/강/중/약" -> 환풍기 on/off/set_speed (욕실이면 fan-02, 그 외 fan-01), 확인 필요
-- "인덕션" -> 거절 안내 (제어 없음)
+- "인덕션" + "꺼" -> 인덕션 끄기 (바로 실행) / "인덕션" + "켜" -> 인덕션 3단 켜기 (확인 없이 보내도 서버가 확인 창을 띄움)
+- "공기청정기/공기" + "켜/꺼" -> 공기청정기 on/off, 확인 필요
 - "물" -> 정수기는 직접 받으라고 안내 (제어 없음)
+- 서버가 시작어("홈비스")를 떼고 보내므로 text에는 명령 문장만 있습니다 (wakeWord로 시작어 여부 확인 가능)
 - 그 외 -> 기기 상태(GET /ai/device-states)를 보고 켜진 기기 수를 알려 줌
 
 사용 방법 (맥, 저장소 폴더에서):
@@ -47,7 +49,15 @@ def decide(text: str, api: str) -> dict:
     turn_off = "꺼" in text or "끄" in text
 
     if "인덕션" in text:
-        return {"room": "kitchen", "announcement": "안전을 위해 인덕션은 음성으로 조작할 수 없어요.", "actions": []}
+        if turn_off:
+            return {"room": "kitchen", "announcement": "인덕션을 끌게요.",
+                    "actions": [{"device": "stove", "action": "turn_off"}]}
+        return {"room": "kitchen", "announcement": "인덕션을 3단으로 켤게요.",
+                "actions": [{"device": "stove", "action": "turn_on", "level": 3}]}
+    if "공기" in text:
+        action = "off" if turn_off else "on"
+        return {"room": "room", "announcement": f"공기청정기를 {'끌' if turn_off else '켤'}게요.", "requiresConfirmation": True,
+                "actions": [{"device": "air_purifier", "deviceId": "air-01", "action": action}]}
     if "물" in text:
         return {"room": "kitchen", "announcement": "정수기에서 직접 받아 주세요.", "actions": []}
     if "조명" in text or "불" in text:

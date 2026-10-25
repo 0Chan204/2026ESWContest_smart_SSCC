@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, status
 from app import ai_service, commands_service, device_registry, home_device_service
 from app.schemas import DeviceCommandAccepted, DeviceInfo, DeviceListResponse, HomeDeviceCommandRequest
 
-TAG = "전등·정수기·환풍기 제어"
+TAG = "가전 제어"
 router = APIRouter(prefix="/devices")
 
 
@@ -28,12 +28,13 @@ def read_device(device_id: str) -> DeviceInfo:
     return ai_service.get_device_info(device)
 
 
-@router.post("/{device_id}/commands", response_model=DeviceCommandAccepted, status_code=status.HTTP_202_ACCEPTED, tags=[TAG], summary="전등·정수기·환풍기 제어 명령 전송")
+@router.post("/{device_id}/commands", response_model=DeviceCommandAccepted, status_code=status.HTTP_202_ACCEPTED, tags=[TAG], summary="전등·정수기·환풍기·공기청정기 제어 명령 전송")
 def send_device_command(device_id: str, request: HomeDeviceCommandRequest) -> DeviceCommandAccepted:
     """
     - 전등: on(밝기 100%) / off / blink(durationSec, 기본 10초) / fadeout(절전 밝기 20%로 서서히, power는 on 유지)
     - 정수기: dispense(amountMl 필수)
     - 환풍기: on / off / set_speed(speed: low·mid·high = 약·중·강, 필수)
+    - 공기청정기: on / off / set_mode(mode: auto·manual, 필수). 공기질 자동 작동은 기기가 스스로 판단합니다.
 
     사용자가 전등을 직접 켜거나 끄면 절전 상태가 풀려, 사람이 돌아와도(power_saving_end) 다시 켜지 않습니다.
     """

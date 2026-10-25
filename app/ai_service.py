@@ -14,6 +14,7 @@ AI 중앙 판정 엔진과 연동하는 서비스입니다. (v0.3)
 - fall_detected  : 낙상 처리 흐름(인덕션 비상 차단 + 전등 깜빡임 -> 사용자 -> 보호자 -> 자동 신고)을 실행
 - power_saving   : (v0.5) room에 사람이 없다는 판단. 그 구역에서 켜져 있는 전등을 절전 밝기(20%)로 서서히 낮춤(fadeout)
 - power_saving_end: (v0.5) room에 사람이 다시 들어왔다는 판단. 절전으로 낮췄던 전등만 100%로 되돌림
+- away_all_off   : (v0.7) 집을 비웠다는 판단. 켜져 있는 인덕션·전등·환풍기·공기청정기를 모두 끔 (정수기 제외)
 - 그 외          : actions에 적힌 제어를 순서대로 실행 (bedtime_light_off, stove_absence, water_dispense 등)
 - restore_power  : HomeVIS가 인덕션을 끄거나 낮추기 직전 화력으로 다시 켭니다.
 - weatherBriefing: true면 미리 받아 둔 날씨로 안내를 만들어 대시보드(weather.briefing)와 응답(weather)에 담습니다.
@@ -61,6 +62,9 @@ logger = logging.getLogger("induction.ai")
 FALL_SCENARIO = "fall_detected"
 POWER_SAVING_SCENARIO = "power_saving"
 POWER_SAVING_END_SCENARIO = "power_saving_end"
+AWAY_ALL_OFF_SCENARIO = "away_all_off"
+# 음성 명령으로 인덕션을 켜는 동작은 판정 엔진이 확인 없이 보내도 항상 사용자 확인을 받습니다. (v0.7)
+STOVE_ON_ACTIONS = {"turn_on", "set_level", "restore_power"}
 STOVE_ACTIONS = ("turn_on", "turn_off", "set_level", "restore_power")
 # 낙상 처리 흐름이 직접 실행하는 제어 (판단 결과의 actions에 같이 와도 중복 실행하지 않음)
 FALL_BUILTIN_ACTIONS = {("stove", "turn_off"), ("light", "blink")}
@@ -197,6 +201,9 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
 
     if request.voiceId is not None:
         # 음성 명령에 대한 판단: 아직 판단을 기다리는 음성 명령일 때만 실행합니다.
+        if not request.requiresConfirmation and _turns_on_stove(request.actions):
+            logger.info("음성으로 인덕션을 켜는 판단이라 사용자 확인을 받습니다 (decisionId=%s)", request.decisionId)
+            request = request.model_copy(update={"requiresConfirmation": True})
         claimed = voice_service.claim_for_decision(
             request.voiceId, request.decisionId, request.announcement, request.actions,
             request.requiresConfirmation, request.room,
@@ -243,10 +250,19 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
         results.extend(_run_power_saving(request))
     elif request.scenario == POWER_SAVING_END_SCENARIO:
         results.extend(_run_power_saving_end(request))
+    elif request.scenario == AWAY_ALL_OFF_SCENARIO:
+        away_results = _run_away_all_off(request)
+        results.extend(away_results)
+        if request.announcement is None and away_results:
+            request = request.model_copy(
+                update={"announcement": f"외출하신 것 같아 켜져 있던 가전 {len(away_results)}개를 껐어요."}
+            )
 
     for action in request.actions:
         if request.scenario == FALL_SCENARIO and (action.device, action.action) in FALL_BUILTIN_ACTIONS:
             continue  # 낙상 처리 흐름이 이미 실행한 제어라 두 번 보내지 않습니다.
+        if request.scenario == AWAY_ALL_OFF_SCENARIO and action.action in ("off", "turn_off"):
+            continue  # 전체 끄기에서 이미 끈 가전이라 두 번 보내지 않습니다.
         results.append(_execute(action, request))
 
     record = AiDecisionRecord(
@@ -444,6 +460,41 @@ def _run_power_saving_end(request: AiDecisionRequest) -> list[AiActionResult]:
     return results
 
 
+# ---------------------------------------------------------------------------
+# v0.7: 외출 시 전체 가전 끄기 / 음성 인덕션 켜기 확인
+# ---------------------------------------------------------------------------
+
+def _turns_on_stove(actions: list[AiAction]) -> bool:
+    return any(a.device == device_registry.STOVE and a.action in STOVE_ON_ACTIONS for a in actions)
+
+
+def _is_device_on(device: device_registry.Device) -> bool:
+    if device.type == device_registry.STOVE:
+        telemetry = state_store.get_telemetry(device.deviceId)
+        return bool(telemetry) and any(b.deviceState in ("on", "overheated") for b in telemetry.burners)
+    state = state_store.get_device_state(device.deviceId)
+    return bool(state) and state.get("power") == "on"
+
+
+def _run_away_all_off(request: AiDecisionRequest) -> list[AiActionResult]:
+    """켜져 있는 인덕션·전등·환풍기·공기청정기를 모두 끕니다. 정수기는 끄는 명령이 없어 제외합니다.
+    인덕션은 _execute_stove가 끄기 직전 화력을 저장합니다(돌아온 뒤 restore_power로 복구 가능)."""
+    off_action = {
+        device_registry.STOVE: "turn_off",
+        device_registry.LIGHT: "off",
+        device_registry.FAN: "off",
+        device_registry.AIR_PURIFIER: "off",
+    }
+    results = []
+    for device in device_registry.list_devices():
+        action_name = off_action.get(device.type)
+        if action_name is None or not _is_device_on(device):
+            continue
+        action = AiAction(device=device.type, deviceId=device.deviceId, action=action_name)
+        results.append(_execute(action, request))
+    return results
+
+
 def _result(action: AiAction, device_id: Optional[str], status: str, **extra) -> AiActionResult:
     return AiActionResult(device=action.device, deviceId=device_id, action=action.action, status=status, **extra)
 
@@ -466,7 +517,8 @@ def _execute(action: AiAction, request: AiDecisionRequest) -> AiActionResult:
         else:
             try:
                 command = HomeDeviceCommandRequest(
-                    type=action.action, durationSec=action.durationSec, amountMl=action.amountMl, speed=action.speed
+                    type=action.action, durationSec=action.durationSec, amountMl=action.amountMl,
+                    speed=action.speed, mode=action.mode,
                 )
             except ValidationError:
                 return _result(action, device.deviceId, "rejected", message=f"{device.type}에 쓸 수 없는 동작입니다.")

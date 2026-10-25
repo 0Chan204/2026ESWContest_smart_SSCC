@@ -4,16 +4,19 @@
 실행 방법:
     python tests/simulate_home_devices.py
 
-app/device_registry.py의 가전 목록(기본: light-01, light-00, water-01, fan-01, fan-02)을 그대로 사용합니다.
+app/device_registry.py의 가전 목록(기본: light-01, light-00, water-01, fan-01, fan-02, air-01)을 그대로 사용합니다.
 - 각 기기는 5초마다, 그리고 상태가 바뀔 때마다 state 토픽으로 상태를 보냅니다.
 - command 토픽으로 명령을 받으면 적용하고 ack 토픽으로 결과를 보냅니다.
   전등: on(100%) / off / blink(durationSec 동안 깜빡인 뒤 원래 상태로)
         fadeout(brightness까지 durationSec 동안 서서히 낮춤. power는 on, 다 낮추면 mode는 steady)
   정수기: dispense(amountMl만큼, 초당 50ml로 출수한 뒤 idle)
   환풍기: on(지난 풍량, 처음이면 mid) / off / set_speed(low·mid·high)
+  공기청정기: on / off / set_mode(auto·manual). 미세먼지 값이 조금씩 바뀌고, auto 모드에서 나쁨(bad)이면
+              스스로 켜고(publisher: system) 좋음(good)으로 돌아오면 스스로 끕니다.
 """
 
 import json
+import random
 import sys
 import threading
 import time
@@ -46,7 +49,30 @@ def initial_state(device) -> dict:
         return {"power": "off", "brightness": 0, "mode": "steady", "lastControl": no_control}
     if device.type == device_registry.FAN:
         return {"power": "off", "speed": "mid", "lastControl": no_control}
+    if device.type == device_registry.AIR_PURIFIER:
+        return {"power": "off", "mode": "auto", "airQuality": air_quality(20.0), "lastControl": no_control}
     return {"status": "idle", "lastDispensedMl": None, "lastControl": no_control}
+
+
+def air_quality(pm25: float) -> dict:
+    level = "good" if pm25 <= 15 else ("normal" if pm25 <= 35 else "bad")
+    return {"pm25": round(pm25, 1), "pm10": round(pm25 * 1.6, 1), "level": level}
+
+
+def drift_air(device) -> None:
+    """미세먼지 값을 조금씩 바꾸고, auto 모드면 공기질에 따라 스스로 켜고 끕니다."""
+    with _lock:
+        state = _states[device.deviceId]
+        pm25 = state["airQuality"]["pm25"]
+        pm25 = pm25 - random.uniform(1, 4) if state["power"] == "on" else pm25 + random.uniform(-2, 3)
+        state["airQuality"] = air_quality(max(pm25, 3.0))
+        level = state["airQuality"]["level"]
+        if state["mode"] == "auto" and level == "bad" and state["power"] == "off":
+            state.update(power="on", lastControl={"publisher": "system", "commandId": None})
+            print(f"[가짜 {device.deviceId}] 공기질 나쁨 -> 자동으로 켬")
+        elif state["mode"] == "auto" and level == "good" and state["power"] == "on" and state["lastControl"]["publisher"] == "system":
+            state.update(power="off", lastControl={"publisher": "system", "commandId": None})
+            print(f"[가짜 {device.deviceId}] 공기질 좋음 -> 자동으로 끔")
 
 
 def state_payload(device_id: str) -> dict:
@@ -83,6 +109,10 @@ def apply_command(device, payload: dict) -> None:
             state.update(power=cmd_type, lastControl=control)
         elif device.type == device_registry.FAN and cmd_type == "set_speed" and payload.get("speed"):
             state.update(power="on", speed=payload["speed"], lastControl=control)
+        elif device.type == device_registry.AIR_PURIFIER and cmd_type in ("on", "off"):
+            state.update(power=cmd_type, lastControl=control)
+        elif device.type == device_registry.AIR_PURIFIER and cmd_type == "set_mode" and payload.get("mode"):
+            state.update(mode=payload["mode"], lastControl=control)
         elif device.type == device_registry.LIGHT and cmd_type == "blink":
             previous_power = state["power"]
             state.update(mode="blink", lastControl=control)
@@ -155,6 +185,8 @@ def main() -> None:
         while True:
             time.sleep(TICK_SECONDS)
             for device in DEVICES:
+                if device.type == device_registry.AIR_PURIFIER:
+                    drift_air(device)
                 publish_state(device)
     except KeyboardInterrupt:
         print("\n[가짜 가전] 종료합니다.")
