@@ -67,6 +67,7 @@ class ContinuousHost:
         self.status_path = settings.integration.outbox_path.parent / "status.json"
         self._next_status = self._next_prune = 0
         self._now = None
+        self._connection_generation = 0
 
     def status(self, now, running=True):
         counts = {row[0]: row[1] for row in self.runtime.outbox.db.execute(
@@ -77,6 +78,9 @@ class ContinuousHost:
                 "state": None if self.runtime.last_decision is None else self.runtime.last_decision.state.value,
                 "fall_state": None if self.runtime.controller.bathroom_decision is None else self.runtime.controller.bathroom_decision.state.value,
                 "outbox": counts, "fall_incident": self.runtime.outbox.fall_incident(),
+                "home_automation": self.runtime.home_automation.health(),
+                "stove_temperature_validity_verified": self.runtime.config.stove_temperature_validity_verified,
+                "voice": self.runtime.voice.health() if self.runtime.voice is not None else {"enabled": False},
                 "fall_status_configured": bool(self.settings.integration.fall_status_path or self.settings.mqtt.fall_status_topic),
                 "recent_diagnostics": [d["code"] for d in self.runtime.diagnostics[-10:]]}
 
@@ -84,6 +88,11 @@ class ContinuousHost:
         # NTP corrections must not move the engine's processing clock backwards.
         now = self.clock()
         self._now = max(now, self._now if self._now is not None else now)
+        generation = getattr(self.source, "connection_generation", 0)
+        if generation != self._connection_generation:
+            self._connection_generation = generation
+            if self.runtime.voice is not None:
+                self.runtime.voice.reconnect()
         for message in self.source.drain():
             self.router.accept(message)
         self.router.flush(self._now)

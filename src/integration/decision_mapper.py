@@ -29,6 +29,27 @@ class DecisionMapper:
         self.config = config
         self.history = history
 
+    def map_home_rule(self, scenario, episode_id, timestamp, confidence, evidence, *, action=None):
+        """Narrow v0.7 contracts; no changes to learned automation scoring."""
+        if scenario not in {"cooking_air_clean", "away_all_off"}:
+            raise ValueError("unsupported home rule")
+        identity = f"home:{scenario}:{episode_id}:{action or 'all_off'}"
+        reason = ("Confirmed stove operation and purifier state" if scenario == "cooking_air_clean"
+                  else "Valid whole-home absence sustained for the configured interval")
+        source = {"type": "HomeAutomationDecision", "scenario": scenario, "timestamp": timestamp,
+                  "episode_id": episode_id, "action": action, "reason": reason, "details": evidence,
+                  "confidence_basis": ("telemetry_freshness_not_probability" if action else "minimum_absence_confidence")}
+        if self.config.rule_confidence_policy == "block":
+            return MappedDecision(identity, None, "rule_confidence_policy_blocked", source)
+        body = {"decisionId": "dec-" + hashlib.sha256(identity.encode()).hexdigest()[:32],
+                "scenario": scenario, "confidence": confidence, "reason": reason,
+                "timestamp": iso_time(timestamp), "expiresAt": iso_time(timestamp + self.config.command_ttl), "actions": []}
+        if scenario == "cooking_air_clean":
+            body.update(room="room", actions=[{"device": "air_purifier",
+                "deviceId": self.config.device_ids.get("air_purifier", "air-01"), "action": action}],
+                announcement="조리 연동으로 공기청정기 " + ("켜기" if action == "on" else "끄기") + "를 요청합니다.")
+        return MappedDecision(identity, decision_payload(body, allow_null_confidence=False), None, source)
+
     def map(self, output, *, emergency=False, evidence_confidence=None, stove_level=None) -> MappedDecision:
         identity = source_id(output)
         source = {"type": type(output).__name__, **output.to_dict()}

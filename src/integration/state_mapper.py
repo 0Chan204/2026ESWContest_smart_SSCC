@@ -3,7 +3,34 @@ from dataclasses import dataclass
 from src.control.realtime_models import ApplianceUpdate
 from src.control.identifiers import canonical_device
 from .config import IntegrationConfig
-from .schemas import measured_time, number
+from .schemas import ContractError, measured_time, number
+
+
+def purifier_state(item, now, max_age):
+    """Read reported classifications, never calculate a PM threshold.
+
+    lastControl is optional: backend v0.7 currently strips it from the AI GET.
+    Missing provenance is not evidence of AI ownership.
+    """
+    state = item["current_state"]
+    at = measured_time(item["updatedAt"])
+    reported = measured_time(state.get("reportedAt"))
+    if (not item["online"] or not 0 <= now - at < max_age or not 0 <= now - reported < max_age
+            or state.get("power") not in {"on", "off"} or (state["power"] == "on") != item["is_on"]
+            or state.get("mode") not in {"auto", "manual"}):
+        raise ContractError("purifier state unavailable or stale")
+    quality = state.get("airQuality")
+    if not isinstance(quality, dict) or quality.get("level") not in {"good", "normal", "bad"}:
+        raise ContractError("purifier air quality unavailable")
+    for key in ("pm25", "pm10"):
+        if quality.get(key) is not None and number(quality[key], key) < 0:
+            raise ContractError("invalid air quality measurement")
+    control = state.get("lastControl")
+    if control is not None and (not isinstance(control, dict) or control.get("publisher") not in {"user", "system", "api"}
+            or control.get("commandId") is not None and not isinstance(control["commandId"], str)):
+        raise ContractError("invalid purifier control provenance")
+    return {"level": quality["level"], "quality": quality, "mode": state["mode"],
+            "reported_at": reported, "control": control}
 
 
 @dataclass(frozen=True)
@@ -39,6 +66,11 @@ class StateMapper:
             diagnostics.append("future_device_measurement")
         if fetched_at - timestamp >= c.device_max_age:
             diagnostics.append("device_snapshot_stale")
+        if device == "air_purifier":
+            try:
+                purifier_state(item, fetched_at, c.device_max_age)
+            except (ValueError, TypeError, KeyError):
+                diagnostics.append("purifier_state_or_air_quality_invalid")
         if not diagnostics and device == "stove":
             state = item["current_state"]
             level = state.get("level")

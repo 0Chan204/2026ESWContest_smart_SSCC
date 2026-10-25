@@ -26,6 +26,12 @@ class ScenarioConfig:
     FALL_EMERGENCY_SECONDS: float = 30
     LONG_UNRESPONSIVE_SECONDS: float = 60
     RECOVERY_CONFIRM_SECONDS: float = 5
+    TOILET_LYING_SUSPICION_ENABLED: bool = True
+    TOILET_LYING_MIN_LOCATION_CONFIDENCE: float = 0.8
+    TOILET_LYING_MIN_ACTIVITY_CONFIDENCE: float = 0.8
+    MORNING_LIGHT_ENABLED: bool = True
+    # Central policy for a transient get_up event; not a calibrated accuracy claim.
+    WAKE_EVENT_MIN_ACTIVITY_CONFIDENCE: float = 0.9
 
     def __post_init__(self) -> None:
         if not self.MORNING_START < self.MORNING_END:
@@ -35,6 +41,10 @@ class ScenarioConfig:
         if not isfinite(self.UTC_OFFSET_HOURS) or not -24 < self.UTC_OFFSET_HOURS < 24:
             raise ValueError("Invalid UTC offset")
         for name, value in vars(self).items():
+            if name in {"TOILET_LYING_SUSPICION_ENABLED", "MORNING_LIGHT_ENABLED"}:
+                if type(value) is not bool:
+                    raise ValueError(f"{name} must be boolean")
+                continue
             if name in {
                 "MORNING_START", "MORNING_END", "WAKE_RECORD_START", "WAKE_RECORD_END",
                 "UTC_OFFSET_HOURS",
@@ -43,6 +53,8 @@ class ScenarioConfig:
             if (isinstance(value, bool) or not isinstance(value, (int, float))
                     or not isfinite(value) or value <= 0):
                 raise ValueError(f"{name} must be finite and positive")
+            if name.endswith("CONFIDENCE") and value > 1:
+                raise ValueError(f"{name} must be <= 1")
         for name in (
             "WAKE_PATTERN_MIN_SAMPLES", "WAKE_PATTERN_HISTORY_SIZE",
             "MORNING_WATER_AMOUNT_ML", "MAX_MORNING_AUTO_DISPENSE",

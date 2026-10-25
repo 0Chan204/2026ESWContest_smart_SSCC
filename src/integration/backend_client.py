@@ -15,9 +15,10 @@ def _reject_nonfinite(value):
 
 
 class BackendError(RuntimeError):
-    def __init__(self, message: str, *, retryable=False):
+    def __init__(self, message: str, *, retryable=False, status_code=None):
         super().__init__(message)
         self.retryable = retryable
+        self.status_code = status_code
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -43,7 +44,8 @@ class UrllibTransport:
                                                              parse_constant=_reject_nonfinite))
         except HTTPError as exc:
             raise BackendError(f"backend HTTP {exc.code}",
-                               retryable=exc.code in {408, 429} or 500 <= exc.code < 600) from exc
+                               retryable=exc.code in {408, 429} or 500 <= exc.code < 600,
+                               status_code=exc.code) from exc
         except (URLError, TimeoutError, OSError, HTTPException) as exc:
             # Avoid logging URLs, authentication headers, or credentials from exceptions.
             raise BackendError("backend connection/timeout error", retryable=True) from exc
@@ -63,7 +65,7 @@ class BackendClient:
             raise ValueError("mock transport cannot be used in live mode")
         self.transport = transport if transport is not None else UrllibTransport()
 
-    def _request(self, method, path, body=None):
+    def _request(self, method, path, body=None, *, timeout=None):
         headers = dict(self.config.headers)
         headers["Accept"] = "application/json"
         if body is not None:
@@ -71,7 +73,7 @@ class BackendClient:
         raw = None if body is None else json.dumps(body, sort_keys=True, ensure_ascii=False,
                                                   allow_nan=False, separators=(",", ":")).encode("utf-8")
         return self.transport.request(method, self.config.base_url.rstrip("/") + path,
-                                      headers, raw, self.config.http_timeout)
+                                      headers, raw, self.config.http_timeout if timeout is None else timeout)
 
     def fetch_device_states(self) -> list[dict]:
         response = self._request("GET", self.DEVICE_STATES_PATH)

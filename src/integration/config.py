@@ -4,6 +4,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from src.control.identifiers import ROOMS, canonical_room
+from src.control.scenario_config import ScenarioConfig
+from .home_config import HomeAutomationConfig
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,9 @@ class IntegrationConfig:
     room_is_bedroom: bool | None = None
     # These settings require confirmation by the deployment contract.
     temperature_is_celsius: bool = False
+    # Live deployment assertion: backend must suppress invalid/stale sensor
+    # temperatures, not just refresh the device heartbeat. Mock data is synthetic.
+    stove_temperature_validity_verified: bool = False
     level_to_watts: dict[int, float] = field(default_factory=dict)
     watts_field: str | None = None
     water_ready_states: tuple[str, ...] = ()
@@ -58,10 +63,19 @@ class IntegrationConfig:
     light_on_seconds: float = 5.0
     light_off_seconds: float = 30.0
     multi_room_lights: bool = False
+    mock_behavior_contract: bool = False
+    scenario_config: ScenarioConfig = field(default_factory=ScenarioConfig)
+    home_automation: HomeAutomationConfig = field(default_factory=HomeAutomationConfig)
 
     def __post_init__(self):
         if self.mode not in {"mock", "live"}:
             raise ValueError("mode must be mock or live")
+        if type(self.mock_behavior_contract) is not bool or (self.mock_behavior_contract and self.mode != "mock"):
+            raise ValueError("mock_behavior_contract is allowed only in mock mode")
+        if not isinstance(self.scenario_config, ScenarioConfig):
+            raise ValueError("scenario_config must be ScenarioConfig")
+        if not isinstance(self.home_automation, HomeAutomationConfig):
+            raise ValueError("home_automation must be HomeAutomationConfig")
         if self.mode == "live":
             url = urlsplit(self.base_url)
             if url.scheme not in {"http", "https"} or not url.netloc or url.username or url.password:
@@ -84,6 +98,8 @@ class IntegrationConfig:
             raise ValueError("unsupported automation profile")
         if type(self.multi_room_lights) is not bool:
             raise ValueError("multi_room_lights must be boolean")
+        if type(self.stove_temperature_validity_verified) is not bool:
+            raise ValueError("stove_temperature_validity_verified must be boolean")
         if type(self.stove_reduce_steps) is not int or not 1 <= self.stove_reduce_steps <= 8:
             raise ValueError("stove_reduce_steps must be 1..8")
         if self.water_readiness_mode not in {"explicit", "backend_idle"}:
@@ -109,6 +125,10 @@ class IntegrationConfig:
     def outbox_path(self) -> Path:
         return Path(self.data_dir) / self.mode / "outbox.sqlite3"
 
+    @property
+    def stove_temperature_trusted(self) -> bool:
+        return self.mode == "mock" or self.stove_temperature_validity_verified
+
     def internal_room(self, room: str) -> str:
         normalized = canonical_room(room)
         if normalized not in ROOMS:
@@ -124,4 +144,6 @@ class IntegrationConfig:
         return device
 
     def accepts_device(self, device: str, device_id: str) -> bool:
+        if device == "air_purifier" and self.home_automation.air_purifier_enabled:
+            return device_id == self.device_ids.get(device, "air-01")
         return self.device_ids.get(device) == device_id or (self.multi_room_lights and device == "light")

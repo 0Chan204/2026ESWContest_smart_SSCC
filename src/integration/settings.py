@@ -5,6 +5,7 @@ from pathlib import Path
 import tomllib
 
 from .config import IntegrationConfig
+from src.interaction.config import VoiceConfig
 
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "homevis.toml"
@@ -18,6 +19,7 @@ class MQTTSettings:
     location_topic: str = "wifi/occupancy/state"
     behavior_topic: str = ""
     fall_status_topic: str = ""
+    voice_topic: str = ""
     username: str = field(default="", repr=False)
     password: str = field(default="", repr=False)
     tls: bool = False
@@ -31,7 +33,7 @@ class MQTTSettings:
             raise ValueError("MQTT host, client_id and location_topic are required")
         if type(self.port) is not int or not 1 <= self.port <= 65535:
             raise ValueError("MQTT port must be 1..65535")
-        topics = [x for x in (self.location_topic, self.behavior_topic, self.fall_status_topic) if x]
+        topics = [x for x in (self.location_topic, self.behavior_topic, self.fall_status_topic, self.voice_topic) if x]
         if len(set(topics)) != len(topics) or any("#" in x or "+" in x for x in topics):
             raise ValueError("MQTT input topics must be distinct exact topics")
         if any(x.startswith("home/") and x.endswith("/command") for x in topics):
@@ -53,8 +55,9 @@ class RunnerSettings:
     tick_interval: float = 0.1
     status_interval: float = 5.0
     audit_retention_days: int = 7
-    sensing_source: str = "mqtt"
+    sensing_source: str = "backend"
     sensing_poll_interval: float = 1.0
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
 
     def __post_init__(self):
         if not 0 < self.tick_interval <= 1 or not 0 < self.status_interval <= 300:
@@ -71,9 +74,21 @@ def load_settings(path=DEFAULT_CONFIG, *, environ=None, mode=None, base_url=None
     env = os.environ if environ is None else environ
     with Path(path).open("rb") as stream:
         raw = tomllib.load(stream)
-    if set(raw) - {"backend", "mqtt", "runtime", "actions"}:
+    if set(raw) - {"backend", "mqtt", "runtime", "actions", "voice", "scenarios", "home_automation"}:
         raise ValueError("unknown configuration section")
     backend, mqtt, runtime = (dict(raw.get(key, {})) for key in ("backend", "mqtt", "runtime"))
+    from src.control.scenario_config import ScenarioConfig
+    backend["scenario_config"] = ScenarioConfig(**{key.upper(): value for key, value in raw.get("scenarios", {}).items()})
+    from .home_config import HomeAutomationConfig
+    home = dict(raw.get("home_automation", {}))
+    for key in ("air_purifier_enabled", "cooking_air_clean_enabled", "away_all_off_enabled", "whole_home_presence_verified"):
+        variable = "HOMEVIS_" + key.upper()
+        if variable in env:
+            value = env[variable].strip().lower()
+            if value not in {"true", "false"}:
+                raise ValueError(f"{variable} must be true or false")
+            home[key] = value == "true"
+    backend["home_automation"] = HomeAutomationConfig(**home)
     # TOML table keys are strings; the existing mapper expects integer levels.
     if "level_to_watts" in backend:
         backend["level_to_watts"] = {int(key): value for key, value in backend["level_to_watts"].items()}
@@ -99,4 +114,14 @@ def load_settings(path=DEFAULT_CONFIG, *, environ=None, mode=None, base_url=None
     mqtt.update(username=env.get("HOMEVIS_MQTT_USERNAME", ""), password=env.get("HOMEVIS_MQTT_PASSWORD", ""))
     if env.get("HOMEVIS_SENSING_SOURCE"):
         runtime["sensing_source"] = env["HOMEVIS_SENSING_SOURCE"]
-    return RunnerSettings(IntegrationConfig(**backend), MQTTSettings(**mqtt), **runtime)
+    voice = dict(raw.get("voice", {}))
+    if "HOMEVIS_VOICE_ENABLED" in env:
+        value = env["HOMEVIS_VOICE_ENABLED"].strip().lower()
+        if value not in {"true", "false"}:
+            raise ValueError("HOMEVIS_VOICE_ENABLED must be true or false")
+        voice["enabled"] = value == "true"
+    if "HOMEVIS_VOICE_TOPIC" in env:
+        voice["topic"] = env["HOMEVIS_VOICE_TOPIC"]
+    voice = VoiceConfig(**voice)
+    mqtt["voice_topic"] = voice.topic if voice.enabled else ""
+    return RunnerSettings(IntegrationConfig(**backend), MQTTSettings(**mqtt), voice=voice, **runtime)

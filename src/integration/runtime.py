@@ -31,18 +31,31 @@ class IntegrationRuntime:
     """Call ingestion and advance/run_once on the same thread. HTTP workers only do I/O."""
 
     def __init__(self, config: IntegrationConfig, client: BackendClient, *, controller=None,
-                 clock=time.time, fall_alert_service: AlertService | None = None):
+                 clock=time.time, fall_alert_service: AlertService | None = None,
+                 voice_config=None, voice_llm=None):
         if client.config != config:
             raise ValueError("runtime/client configuration mismatch")
         self.config, self.client, self.clock = config, client, clock
+        from src.interaction.config import VoiceConfig
+        from src.llm.shared import SharedLLM
+        self.voice_config = voice_config or VoiceConfig()
+        existing_llm = None if controller is None else controller.feedback_interpreter.llm
+        selected_llm = voice_llm if voice_llm is not None else existing_llm
+        self.shared_llm = (SharedLLM(
+            factory=(lambda: selected_llm) if selected_llm is not None else
+                    ((lambda: None) if config.mode == "mock" else create_llm), clock=clock)
+            if self.voice_config.enabled else None)
         def make_alert_service():
             return (fall_alert_service if fall_alert_service is not None else
-                    AlertService(LLMMessageGenerator(create_llm()), Pyttsx3TTS(),
+                    AlertService(LLMMessageGenerator(self.shared_llm if self.shared_llm is not None else create_llm()), Pyttsx3TTS(),
                                  config.outbox_path.parent / "fall_alerts"))
         self._alert_worker = AlertWorker(make_alert_service) if config.async_alerts else None
         self.fall_alert_service = None if config.async_alerts else make_alert_service()
         self.outbox = Outbox(config.outbox_path, config.mode)
         self.controller = controller or CentralController(
+            scenario_config=config.scenario_config,
+            feedback_llm=self.shared_llm,
+            user_id=self.voice_config.user_id if self.voice_config.enabled else "default",
             confidence_data_dir=config.outbox_path.parent / "controller",
             confidence_config=ConfidenceConfig.for_profile(config.automation_profile,
                 absence_seconds=config.automation_absence_seconds, return_seconds=config.automation_return_seconds,
@@ -50,6 +63,8 @@ class IntegrationRuntime:
             decision_history=SQLiteDecisionHistory(self.outbox, config.outbox_path.parent / "controller" / "decision_history.jsonl")
                 if config.backend_v05 else None,
             routine_storage=SQLiteRoutineStorage(self.outbox) if config.backend_v05 else None)
+        if self.shared_llm is not None:
+            self.controller.feedback_interpreter.llm = self.shared_llm
         self.controller.realtime_engine.automatic_restore_enabled = config.backend_restore
         self.controller.bathroom_fall.backend_response_managed = bool(config.backend_fall_scenario)
         previous_incident = self.outbox.get_metadata("fall_incident")
@@ -59,6 +74,10 @@ class IntegrationRuntime:
             self.controller.bathroom_fall._incident_id = previous_incident["local_incident_id"]
             self.controller.bathroom_fall.state = BathroomFallState.RESOLVED_BY_CAREGIVER
         self.controller.morning_water.reserve_allowance = self.outbox.reserve_water
+        morning_light_date = self.outbox.get_metadata("morning_light_date")
+        if morning_light_date:
+            from datetime import date
+            self.controller.morning_water._light_date = date.fromisoformat(morning_light_date)
         self.state_mapper = StateMapper(config)
         self.decision_mapper = DecisionMapper(config, self.controller.decision_history)
         self.devices = {}
@@ -79,12 +98,16 @@ class IntegrationRuntime:
         self._latest_received_location = None
         self._latest_received_sample = None
         self._bedtime_interrupted_at = None
+        self._morning_interrupted_at = None
+        self._sensing_fault_at = None
+        self._sensing_fault_reason = None
         self._last_location_message_at = None
         self._watermark = None
         self._last_advance = None
         self._backend_ok = False
         self._last_behavior_time = None
         self._last_fall_state = None
+        self._last_fall_key = None
         self._light_requested = set()
         self._light_presence = {}
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="homevis-http")
@@ -97,13 +120,28 @@ class IntegrationRuntime:
         self._next_evaluation_audit = 0.0
         self._last_voice_state = None
         self._warning_context = {}
+        self.voice = None
+        from .home_automation import HomeAutomation
+        self.home_automation = HomeAutomation(self)
+        if self.voice_config.enabled:
+            from src.interaction.coordinator import VoiceCoordinator
+            self.voice = VoiceCoordinator(self, self.voice_config, self.shared_llm)
 
     def close(self):
         # HTTP workers have finite timeouts and never access the outbox/controller.
         self._executor.shutdown(wait=False, cancel_futures=True)
+        if self.voice is not None:
+            self.voice.close()
         if self._alert_worker is not None:
             self._alert_worker.close()
         self.outbox.close()
+
+    def receive_voice_request(self, payload, *, received_at=None):
+        try:
+            return self.voice.receive(payload, received_at) if self.voice is not None else False
+        except Exception as exc:
+            self.diagnostic("voice_receive_failed", error=type(exc).__name__)
+            return False
 
     def diagnostic(self, code, **detail):
         record = {"code": code, **detail}
@@ -174,6 +212,24 @@ class IntegrationRuntime:
     def _interrupt_bedtime(self, timestamp):
         self._bedtime_interrupted_at = max(timestamp, self._bedtime_interrupted_at or timestamp)
 
+    def _interrupt_morning(self, timestamp):
+        self._morning_interrupted_at = max(timestamp, self._morning_interrupted_at or timestamp)
+
+    def interrupt_behavior(self, timestamp):
+        self._interrupt_bedtime(timestamp)
+        self._interrupt_morning(timestamp)
+        self.controller.bathroom_fall.interrupt_observation(timestamp)
+        self.home_automation.interrupt_presence()
+
+    def invalidate_sensing(self, timestamp, reason):
+        """Receipt-time barrier: pre-fault queued evidence cannot restore validity."""
+        self._sensing_fault_at = max(timestamp, self._sensing_fault_at or timestamp)
+        self._sensing_fault_reason = reason
+        self.controller.realtime_engine.sensing_invalid = True
+        self._light_presence.clear()
+        self.interrupt_behavior(timestamp)
+        self.diagnostic("sensing_transport_invalidated", reason=reason)
+
     def ingest_location(self, payload, *, received_at=None, behavior: BehaviorObservation | None = None):
         received_at = self.clock() if received_at is None else received_at
         number(received_at, "received_at")
@@ -182,10 +238,26 @@ class IntegrationRuntime:
             observation = location_observation(payload, received_at, self.config)
         except (ValueError, TypeError) as exc:
             self.controller.realtime_engine.sensing_invalid = True
-            self._interrupt_bedtime(received_at)
+            self.interrupt_behavior(received_at)
             self.diagnostic("invalid_location_payload", error=str(exc))
             return False
         sample = join_behavior(observation, behavior, self.config.behavior_max_skew)
+        pre_fault = self._sensing_fault_at is not None and observation.measured_at <= self._sensing_fault_at
+        if pre_fault and not (sample.activity_event == "fall" or sample.fall_detected is True):
+            self.diagnostic("pre_fault_location_discarded", measured_at=observation.measured_at)
+            return False
+        if not pre_fault:
+            self.home_automation.observe_presence(observation)
+        # Remember contradictions on receipt, before the event-time reorder delay.
+        # A later none result must not hide lying/room exit/error while an older
+        # wake request is still being qualified from buffered measurements.
+        minimum = self.controller.realtime_engine.config.MIN_CONFIDENCE
+        if observation.measured_at <= received_at and (
+                not observation.valid or sample.location != "room" or sample.confidence < minimum
+                or sample.activity_observed is not True or (sample.activity_confidence or 0) < minimum
+                or sample.activity_event in {"fall", "lie_down"}
+                or sample.activity == "lying" or sample.fall_detected is True):
+            self._interrupt_morning(sample.timestamp)
         previous_sample = self._latest_received_sample
         if observation.measured_at <= received_at and (self._latest_received_location is None
                 or observation.measured_at >= self._latest_received_location.measured_at):
@@ -277,9 +349,11 @@ class IntegrationRuntime:
             self._record_device_fault(kind, fetched_at)
             self.devices.pop(kind, None)
             self.diagnostic("device_missing", device=kind)
+        self.home_automation.observe_devices(fetched_at)
 
     def poll_failed(self, reason="backend_poll_failed", *, failed_at=None):
         self._backend_ok = False
+        self.home_automation.observe_devices(self.clock() if failed_at is None else failed_at)
         failed_at = self.clock() if failed_at is None else failed_at
         for kind in set(self.config.device_ids) | set(self.devices):
             self._record_device_fault(kind, failed_at)
@@ -291,7 +365,8 @@ class IntegrationRuntime:
         raw = observation.raw
         level = raw["current_state"].get("level")
         eligible = False
-        if (record and observation.measured_at >= record.get("accepted_at", record["requested_at"]) and raw["online"]
+        if (not self.outbox.get_metadata("away_restore_lock") and record
+                and observation.measured_at >= record.get("accepted_at", record["requested_at"]) and raw["online"]
                 and 0 <= self.clock() - observation.measured_at < self.config.device_max_age):
             eligible = bool(raw["online"] and raw["is_on"] and raw["control_state"] == "homevis"
                             and type(level) is int and type(record.get("previous_level")) is int
@@ -324,6 +399,9 @@ class IntegrationRuntime:
             engine = self.controller.realtime_engine
             if kind == "location":
                 observation, sample = value
+                if (self._sensing_fault_at is not None and timestamp <= self._sensing_fault_at
+                        and sample.activity_event != "fall" and sample.fall_detected is not True):
+                    continue
                 if engine.last_sensor_update is not None and timestamp <= engine.last_sensor_update:
                     self.diagnostic("duplicate_or_out_of_order_location", measured_at=timestamp)
                     continue
@@ -331,9 +409,22 @@ class IntegrationRuntime:
                 self._restore_reservation(timestamp)
                 self.controller.water_purifier_available = self.state_mapper.water_ready(
                     self.evaluated_devices.get("water_purifier"), timestamp)
+                duplicate_event = False
+                if sample.activity_observed and sample.activity_event_id is not None:
+                    fingerprint = json.dumps({key: getattr(sample, key) for key in (
+                        "activity_event", "activity_timestamp", "activity_valid_until", "activity_confidence",
+                        "activity_reason", "raw_activity", "location", "activity", "motion_state", "fall_detected")},
+                        sort_keys=True, ensure_ascii=False)
+                    event_status = self.outbox.claim_behavior_event(
+                        sample.activity_event_id, fingerprint, sample.activity_timestamp)
+                    if event_status != "new":
+                        self.diagnostic("behavior_event_" + event_status, event_id=sample.activity_event_id)
+                        duplicate_event = event_status == "duplicate"
+                        sample = replace(sample, activity_observed=False, activity="unknown", motion_state=None,
+                                         fall_detected=None, activity_event=None, activity_event_id=None)
                 # Reusing a behavior result must not extend the observed activity duration.
-                if (sample.activity_observed and self._last_behavior_time is not None
-                        and sample.activity_timestamp <= self._last_behavior_time):
+                if (duplicate_event or (sample.activity_observed and self._last_behavior_time is not None
+                        and sample.activity_timestamp <= self._last_behavior_time)):
                     self.last_decision = engine.update_sensing(sample)
                     self.controller._collect_automation(self.last_decision)
                     self.controller._tick_scenarios(timestamp)
@@ -344,7 +435,9 @@ class IntegrationRuntime:
                 self.missing_inputs = {
                     "bedtime_light": [] if sample.activity_observed and sample.activity != "unknown"
                                       and (sample.activity_confidence or 0) >= engine.config.MIN_CONFIDENCE else ["activity"],
-                    "morning_water": [] if sample.activity_observed and sample.activity != "unknown"
+                    "morning_water": [] if sample.activity_observed
+                                      and (sample.activity != "unknown" or sample.activity_event == "wake"
+                                           or self.controller.morning_water._wake_time is not None)
                                       and (sample.activity_confidence or 0) >= engine.config.MIN_CONFIDENCE else ["wake_activity"],
                     "bathroom_fall": ([] if sample.activity_observed and sample.motion_state is not None
                                       and (sample.activity_confidence or 0) >= engine.config.MIN_CONFIDENCE
@@ -369,7 +462,9 @@ class IntegrationRuntime:
         latest = self._latest_received_location
         if (latest is not None and not latest.valid) or (
                 "location" in self._conflicts
-                and (self.controller.realtime_engine.last_sensor_update or float("-inf")) <= self._conflicts["location"]):
+                and (self.controller.realtime_engine.last_sensor_update or float("-inf")) <= self._conflicts["location"]) or (
+                self._sensing_fault_at is not None and
+                (self.controller.realtime_engine.last_sensor_update or float("-inf")) <= self._sensing_fault_at):
             self.controller.realtime_engine.sensing_invalid = True
         if self.last_location is not None and self.last_location.valid_until is not None and watermark >= self.last_location.valid_until:
             self.controller.realtime_engine.sensing_invalid = True
@@ -379,6 +474,7 @@ class IntegrationRuntime:
         self.last_decision = self.controller.tick(watermark)
         self._evaluate_light(watermark)
         self.collect_outputs(now)
+        self.home_automation.tick(now)
         self._schedule_warning(now)
         if now >= self._next_evaluation_audit:
             self.outbox.audit("evaluation", now, {**self.last_decision.to_dict(),
@@ -407,6 +503,7 @@ class IntegrationRuntime:
             "raw_location": None if observation is None else observation.raw["location"],
             "raw_confidence": None if observation is None else observation.raw["location_confidence"],
             "reason": None if observation is None else observation.raw.get("reason"),
+            "last_transport_fault": self._sensing_fault_reason,
             "applied_measured_at": self.controller.realtime_engine.last_sensor_update,
             "applied_observation_valid": bool(self.last_decision and self.last_decision.observation_valid),
             "last_confirmed_location": self.controller.realtime_engine.last_user_location,
@@ -478,23 +575,33 @@ class IntegrationRuntime:
                     and not self.controller.bathroom_fall._await_clear):
                 self.outbox.set_metadata("fall_incident", {**record, "rearmed": True})
         decision = self.controller.bathroom_decision
-        if decision is None or decision.state == self._last_fall_state:
+        state_key = None if decision is None else (decision.state.value, decision.candidate_only, decision.incident_id)
+        if decision is None or state_key == self._last_fall_key:
             return
         state = decision.state.value
         if state == "NORMAL_BATHROOM_USE":
-            self._last_fall_state = state
+            self._last_fall_state, self._last_fall_key = state, state_key
             return
-        if state.startswith("FALL_"):
+        if state.startswith("FALL_") and decision.incident_id is not None and not decision.candidate_only:
             self.outbox.latch_fall(decision.timestamp, decision.incident_id)
         incident = self.outbox.fall_incident()
         self.outbox.audit("fall_state_changed", now, {
             "previous_state": self._last_fall_state,
             "decision": asdict(decision), "measured_at": decision.timestamp, "processed_at": now,
             "local_incident_id": None if incident is None else incident["local_incident_id"],
-            "backend_delivery": "backend_managed" if self.config.backend_fall_scenario else "fall_state_contract_unconfirmed",
+            "backend_delivery": "local_suspicion_only" if decision.candidate_only else (
+                "backend_managed" if self.config.backend_fall_scenario else "fall_state_contract_unconfirmed"),
             "backend_incident_status": incident.get("status") if incident and self.config.backend_fall_scenario else None,
         })
-        self._last_fall_state = state
+        self.controller.decision_history.save({
+            "action_id": "fall-state:" + hashlib.sha256(json.dumps(
+                [decision.timestamp, state_key], sort_keys=True).encode()).hexdigest(),
+            "timestamp": decision.timestamp, "scenario": "bathroom_fall", "state": state,
+            "candidate_only": decision.candidate_only, "evidence": decision.evidence,
+            "incident_id": decision.incident_id,
+            "backend_incident_id": None if incident is None else incident.get("fallIncidentId"),
+        })
+        self._last_fall_state, self._last_fall_key = state, state_key
 
     def collect_outputs(self, now):
         self._record_fall_transition(now)
@@ -520,6 +627,14 @@ class IntegrationRuntime:
             stove = self.evaluated_devices.get("stove")
             level = None if stove is None else stove.raw["current_state"].get("level")
             result = self.decision_mapper.map(output, emergency=emergency, evidence_confidence=evidence, stove_level=level)
+            if getattr(output, "scenario", None) == "morning_light_on" and result.payload is not None:
+                device_id = result.payload["actions"][0].get("deviceId", self.config.device_ids["light"])
+                inflight = self.outbox.db.execute(
+                    "SELECT payload FROM decisions WHERE expires_at>? AND status IN ('pending','sending','accepted')", (now,))
+                if any(raw[0] is not None and any(a["device"] == "light" and a["action"] in {"on", "turn_on"}
+                       and a.get("deviceId", self.config.device_ids["light"]) == device_id
+                       for a in json.loads(raw[0])["actions"]) for raw in inflight):
+                    result = replace(result, payload=None, diagnostic="room_light_on_already_requested")
             if (self.config.automation_profile == "location_level_v1" and result.payload is not None
                     and getattr(output, "device", None) == "stove"):
                 desired = result.payload["actions"][0]["action"]
@@ -535,8 +650,17 @@ class IntegrationRuntime:
                 stove = self.evaluated_devices.get("stove")
                 result = replace(result, source={**result.source, "previous_level":
                     None if stove is None else stove.raw["current_state"].get("level")})
+            from src.interaction.explanation import decision_snapshot
+            try:
+                result = replace(result, source={**result.source, "snapshot": decision_snapshot(self, output)})
+            except Exception as exc:
+                # Explanation metadata is optional, never a prerequisite for safety.
+                result = replace(result, source={**result.source, "snapshot_error": type(exc).__name__})
             mapped.append(result)
         self.outbox.save_batch(mapped, now, self.config.command_ttl)
+        for output in outputs:
+            if getattr(output, "scenario", None) == "morning_light_on":
+                self.outbox.set_metadata("morning_light_date", output.details["local_date"])
         if self.config.backend_v05:
             for result in mapped:
                 if result.payload is None and result.source.get("event") == "fall_user_alert_requested":
@@ -684,6 +808,17 @@ class IntegrationRuntime:
                     and row["payload"] is not None)
 
     def _revalidate(self, row, now):
+        if row["source"].get("type") == "HomeAutomationDecision":
+            return self.home_automation.revalidate(row, now)
+        if (not self.config.stove_temperature_trusted and any(
+                a.get("device") == "stove" and a.get("action") in {"turn_on", "restore_power"}
+                for a in row["payload"]["actions"])):
+            return "stove_temperature_validity_contract_unconfirmed"
+        if any(a.get("device") == "stove" and a.get("action") == "restore_power" for a in row["payload"]["actions"]) and self.outbox.get_metadata("away_restore_lock"):
+            return "away_shutdown_requires_explicit_user_confirmation"
+        if self.home_automation.away_active and any(a.get("action") in {"on", "turn_on", "restore_power", "dispense"}
+                                                   for a in row["payload"]["actions"]):
+            return "away_all_off_has_priority"
         if self._is_backend_fall(row):
             incident = self.outbox.fall_incident()
             # Send the recorded emergency even if polling or sensing later goes offline.
@@ -695,6 +830,9 @@ class IntegrationRuntime:
         if row["source"].get("type") == "WarningAnnouncement":
             return (None if self.outbox.fall_incident() is None and self.last_decision is not None
                     and self.last_decision.state.value == row["source"]["state"] else "warning_no_longer_current")
+        if (self._sensing_fault_at is not None and row["source"].get("scenario") != "bathroom_fall"
+                and row["source"].get("timestamp", float("-inf")) <= self._sensing_fault_at):
+            return "sensing_interrupted_since_decision"
         if not self._backend_ok:
             return "backend_state_unavailable"
         if self.last_location is None or not self.last_location.valid:
@@ -781,6 +919,18 @@ class IntegrationRuntime:
                     reason = self._revalidate_bedtime(source, target_room, now)
                     if reason:
                         return reason
+                elif scenario == "morning_light_on" and action["action"] in {"turn_on", "on"}:
+                    sample = self._latest_received_sample
+                    if (self._morning_interrupted_at is not None
+                            and self._morning_interrupted_at >= source["timestamp"]):
+                        return "morning_observation_interrupted"
+                    if (target_room != "room" or not self.controller.morning_water.matches_light_request(source)
+                            or sample is None or sample.location != "room" or not sample.activity_observed
+                            or not self.controller.morning_water.light_evidence_valid(sample, now)
+                            or sample.activity_confidence is None or sample.activity_confidence < engine.config.MIN_CONFIDENCE
+                            or sample.activity_valid_until is None or now >= sample.activity_valid_until
+                            or self.controller.bedtime_light._requested):
+                        return "morning_wake_no_longer_valid"
                 elif scenario == "light_auto_off" and action["action"] in {"turn_off", "off"}:
                     if engine._sensing.location == target_room:
                         return "user_returned_to_light_room"
@@ -865,6 +1015,13 @@ class IntegrationRuntime:
                         "decisionId": row["payload"]["decisionId"], "requested_at": row["source"]["timestamp"],
                         "previous_level": row["source"].get("previous_level"), "requested_level": requested_level,
                         "accepted_at": self.clock()})
+                    lock = self.outbox.get_metadata("away_restore_lock")
+                    before = row["source"].get("snapshot", {}).get("devices", {}).get("stove") or {}
+                    if (lock and row["source"]["timestamp"] > lock["at"] and before.get("is_on") is True
+                            and before.get("control_state") == "user"):
+                        # A new, user-started cooking session plus a new reduction,
+                        # not merely returning to the kitchen, may rearm restoration.
+                        self.outbox.set_metadata("away_restore_lock", None)
                 elif action["action"] in {"restore_power", "turn_off"}:
                     self.outbox.set_metadata("stove_reduction", None)
         partial = any(action["status"] != "sent" for action in response.body["actions"])
@@ -940,4 +1097,10 @@ class IntegrationRuntime:
         if (self.config.fall_status_path and incident and incident.get("fallIncidentId")
                 and self._fall_poll_future is None and now >= self._next_fall_poll):
             self._fall_poll_future = self._executor.submit(self.client.fetch_fall_status, incident["fallIncidentId"])
+        if self.voice is not None:
+            try:
+                self.voice.tick(now)
+            except Exception as exc:
+                # Optional voice processing must never stop safety evaluation.
+                self.diagnostic("voice_tick_failed", error=type(exc).__name__)
         return decision

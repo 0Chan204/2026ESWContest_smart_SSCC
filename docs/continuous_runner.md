@@ -48,17 +48,22 @@ Mock 모드는 MQTT·실가전·LLM API를 호출하지 않습니다. 가짜 센
 
 | 흐름 | 실제 연결 |
 | --- | --- |
-| 기본 센싱 수신 | MQTT `wifi/occupancy/state`: `time/location/location_confidence/reason` |
-| 백엔드 저장 센싱 선택 | GET `/api/v1/sensing/results?since=...&limit=5000` |
+| 기본 센싱 수신 | GET `/api/v1/sensing/results?since=...&limit=5000`, 기본 1초 주기 |
+| 기존 직접 센싱 선택 | `--sensing-source mqtt`: MQTT `wifi/occupancy/state` |
 | 기기 상태 | GET `/api/v1/ai/device-states`, 기본 2초 주기 |
 | 모든 기기 제어·안내 | POST `/api/v1/ai/decisions` |
 | 진행 중 낙상 | GET `/api/v1/fall-incidents/{fallIncidentId}` |
 
-Wi-Fi 저장소와 백엔드의 센싱 토픽은 현재 서로 다릅니다. 기본 실행은 실제 Wi-Fi 토픽을 직접 받습니다.
-`--sensing-source backend`는 `home/edge/result`로 저장된 결과를 읽습니다. 두 소스를 섞어 판단하지 않습니다.
+Wi-Fi 저장소와 백엔드의 센싱 토픽은 현재 서로 다릅니다. 2026-10-26부터 기본 실행은 백엔드 HTTP 조회입니다.
+Wi-Fi 담당자가 결과를 `home/edge/result`에 백엔드 형식으로 전달해야 데이터가 조회됩니다. 이 실행기가
+토픽/JSON 불일치를 자동으로 해결하거나 CSI 모델을 실행하는 것은 아닙니다. 두 소스를 섞어 판단하지 않습니다.
+기존 `.env`의 `HOMEVIS_SENSING_SOURCE=mqtt`는 설정을 덮어쓰므로 `backend`로 변경하거나 CLI로 명시하세요.
 백엔드 `docker compose --profile sim up -d`의 fusion simulator를 쓰면 이 backend 모드를 선택합니다.
 직접 MQTT로 백엔드 형식의 결과를 받으려면 `HOMEVIS_LOCATION_TOPIC=home/edge/result`를 설정합니다.
 그 형식의 `observedAt`, `validSec`, `activityConfidence`도 보존·검사합니다.
+학습 로그로 확인한 `activity=none/fall/lie_down/get_up`을 지원합니다. `none`은 외출이나 정지가 아니며,
+`get_up`은 조건 충족 시 아침 방 전등 이벤트로 사용합니다. 실제 생산자 JSON과 공통 측정 시각 전제는
+[행동 연동 안내](wifi_behavior.md)의 예시·제한을 확인하세요. AI에서 CSI 행동 모델을 학습/실행하지 않습니다.
 
 Wi-Fi 추론 서버가 노드 수집에 최대 2초를 기다리므로 실행기 정렬 여유는 기본 4초입니다.
 기존 직접 `IntegrationConfig()` 호출과 테스트의 기본 2초는 유지합니다. 시각을 현재 시각으로 덮어쓰지 않습니다.
@@ -96,6 +101,7 @@ MQTT retained 메시지는 신규 관측으로 쓰지 않으며 다음 실제 �
 | 인덕션 `reduce_power` | `stove_absence`, `set_level`로 현재보다 기본 1단계 낮춤. 이미 1단계면 보내지 않음 |
 | 인덕션 `restore_power` | `stove_absence`, `restore_power` |
 | 기상 출수 | `water_dispense`, 기존 판단 수량(기본 120mL), `weatherBriefing=true` |
+| 기상 방 전등 | 내부 `morning_light_on` → 기존 백엔드 `light_auto_on`, `light: on` |
 | 낙상 | `fall_detected`, `actions=[]`; 긴급 차단·깜빡임은 백엔드가 수행 |
 | 위험·낙상 음성 안내 | 제어 없는 별도 판단의 `announcement`; 대시보드가 표시·음성 재생 |
 
@@ -143,6 +149,9 @@ EXAONE 실패 시 기존 문구 fallback을 사용하며 Qwen을 자동 로딩�
 현재는 `auto_reported` 상태·대시보드 이벤트 기록까지이며 AI 실행기가 이를 실제 신고 완료로 표현하지 않습니다.
 
 ## 행동 데이터와 운영 상태
+
+화장실 눕기 후보와 기상 방 전등의 추가 정책, 정상 설명/오류 분리, Mock 전용 이벤트 계약은
+[Wi-Fi 행동 연동 안내](wifi_behavior.md)를 참고하세요. 후보만으로는 낙상 사건을 만들지 않습니다.
 
 현재 Wi-Fi 저장소는 위치만 발행합니다. 이 상태에서는 위치 기반 판단은 실행되지만
 기상 출수·취침·낙상에 필요한 실제 행동/움직임을 만들어내지 않습니다. `missing_inputs`를 확인하세요.

@@ -116,6 +116,7 @@ class CentralController:
             )
         self._collect_automation(decision)
         command = self.morning_water.update(sample, self.water_purifier_available)
+        self.scenario_actions.extend(self.morning_water.drain_light_actions())
         if command is not None:
             self.device_commands.append(command)
             self.routine_manager.record(

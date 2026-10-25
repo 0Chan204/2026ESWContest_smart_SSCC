@@ -36,6 +36,11 @@ def location_observation(payload: dict, received_at: float, config: IntegrationC
     reason = payload.get("reason")
     if reason is not None and not isinstance(reason, str):
         raise ContractError("reason must be a string or null")
+    explanation = payload.get("location_explanation")
+    if explanation is not None and not isinstance(explanation, str):
+        raise ContractError("location explanation must be a string or null")
+    if "valid" in payload and type(payload["valid"]) is not bool:
+        raise ContractError("location valid must be boolean")
     diagnostic = None
     location = "unknown"
     if raw_location in {"empty", "unknown"}:
@@ -50,17 +55,22 @@ def location_observation(payload: dict, received_at: float, config: IntegrationC
     # No enumerated reason allowlist: config_mismatch and detailed node errors survive.
     if reason:
         diagnostic = diagnostic or "sensing_reason_present"
+    if payload.get("valid") is False:
+        diagnostic = diagnostic or "location_marked_invalid"
+    if valid_until is not None and valid_until <= timestamp:
+        diagnostic = diagnostic or "invalid_location_validity"
     if valid_until is not None and received_at >= valid_until:
         diagnostic = diagnostic or "location_result_expired"
     valid = diagnostic is None
     sample = SensingUpdate(location, timestamp, confidence=confidence if confidence is not None else 0.0,
-                           detected=valid, observation_valid=valid, activity_observed=False)
+                           detected=valid, observation_valid=valid, activity_observed=False,
+                           location_reason=explanation, received_at=received_at)
     return LocationObservation(deepcopy(payload), timestamp, received_at, valid, diagnostic, sample, valid_until)
 
 
 @dataclass(frozen=True)
 class BehaviorObservation:
-    """Future separate measured behavior stream; this is not a Wi-Fi wire protocol."""
+    """Internal measured behavior stream; this is not a Wi-Fi wire protocol."""
     measured_at: float
     valid_until: float
     location: str
@@ -70,6 +80,10 @@ class BehaviorObservation:
     fall_detected: bool | None = None
     valid: bool = True
     reason: str | None = None
+    explanation: str | None = None
+    event: str | None = None
+    event_id: str | None = None
+    raw_activity: str | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "location", canonical_room(self.location))
@@ -80,9 +94,14 @@ class BehaviorObservation:
             raise ContractError("behavior validity must end after measurement")
         if type(self.valid) is not bool:
             raise ContractError("behavior.valid must be boolean")
+        for name in ("reason", "explanation", "event_id", "raw_activity", "activity"):
+            if getattr(self, name) is not None and not isinstance(getattr(self, name), str):
+                raise ContractError(f"behavior.{name} must be a string or null")
+        if self.event is not None and (not isinstance(self.event_id, str) or not self.event_id.strip()):
+            raise ContractError("behavior events require a stable event ID")
         # Reuse the existing model's location, motion and fall validation.
         SensingUpdate(self.location, self.measured_at, motion_state=self.motion_state,
-                      fall_detected=self.fall_detected)
+                      fall_detected=self.fall_detected, activity_event=self.event)
 
 
 def join_behavior(location: LocationObservation, behavior: BehaviorObservation | None,
@@ -92,9 +111,12 @@ def join_behavior(location: LocationObservation, behavior: BehaviorObservation |
             or not behavior.measured_at <= location.measured_at < behavior.valid_until
             or location.measured_at - behavior.measured_at > max_skew
             or behavior.confidence is None
-            or all(v is None for v in (behavior.activity, behavior.motion_state, behavior.fall_detected))):
+            or (behavior.raw_activity != "none" and all(v is None for v in (
+                behavior.activity, behavior.motion_state, behavior.fall_detected, behavior.event)))):
         return location.sample
     return replace(location.sample, activity=behavior.activity or "unknown",
                    motion_state=behavior.motion_state, fall_detected=behavior.fall_detected,
-                   activity_confidence=behavior.confidence, activity_observed=True,
-                   activity_timestamp=behavior.measured_at, activity_valid_until=behavior.valid_until)
+                   activity_confidence=behavior.confidence, activity_observed=location.received_at < behavior.valid_until,
+                   activity_timestamp=behavior.measured_at, activity_valid_until=behavior.valid_until,
+                   activity_event=behavior.event, activity_event_id=behavior.event_id,
+                   activity_reason=behavior.explanation, raw_activity=behavior.raw_activity or behavior.activity)

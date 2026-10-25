@@ -67,11 +67,12 @@ def decision_payload(payload: dict, *, allow_null_confidence=True) -> dict:
     if not isinstance(payload, dict):
         raise ContractError("decision must be an object")
     data = deepcopy(payload)
-    for field in ("decisionId", "scenario", "reason", "timestamp", "room"):
+    away = data.get("scenario") == "away_all_off"
+    for field in ("decisionId", "scenario", "reason", "timestamp") + (() if away else ("room",)):
         if not isinstance(data.get(field), str) or not data[field]:
             raise ContractError(f"missing decision field:{field}")
     measured_time(data["timestamp"])
-    if data["room"] not in ROOMS:
+    if (not away or data.get("room") is not None) and data.get("room") not in ROOMS:
         raise ContractError("decision room must be room, kitchen or toilet")
     if "confidence" not in data:
         raise ContractError("missing decision confidence")
@@ -80,7 +81,14 @@ def decision_payload(payload: dict, *, allow_null_confidence=True) -> dict:
         raise ContractError("weatherBriefing must be boolean")
     if not isinstance(data.get("actions"), list):
         raise ContractError("decision requires actions[]")
-    if not data["actions"] and data["scenario"] not in {"fall_detected", "power_saving", "power_saving_end"} and not data.get("announcement"):
+    if away and data["actions"]:
+        raise ContractError("away_all_off requires empty actions")
+    if data.get("scenario") == "cooking_air_clean" and (
+            len(data["actions"]) != 1 or not isinstance(data["actions"][0], dict)
+            or data["actions"][0].get("device") != "air_purifier"
+            or data["actions"][0].get("action") not in {"on", "off"}):
+        raise ContractError("cooking_air_clean requires one purifier on/off")
+    if not data["actions"] and data["scenario"] not in {"fall_detected", "power_saving", "power_saving_end", "away_all_off"} and not data.get("announcement"):
         raise ContractError("empty actions requires a backend-managed scenario or announcement")
     if data.get("announcement") is not None and (not isinstance(data["announcement"], str)
                                                   or not 0 < len(data["announcement"]) <= 500):
@@ -98,7 +106,7 @@ def decision_payload(payload: dict, *, allow_null_confidence=True) -> dict:
                 raise ContractError("dispense requires a positive integer amountMl")
         if action["action"] == "set_level" and (type(action.get("level")) is not int or not 1 <= action["level"] <= 9):
             raise ContractError("set_level requires level 1..9")
-        if action["device"] not in DEVICES:
+        if action["device"] not in DEVICES and not (data["scenario"] == "cooking_air_clean" and action["device"] == "air_purifier"):
             raise ContractError("unsupported decision device")
     return data
 
@@ -146,6 +154,22 @@ def decision_response(status: int, payload: dict, request: dict) -> dict:
         actual = [pair for pair in actual if pair not in builtins]
         if not isinstance(data.get("fallIncidentId"), str) or not data["fallIncidentId"]:
             raise ContractError("fall response requires fallIncidentId")
+    if request["scenario"] == "away_all_off":
+        permitted = {("stove", "turn_off"), ("light", "off"), ("fan", "off"), ("air_purifier", "off")}
+        ids = []
+        for action in actions:
+            if (action["device"], action["action"]) not in permitted or not isinstance(action.get("deviceId"), str) or not action["deviceId"]:
+                raise ContractError("invalid away_all_off response action")
+            ids.append(action["deviceId"])
+        if len(ids) != len(set(ids)):
+            raise ContractError("duplicate away_all_off device")
+        return data
     if sorted(actual) != expected:
         raise ContractError("response action identity mismatch")
+    if request["scenario"] == "cooking_air_clean":
+        for action in actions:
+            if (action.get("deviceId") not in {None, request["actions"][0].get("deviceId")}
+                    or action["status"] == "sent" and (action.get("deviceId") is None
+                        or not isinstance(action.get("commandId"), str) or not action["commandId"])):
+                raise ContractError("purifier response requires matching device and command provenance")
     return data

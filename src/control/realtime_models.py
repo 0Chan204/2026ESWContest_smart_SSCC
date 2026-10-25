@@ -37,6 +37,13 @@ class SensingUpdate:
     activity_observed: bool | None = None
     activity_valid_until: float | None = None
     activity_timestamp: float | None = None
+    # Internal semantics, NOT agreed Wi-Fi wire labels. Events never imply posture.
+    activity_event: str | None = None
+    activity_event_id: str | None = None
+    location_reason: str | None = None
+    activity_reason: str | None = None
+    raw_activity: str | None = None
+    received_at: float | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "location", canonical_room(self.location))
@@ -50,6 +57,13 @@ class SensingUpdate:
         for name in ("activity_valid_until", "activity_timestamp"):
             if getattr(self, name) is not None:
                 finite(name, getattr(self, name))
+        if self.received_at is not None:
+            finite("received_at", self.received_at)
+        if self.activity_event not in {None, "fall", "wake", "lie_down"}:
+            raise ValueError("Unsupported internal behavior event")
+        for name in ("activity_event_id", "location_reason", "activity_reason", "raw_activity"):
+            if getattr(self, name) is not None and not isinstance(getattr(self, name), str):
+                raise ValueError(f"{name} must be a string or None")
         if not 0 <= self.confidence <= 1:
             raise ValueError("confidence must be between 0 and 1")
         if self.activity_confidence is not None:

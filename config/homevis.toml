@@ -11,6 +11,9 @@ allowed_lateness = 4.0
 evaluation_audit_interval = 1.0
 device_max_age = 20.0
 temperature_is_celsius = true
+# Current firmware repeats the last temperature when its sensor fails.
+# Do NOT enable live ignition/restore until the team fixes validity propagation.
+stove_temperature_validity_verified = false
 water_readiness_mode = "backend_idle"
 backend_restore = true
 backend_v05 = true
@@ -26,6 +29,28 @@ multi_room_lights = true
 # Verified against HomeVIS-Backend develop 3a23128, docs/AI-INTEGRATION.md v0.5.
 backend_fall_scenario = "fall_detected"
 fall_status_path = "/api/v1/fall-incidents/{incident_id}"
+# Synthetic event labels are NEVER enabled in live mode.
+mock_behavior_contract = false
+
+[scenarios]
+toilet_lying_suspicion_enabled = true
+toilet_lying_min_location_confidence = 0.8
+toilet_lying_min_activity_confidence = 0.8
+# Fresh, distinct stillness measurements must span this interval; silence does not count.
+fall_confirm_seconds = 5.0
+morning_light_enabled = true
+wake_event_min_activity_confidence = 0.9
+
+[home_automation]
+air_purifier_enabled = true
+cooking_air_clean_enabled = true
+air_purifier_off_on_good_or_normal = true
+air_purifier_clean_hold_seconds = 30.0
+away_all_off_enabled = true
+away_confirm_seconds = 600.0
+away_min_confidence = 0.8
+# Do NOT enable until the producer confirms whole-home coverage and absence semantics.
+whole_home_presence_verified = false
 
 [mqtt]
 host = "localhost"
@@ -45,9 +70,26 @@ join_wait_seconds = 0.25
 tick_interval = 0.1
 status_interval = 5.0
 audit_retention_days = 7
-# Or "backend": GET /api/v1/sensing/results (home/edge/result stored by backend).
-sensing_source = "mqtt"
+# GET /api/v1/sensing/results (home/edge/result stored by backend).
+# Legacy direct occupancy subscription remains available via --sensing-source mqtt.
+sensing_source = "backend"
 sensing_poll_interval = 1.0
+
+[voice]
+# Opt-in backend v0.7 STT input; all voice replies go to announcement, never local TTS.
+enabled = false
+topic = "home/voice/request"
+queue_size = 16
+llm_timeout = 5.0
+http_timeout = 1.5
+send_margin = 2.0
+recovery_interval = 5.0
+status_interval = 2.0
+min_stt_confidence = 0.6
+min_intent_confidence = 0.8
+history_seconds = 1800.0
+# Single resident identity, NOT voice authentication. Must match the controller/history owner.
+user_id = "default"
 
 [actions.light_auto_on]
 scenario = "light_auto_on"
@@ -68,6 +110,14 @@ scenario = "bedtime_light_off"
 device = "light"
 internal_action = "turn_off"
 action = "off"
+room = "room"
+
+[actions.morning_light_on]
+# Reuse the existing backend light scenario; only the internal evidence differs.
+scenario = "light_auto_on"
+device = "light"
+internal_action = "turn_on"
+action = "on"
 room = "room"
 
 [actions.kitchen_leave_reduce_power]

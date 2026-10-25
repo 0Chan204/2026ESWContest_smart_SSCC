@@ -6,6 +6,7 @@ from queue import Empty, Full, Queue
 import time
 
 from .schemas import ContractError, measured_time
+from .behavior_labels import BEHAVIOR_LABELS, OBSERVED_STATES, observation_id
 from .sensing import BehaviorObservation
 from .settings import MQTTSettings
 
@@ -22,7 +23,14 @@ class Incoming:
     retained: bool = False
 
 
-def parse_behavior(payload):
+@dataclass(frozen=True)
+class SensingFault:
+    """Internal transport failure, never a fabricated sensor/MQTT observation."""
+    received_at: float
+    reason: str
+
+
+def parse_behavior(payload, *, allow_mock_events=False):
     if not isinstance(payload, dict):
         raise ContractError("behavior must be an object")
     for key in ("activity", "motion_state", "location", "reason"):
@@ -30,24 +38,48 @@ def parse_behavior(payload):
             raise ContractError(f"behavior {key} must be a string")
     if not isinstance(payload.get("location"), str):
         raise ContractError("behavior location is required")
+    if payload.get("event") is not None and not allow_mock_events:
+        raise ContractError("behavior event wire contract is not verified")
+    reason = payload.get("reason")
+    activity = payload.get("activity")
+    measured_at = measured_time(payload.get("time"))
+    event, event_id = payload.get("event"), payload.get("event_id")
+    raw_activity = payload.get("raw_activity")
+    if activity in BEHAVIOR_LABELS:
+        if event is not None:
+            raise ContractError("classifier label cannot also supply an internal event")
+        from src.control.identifiers import canonical_room
+        event = BEHAVIOR_LABELS[activity]
+        event_id = observation_id(canonical_room(payload["location"]), measured_at)
+        raw_activity, activity = activity, None
+    elif activity is not None and activity not in OBSERVED_STATES:
+        reason = reason or "unverified_activity_label"
     return BehaviorObservation(
-        measured_at=measured_time(payload.get("time")),
+        measured_at=measured_at,
         valid_until=measured_time(payload.get("valid_until")),
         location=payload["location"], confidence=payload.get("confidence"),
-        activity=payload.get("activity"), motion_state=payload.get("motion_state"),
+        activity=activity, motion_state=payload.get("motion_state"),
         fall_detected=payload.get("fall_detected"), valid=payload.get("valid", True),
-        reason=payload.get("reason"))
+        reason=reason, explanation=payload.get("explanation"),
+        event=event, event_id=event_id, raw_activity=raw_activity)
 
 
 class MQTTSource:
-    def __init__(self, settings: MQTTSettings, *, clock=time.time, client=None):
+    def __init__(self, settings: MQTTSettings, *, clock=time.time, client=None, voice_only=False):
         self.settings, self.clock = settings, clock
+        self.voice_only = voice_only
+        self.topics = ((settings.voice_topic,) if voice_only else tuple(x for x in (
+            settings.location_topic, settings.behavior_topic, settings.fall_status_topic, settings.voice_topic) if x))
+        if not all(self.topics):
+            raise ValueError("voice-only MQTT requires an enabled voice topic")
+        self.connection_generation = 0
         if client is None:
             try:
                 import paho.mqtt.client as mqtt
             except ImportError as exc:
                 raise RuntimeError("MQTT needs: python -m pip install -r requirements-runtime.txt") from exc
-            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=settings.client_id)
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=settings.client_id,
+                                 protocol=mqtt.MQTTv311, clean_session=not bool(settings.voice_topic))
         self.client = client
         self.inbox = Queue(maxsize=settings.queue_size)
         self.connected = False
@@ -75,9 +107,8 @@ class MQTTSource:
         self.subscribed = False
         self.error = None if self.connected else "mqtt_connection_rejected"
         if self.connected:
-            topics = [x for x in (self.settings.location_topic, self.settings.behavior_topic,
-                                  self.settings.fall_status_topic) if x]
-            result, _ = client.subscribe([(topic, 1) for topic in topics])
+            self.connection_generation += 1
+            result, _ = client.subscribe([(topic, 1) for topic in self.topics])
             if result != 0:
                 self.connected = False
                 self.error = "mqtt_subscribe_failed"
@@ -97,7 +128,9 @@ class MQTTSource:
         self.error = "mqtt_connection_failed"
 
     def _message(self, client, userdata, message):
-        if len(message.payload) > self.settings.max_payload_bytes:
+        # A persistent broker session may retain old subscriptions after switching
+        # sensing to HTTP. Never feed those MQTT observations into the core twice.
+        if message.topic not in self.topics or len(message.payload) > self.settings.max_payload_bytes:
             self.rejected += 1
             return
         try:
@@ -116,6 +149,7 @@ class MQTTSource:
 
     def health(self):
         return {"connected": self.connected, "subscribed": self.subscribed, "received": self.received, "dropped": self.dropped,
+                "connection_generation": self.connection_generation,
                 "rejected": self.rejected, "queued": self.inbox.qsize(), "error": self.error,
                 "last_received_at": self.last_received_at}
 
@@ -132,6 +166,16 @@ class InputRouter:
         self.pending = deque()
 
     def accept(self, message: Incoming):
+        if isinstance(message, SensingFault):
+            # A later transport failure must not erase an explicit fall already
+            # validated into the join buffer. Normal automation evidence is dropped.
+            for pending_message, payload, behavior in self.pending:
+                if behavior is not None and (behavior.event == "fall" or behavior.fall_detected is True):
+                    self.runtime.ingest_location(payload, received_at=pending_message.received_at, behavior=behavior)
+            self.pending.clear()
+            self.behaviors.clear()
+            self.runtime.invalidate_sensing(message.received_at, message.reason)
+            return
         try:
             if len(message.payload) > self.settings.max_payload_bytes:
                 raise ContractError("input payload too large")
@@ -140,21 +184,23 @@ class InputRouter:
             payload = json.loads(message.payload.decode("utf-8"), parse_constant=_reject_nonfinite)
             if not isinstance(payload, dict):
                 raise ContractError("input must be a JSON object")
-            if message.topic == self.settings.location_topic:
+            if self.settings.voice_topic and message.topic == self.settings.voice_topic:
+                self.runtime.receive_voice_request(payload, received_at=message.received_at)
+            elif message.topic == self.settings.location_topic:
                 if "observedAt" in payload:
                     from .backend_sensing import normalize_result
-                    payload = normalize_result(payload)
+                    payload = normalize_result(payload, allow_mock_events=self.runtime.config.mock_behavior_contract)
                 if len(self.pending) >= self.settings.queue_size:
                     raise ContractError("location join buffer full")
                 # Validate now so malformed input invalidates the current sensing cache.
                 from .sensing import location_observation
                 location_observation(payload, message.received_at, self.runtime.config)
-                behavior = parse_behavior(payload["behavior"]) if "behavior" in payload else None
+                behavior = parse_behavior(payload["behavior"], allow_mock_events=self.runtime.config.mock_behavior_contract) if "behavior" in payload else None
                 if behavior is not None and behavior.measured_at > message.received_at:
                     raise ContractError("future behavior measurement")
                 self.pending.append((message, payload, behavior))
             elif self.settings.behavior_topic and message.topic == self.settings.behavior_topic:
-                behavior = parse_behavior(payload)
+                behavior = parse_behavior(payload, allow_mock_events=self.runtime.config.mock_behavior_contract)
                 if behavior.measured_at > message.received_at:
                     raise ContractError("future behavior measurement")
                 # Conflicting same-time behavior invalidates that measurement.
@@ -172,8 +218,9 @@ class InputRouter:
                 raise ContractError("unconfigured input topic")
         except (ValueError, TypeError, KeyError, UnicodeError) as exc:
             if message.topic == self.settings.location_topic:
-                self.runtime.controller.realtime_engine.sensing_invalid = True
-                self.runtime._interrupt_bedtime(message.received_at)
+                self.accept(SensingFault(message.received_at, "sensing_input_rejected"))
+            elif self.settings.behavior_topic and message.topic == self.settings.behavior_topic:
+                self.runtime.interrupt_behavior(message.received_at)
             self.runtime.diagnostic("input_rejected", error=type(exc).__name__)
 
     def flush(self, now):
@@ -189,3 +236,30 @@ class InputRouter:
                     behavior = max(enumerate(candidates), key=lambda x: (x[1].measured_at, x[0]))[1]
             self.runtime.ingest_location(payload, received_at=message.received_at, behavior=behavior)
         self.behaviors = deque((b for b in self.behaviors if now - b.valid_until < 30), maxlen=1000)
+
+
+class CombinedSource:
+    """HTTP sensing plus the one voice MQTT connection; both retain bounded queues."""
+    def __init__(self, sensing, voice):
+        self.sensing, self.voice = sensing, voice
+
+    @property
+    def connection_generation(self):
+        return self.voice.connection_generation
+
+    def start(self):
+        self.sensing.start()
+        self.voice.start()
+
+    def drain(self, limit=200):
+        yield from self.voice.drain(min(limit, 20))
+        yield from self.sensing.drain()
+
+    def health(self):
+        return {"sensing": self.sensing.health(), "voice": self.voice.health()}
+
+    def close(self):
+        try:
+            self.voice.close()
+        finally:
+            self.sensing.close()

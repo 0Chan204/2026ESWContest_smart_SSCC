@@ -114,6 +114,8 @@ class BathroomFallDecision:
     sensor_uncertain: bool = False
     long_unresponsive: bool = False
     incident_id: str | None = None
+    candidate_only: bool = False
+    evidence: dict[str, Any] | None = None
 
     def to_risk_decision(self) -> RiskDecision:
         return RiskDecision(

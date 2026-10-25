@@ -43,7 +43,9 @@ def main(argv=None):
         parser.error(f"configuration error ({type(exc).__name__}); check TOML/.env and requirements-runtime.txt")
     config = settings.integration
     if args.check_config:
-        print(f"configuration valid; mode={config.mode}; source={settings.sensing_source}; contract=backend-v0.5")
+        print(f"configuration valid; mode={config.mode}; source={settings.sensing_source}; contract=backend-v0.7; "
+              f"voice={'backend-v0.7' if settings.voice.enabled else 'disabled'}; "
+              f"stove_temperature_validity_verified={config.stove_temperature_validity_verified}")
         return 0
     if args.healthcheck:
         try:
@@ -64,6 +66,9 @@ def main(argv=None):
             elif settings.sensing_source == "backend":
                 from .backend_sensing import BackendSensingSource
                 source = BackendSensingSource(settings, client)
+                if settings.voice.enabled:
+                    from .mqtt_source import CombinedSource
+                    source = CombinedSource(source, MQTTSource(settings.mqtt, voice_only=True))
             else:
                 source = MQTTSource(settings.mqtt)
             alert_service = None
@@ -72,7 +77,7 @@ def main(argv=None):
                 from src.llm.message_generator import LLMMessageGenerator
                 from src.voice.tts import DryRunTTS
                 alert_service = AlertService(LLMMessageGenerator(), DryRunTTS(), config.outbox_path.parent / "fall_alerts")
-            runtime = IntegrationRuntime(config, client, fall_alert_service=alert_service)
+            runtime = IntegrationRuntime(config, client, fall_alert_service=alert_service, voice_config=settings.voice)
             print(f"HomeVIS {config.mode}: continuous runner started; stop with Ctrl+C; status={config.outbox_path.parent / 'status.json'}", flush=True)
             ContinuousHost(settings, runtime, source).run(stop, args.duration)
     except KeyboardInterrupt:

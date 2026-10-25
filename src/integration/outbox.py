@@ -32,6 +32,9 @@ class Outbox:
             );
             CREATE INDEX IF NOT EXISTS decisions_status ON decisions(status);
             CREATE INDEX IF NOT EXISTS audit_time ON audit(at);
+            CREATE TABLE IF NOT EXISTS behavior_events (
+                event_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, observed_at REAL NOT NULL
+            );
         """)
         current = self.db.execute("SELECT value FROM metadata WHERE key='mode'").fetchone()
         if current and current[0] != mode:
@@ -108,6 +111,15 @@ class Outbox:
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO metadata VALUES ('water_reservation', ?)",
                             (encode({"date": str(local_date), "count": count}),))
+
+    def claim_behavior_event(self, event_id, fingerprint, observed_at):
+        """Durable deduplication; changed contents cannot reuse an event identity."""
+        row = self.db.execute("SELECT fingerprint FROM behavior_events WHERE event_id=?", (event_id,)).fetchone()
+        if row is not None:
+            return "duplicate" if row[0] == fingerprint else "conflict"
+        with self.db:
+            self.db.execute("INSERT INTO behavior_events VALUES (?,?,?)", (event_id, fingerprint, observed_at))
+        return "new"
 
     def water_reservation(self):
         row = self.db.execute("SELECT value FROM metadata WHERE key='water_reservation'").fetchone()

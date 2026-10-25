@@ -9,7 +9,7 @@ from statistics import median
 from src.control.realtime_config import RealtimeConfig
 from src.control.realtime_models import SensingUpdate
 from src.control.scenario_config import ScenarioConfig
-from src.control.scenario_models import DeviceCommand, MorningWaterState as State
+from src.control.scenario_models import DeviceCommand, MorningWaterState as State, ScenarioAction
 
 
 class MorningWaterScenario:
@@ -38,6 +38,11 @@ class MorningWaterScenario:
         self._kitchen_since: float | None = None
         self._event_eligible: bool | None = None
         self._wake_records: list[tuple[date, float]] = []
+        self._wake_event_until = None
+        self._wake_from_event = False
+        self._light_date = None
+        self._light_request = None
+        self._light_actions = []
         self._load_history()
 
     @property
@@ -131,6 +136,8 @@ class MorningWaterScenario:
         self.state = State.IDLE
         self._wake_candidate = self._wake_time = self._kitchen_since = None
         self._event_eligible = None
+        self._wake_event_until = None
+        self._wake_from_event = False
 
     def tick(self, timestamp: float) -> None:
         local = self._local_datetime(timestamp)
@@ -142,10 +149,12 @@ class MorningWaterScenario:
                 and timestamp - self._wake_time >= self.config.WAKE_TO_KITCHEN_TIMEOUT_SECONDS):
             self._reset_event()
         if self._last is not None and timestamp - self._last >= self.sensing_config.UNKNOWN_TIMEOUT:
+            self._light_request = None
             self._wake_candidate = self._kitchen_since = None
             if self._wake_time is None:
                 self.state = State.IDLE
         if self._behavior_valid_until is not None and timestamp >= self._behavior_valid_until:
+            self._light_request = None
             self._wake_candidate = self._kitchen_since = None
             if self._wake_time is None:
                 self.state = State.IDLE
@@ -160,6 +169,8 @@ class MorningWaterScenario:
         self.tick(sample.timestamp)
         self._last = sample.timestamp
         c = self.config
+        if not self.light_evidence_valid(sample, sample.timestamp):
+            self._light_request = None
         if (sample.observation_valid is False or sample.activity_observed is False
                 or (sample.activity_valid_until is not None and sample.timestamp >= sample.activity_valid_until)
                 or (sample.activity_confidence is not None
@@ -172,17 +183,40 @@ class MorningWaterScenario:
             if self._wake_time is None:
                 self.state = State.IDLE
             return None
+        if self._wake_from_event and (sample.activity_event in {"fall", "lie_down"}
+                                     or sample.activity == "lying" or sample.fall_detected is True):
+            self._reset_event()
+            return None
+        if sample.activity_event == "wake" and sample.location == "room":
+            # The confirmed classifier has no standing/lying state. A high-confidence
+            # get_up is a wake event in its own right, not invented standing for 5s.
+            if (sample.raw_activity == "get_up" and sample.activity_confidence is not None
+                    and sample.activity_confidence >= c.WAKE_EVENT_MIN_ACTIVITY_CONFIDENCE
+                    and sample.activity_observed is True and sample.activity_event_id is not None
+                    and sample.activity_valid_until is not None and sample.fall_detected is not True):
+                if self._wake_time is None:
+                    self._wake_time = observed_at
+                    self._wake_from_event = True
+                    self.state = State.WAKE_UP_DETECTED
+                    self._request_morning_light(sample)
+                return None
+            # Keep the legacy mock-event candidate path; subsequent posture must qualify it.
+            self._wake_event_until = sample.activity_valid_until
+            self._wake_candidate = None
+            return None
         if self._wake_time is None:
             if sample.location == "room" and sample.activity == "lying":
                 self.state = State.SLEEPING
                 self._wake_candidate = None
-            elif (self.state == State.SLEEPING and sample.location == "room"
+            elif ((self.state == State.SLEEPING or (self._wake_event_until is not None
+                                                   and observed_at < self._wake_event_until)) and sample.location == "room"
                   and sample.activity in {"sitting", "standing", "walking"}):
                 if self._wake_candidate is None:
                     self._wake_candidate = observed_at
                 if observed_at - self._wake_candidate >= c.WAKE_CONFIRM_SECONDS:
                     self._wake_time = observed_at
                     self.state = State.WAKE_UP_DETECTED
+                    self._request_morning_light(sample)
             else:
                 self._reset_event()
             return None
@@ -212,3 +246,50 @@ class MorningWaterScenario:
         self._wake_time = self._kitchen_since = None
         self._event_eligible = None
         return DeviceCommand(sample.timestamp, c.MORNING_WATER_AMOUNT_ML)
+
+    def _request_morning_light(self, sample):
+        local_date = self._local_datetime(sample.timestamp).date()
+        if (not self.config.MORNING_LIGHT_ENABLED or self._light_date == local_date
+                or not self._in_dispense_window(sample.timestamp)):
+            return
+        self._light_date = local_date
+        self._light_request = ScenarioAction(
+            timestamp=sample.timestamp, scenario="morning_light_on", event="morning_wake_confirmed",
+            action="turn_on", target="light", room="room",
+            reason="Confirmed morning wake-up in room; turn on room light",
+            details={"wake_confirm_seconds": None if self._wake_from_event else self.config.WAKE_CONFIRM_SECONDS,
+                     "basis": "get_up_event" if self._wake_from_event else "observed_posture_transition",
+                     "wake_valid_until": sample.activity_valid_until,
+                     "activity_event_id": sample.activity_event_id, "raw_activity": sample.raw_activity,
+                     "wake_event_min_activity_confidence": self.config.WAKE_EVENT_MIN_ACTIVITY_CONFIDENCE,
+                     "wake_time": self._wake_time, "local_date": str(local_date),
+                     "activity": sample.activity, "activity_confidence": sample.activity_confidence,
+                     "location_confidence": sample.confidence,
+                     "location_reason": sample.location_reason, "activity_reason": sample.activity_reason})
+        self._light_actions.append(self._light_request)
+
+    def light_evidence_valid(self, sample, timestamp):
+        """Revalidate an existing request; none never renews the wake-event expiry."""
+        if (sample is None or sample.location != "room" or sample.activity_observed is False
+                or sample.observation_valid is False or not sample.detected
+                or sample.confidence < self.sensing_config.MIN_CONFIDENCE
+                or sample.activity_confidence is not None and sample.activity_confidence < self.sensing_config.MIN_CONFIDENCE
+                or sample.activity_valid_until is not None and timestamp >= sample.activity_valid_until):
+            return False
+        if self._light_request is not None and self._light_request.details.get("basis") == "get_up_event":
+            expiry = self._light_request.details["wake_valid_until"]
+            return (expiry is not None and timestamp < expiry
+                    and sample.activity_event not in {"fall", "lie_down"}
+                    and sample.fall_detected is not True
+                    and (sample.raw_activity in {"none", "get_up"}
+                         or sample.activity in {"sitting", "standing", "walking"}))
+        return sample.activity in {"sitting", "standing", "walking"}
+
+    def drain_light_actions(self):
+        actions = self._light_actions[:]
+        self._light_actions.clear()
+        return actions
+
+    def matches_light_request(self, source):
+        return self._light_request is not None and all(
+            source.get(key) == value for key, value in self._light_request.to_dict().items())
