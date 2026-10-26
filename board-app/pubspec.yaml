@@ -1,0 +1,44 @@
+name: homevis_gui
+description: "HomeVIS dashboard"
+publish_to: 'none'
+version: 5.0.0+1
+
+# 보드(LG ATLAS OS)의 Flutter 엔진이 3.27.4 로 고정돼 있어 같은 버전만 쓴다.
+environment:
+  sdk: ^3.6.0
+  flutter: ">=3.27.4 <3.28.0"
+
+# 보드에는 ATLAS 용 네이티브 구현이 없으므로 순수 Dart 패키지만 쓴다.
+dependencies:
+  flutter:
+    sdk: flutter
+  http: 1.6.0
+  web_socket_channel: 3.0.3
+  provider: 6.1.5+1
+  lucide_icons: 0.257.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: 5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # 한글 글꼴은 앱에 넣는다 (보드에 한글 글꼴이 있다고 가정하지 않음, 실행 중 내려받지 않음).
+  # Pretendard (SIL OFL 1.1, assets/fonts/OFL.txt)
+  fonts:
+    - family: Pretendard
+      fonts:
+        - asset: assets/fonts/Pretendard-ExtraLight.otf
+          weight: 200
+        - asset: assets/fonts/Pretendard-Light.otf
+          weight: 300
+        - asset: assets/fonts/Pretendard-Regular.otf
+          weight: 400
+        - asset: assets/fonts/Pretendard-Medium.otf
+          weight: 500
+        - asset: assets/fonts/Pretendard-SemiBold.otf
+          weight: 600
+        - asset: assets/fonts/Pretendard-Bold.otf
+          weight: 700
