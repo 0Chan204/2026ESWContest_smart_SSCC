@@ -22,6 +22,8 @@ interface PreferencesValue {
   fontScale: number
   language: Language
   voiceEnabled: boolean
+  /** 호출어 "홈비스"로 부르기 — 켜면 마이크가 계속 켜져 있다. 기본 꺼짐 */
+  wakeWordEnabled: boolean
   /** 위험 알림을 소리 내어 읽어줄지 (기기 내장 음성만 사용) */
   ttsEnabled: boolean
   /** 사용자가 고른 테마 (기본: 다크 — 플랫폼 샘플과 같은 어두운 대시보드) */
@@ -35,6 +37,7 @@ interface PreferencesValue {
   setFontScale: (scale: number) => void
   setLanguage: (language: Language) => void
   setVoiceEnabled: (enabled: boolean) => void
+  setWakeWordEnabled: (enabled: boolean) => void
   setTtsEnabled: (enabled: boolean) => void
   setTheme: (theme: Theme) => void
   /** 권한 동의 창 응답. 허용하면 마이크(음성 명령)·음성 안내를 켠다 */
@@ -62,6 +65,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   )
   // 음성 인식은 개인정보 관점에서 기본 꺼짐. 사용자가 명시적으로 켜야 한다.
   const [voiceEnabled, setVoiceEnabledState] = useState(() => readBool('voice', false))
+  // 호출어 대기는 마이크를 계속 켜 두므로 동의 창에서 '허용'을 눌러도 켜지 않는다. 설정에서 직접 켠다.
+  const [wakeWordEnabled, setWakeWordEnabledState] = useState(() => readBool('wakeword', false))
   const [ttsEnabled, setTtsEnabledState] = useState(() => readBool('tts', true))
   const [theme, setThemeState] = useState<Theme>(() => readEnum<Theme>('theme', THEMES, 'light'))
   const [consentAnswered, setConsentAnswered] = useState(() => readBool('consent_answered', false))
@@ -115,6 +120,11 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     write('voice', next)
   }, [])
 
+  const setWakeWordEnabled = useCallback((next: boolean) => {
+    setWakeWordEnabledState(next)
+    write('wakeword', next)
+  }, [])
+
   const setTtsEnabled = useCallback((next: boolean) => {
     setTtsEnabledState(next)
     write('tts', next)
@@ -143,6 +153,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       fontScale,
       language,
       voiceEnabled,
+      wakeWordEnabled,
       ttsEnabled,
       theme,
       resolvedTheme,
@@ -152,12 +163,13 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setFontScale,
       setLanguage,
       setVoiceEnabled,
+      setWakeWordEnabled,
       setTtsEnabled,
       setTheme,
       answerConsent,
     }),
-    [mode, fontScale, language, voiceEnabled, ttsEnabled, theme, resolvedTheme, consentAnswered, t,
-      setMode, setFontScale, setLanguage, setVoiceEnabled, setTtsEnabled, setTheme, answerConsent],
+    [mode, fontScale, language, voiceEnabled, wakeWordEnabled, ttsEnabled, theme, resolvedTheme, consentAnswered, t,
+      setMode, setFontScale, setLanguage, setVoiceEnabled, setWakeWordEnabled, setTtsEnabled, setTheme, answerConsent],
   )
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>

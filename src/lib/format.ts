@@ -66,3 +66,11 @@ export function formatClock(d: Date): string {
 export function toDateInput(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
+
+/** Date → 시간대가 붙은 ISO (예: 2026-10-24T21:00:00+09:00). 백엔드 음성 명령 recognizedAt 용 */
+export function isoWithOffset(d = new Date()): string {
+  const off = -d.getTimezoneOffset()
+  const a = Math.abs(off)
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+    + `${off >= 0 ? '+' : '-'}${p(Math.floor(a / 60))}:${p(a % 60)}`
+}

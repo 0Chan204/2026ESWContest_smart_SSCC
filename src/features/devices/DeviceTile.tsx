@@ -6,7 +6,7 @@ import type { Device } from '@/types'
 
 /**
  * 기기 타일. 홈 앱처럼
- *  - 조명·환풍기: 타일을 누르면 켜고 끈다, 오른쪽 아래 … 로 상세
+ *  - 조명·환풍기·공기청정기: 타일을 누르면 켜고 끈다, 오른쪽 아래 … 로 상세
  *  - 인덕션·정수기: 조회 전용 — 누르면 상세
  *  - 연결 끊김: 누르면 상세(다시 연결)
  */
@@ -24,9 +24,9 @@ export function DeviceTile({ device: d, onOpen, wide = false, big = false, class
   if (!d.online) {
     return <Tile icon={Icon} name={d.name} state="응답 없음" tone="muted" onPress={onOpen} wide={wide} big={big} className={className} />
   }
-  if (d.kind === 'fan' || d.kind === 'light') {
+  if (d.kind === 'fan' || d.kind === 'light' || d.kind === 'air') {
     return (
-      <Tile icon={Icon} glyph={glyph} name={d.name} state={d.on ? s.status : '꺼짐'} on={d.on} wide={wide} big={big} className={className}
+      <Tile icon={Icon} glyph={glyph} name={d.name} state={d.on || d.kind === 'air' ? s.status : '꺼짐'} on={d.on} wide={wide} big={big} className={className}
         onPress={() => void controlDevice(d.id, { on: !d.on })} onMore={onOpen} moreLabel={`${d.name} 설정`} />
     )
   }

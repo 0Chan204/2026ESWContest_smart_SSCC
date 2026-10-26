@@ -12,8 +12,7 @@ import { useHome } from '@/store/HomeStore'
 import { usePreferences } from '@/store/PreferencesContext'
 import { HERO_TITLE, describeBathroom, describeKitchen } from '@/lib/rooms'
 import { LOCATION_LABEL } from '@/lib/labels'
-import { formatDuration } from '@/lib/format'
-import type { Presence, Risk } from '@/types'
+import type { Risk } from '@/types'
 import { cn } from '@/lib/cn'
 
 export function HomePage() {
@@ -25,11 +24,6 @@ const riskTone = (r: Risk) => (r === 'danger' ? 'danger' : r === 'warning' || r 
 const RISK_TEXT: Record<Risk, string> = { normal: 'text-ok', caution: 'text-caution', warning: 'text-warn', danger: 'text-danger', uncertain: 'text-ink-2' }
 const RISK_BG: Record<Risk, string> = { normal: '', caution: 'bg-caution-soft', warning: 'bg-warn-soft', danger: 'bg-danger-soft', uncertain: '' }
 
-function presenceText(p: Presence | undefined) {
-  if (!p) return '확인 중'
-  return p.present ? '사람 있음' : `비어 있음${p.absentSec > 0 ? ` · ${formatDuration(p.absentSec)}` : ''}`
-}
-
 /* ── 일반 모드 ──────────────────────────────────────────────────────────────
    v2 배치: 1행 = 집 상태 | 위치 평면도(조명 켜고 끄기, 크게 보기), 2행 = 기기 카드 한 줄.
    최근 기록은 기록 탭에서만 본다.
@@ -37,7 +31,7 @@ function presenceText(p: Presence | undefined) {
 function HomeNormal() {
   const navigate = useNavigate()
   const { overallRisk, devices: all, presence, location, kitchenPhase, induction, fall, contacts, refresh } = useHome()
-  // 조명은 평면도에서 조작하므로 기기 줄에는 인덕션 · 정수기 · 환풍기만
+  // 조명은 평면도에서 조작하므로 기기 줄에는 인덕션 · 정수기 · 환풍기 · 공기청정기만
   const devices = all.filter((d) => d.kind !== 'light')
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [mapOpen, setMapOpen] = useState(false)
@@ -84,11 +78,7 @@ function HomeNormal() {
                 <Maximize2 className="h-4 w-4" aria-hidden="true" />크게 보기
               </button>
             </div>
-            <HomeMap className="mt-3 h-44 w-full md:h-auto md:min-h-40 md:flex-1 wall:min-h-0" />
-            <div className="mt-3 grid w-full grid-cols-2 gap-x-3 text-[0.8125rem]">
-              <p className="min-w-0"><span className="block text-ink-3">주방</span><span className="block truncate font-medium text-ink">{presenceText(presence.kitchen)}</span></p>
-              <p className="min-w-0"><span className="block text-ink-3">욕실</span><span className="block truncate font-medium text-ink">{presenceText(presence.bathroom)}</span></p>
-            </div>
+            <HomeMap className="mt-3 h-44 w-full md:h-auto md:min-h-44 md:flex-1 wall:min-h-0" />
           </Card>
         </div>
 
@@ -99,9 +89,9 @@ function HomeNormal() {
               <RefreshCw className={cn('h-4 w-4', checking && 'spin-slow')} aria-hidden="true" />{checking ? '확인 중…' : '다시 확인'}
             </button>
           }>기기 <span className="font-normal text-ink-3">{devices.length}</span></SectionTitle>
-          {/* 기기 수만큼 칸을 나눈다 (최대 4칸 — 시연·백엔드 모두 인덕션 · 정수기 · 환풍기 2대) */}
-          <div style={{ ['--cols' as string]: Math.min(Math.max(devices.length, 1), 4) }}
-            className="grid grid-cols-2 gap-4 auto-rows-[158px] md:grid-cols-[repeat(var(--cols),minmax(0,1fr))] wall:short:auto-rows-[144px]">
+          {/* 넓은 화면은 기기 수만큼 한 줄로 (최대 5칸 — 인덕션 · 정수기 · 환풍기 2대 · 공기청정기), 좁으면 2~3칸 */}
+          <div style={{ ['--cols' as string]: Math.min(Math.max(devices.length, 1), 5) }}
+            className="grid grid-cols-2 gap-4 auto-rows-[158px] sm:grid-cols-3 wall:grid-cols-[repeat(var(--cols),minmax(0,1fr))] wall:gap-3.5 wall:short:auto-rows-[144px]">
             {devices.map((d) => <DeviceCard key={d.id} device={d} onOpen={() => setDeviceId(d.id)} />)}
           </div>
         </section>

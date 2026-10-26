@@ -81,6 +81,7 @@
   --color-glyph-fan: #0a9fb8;
   --color-glyph-water: #0a84ff;
   --color-glyph-heat: #ff8a00;
+  --color-glyph-air: #23966a;       /* 공기청정기 (맑은 공기 초록) */
 
   /* iOS 설정 앱 아이콘 바탕 (두 테마 공통) */
   --color-sym-blue: #007aff;
@@ -142,6 +143,7 @@
   --color-glyph-fan: #0a9fb8;
   --color-glyph-water: #0a84ff;
   --color-glyph-heat: #ff8a00;
+  --color-glyph-air: #30b47f;
 
   --scrim: rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);

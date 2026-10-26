@@ -1,14 +1,19 @@
 import type {
-  BurnerState, FallStatus, KitchenPhase, Location, Publisher, Risk, RoomId, SafetyEvent, SafetyEventType,
+  AirLevel, BurnerState, FallStatus, HouseRoom, KitchenPhase, Location, Publisher, Risk, RoomId, SafetyEvent, SafetyEventType,
 } from '@/types'
 
+/** 평면도 순서: 주방 | 침실 | 욕실 (부스에서 서로 붙어 있는 순서) */
+export const HOUSE_ROOMS: readonly HouseRoom[] = ['kitchen', 'bedroom', 'bathroom']
+
 export const ROOM_LABEL: Record<RoomId, string> = {
-  kitchen: '주방', bathroom: '욕실', bedroom: '침실', living: '거실',
+  kitchen: '주방', bedroom: '침실', bathroom: '욕실', home: '집',
 }
 
 export const LOCATION_LABEL: Record<Location, string> = {
-  ...ROOM_LABEL, outside: '외출 중', unknown: '확인 중',
+  kitchen: '주방', bedroom: '침실', bathroom: '욕실', outside: '외출 중', unknown: '확인 중',
 }
+
+export const AIR_LEVEL_LABEL: Record<AirLevel, string> = { good: '좋음', normal: '보통', bad: '나쁨' }
 
 export const BURNER_LABEL: Record<BurnerState, string> = {
   off: '꺼짐', on: '켜짐', overheated: '과열', cooling: '식는 중',

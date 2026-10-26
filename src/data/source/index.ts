@@ -9,4 +9,4 @@ export function createDataSource(): DataSource {
   return cfg.mode === 'http' ? createHttpSource(cfg.base) : createMockSource()
 }
 
-export type { DataSource, Snapshot, StreamMessage, DeviceControl, DemoControls } from './types'
+export type { DataSource, Snapshot, StreamMessage, DeviceControl, DemoControls, VoiceRecord, VoiceService, VoiceStatus, VoiceMeta } from './types'

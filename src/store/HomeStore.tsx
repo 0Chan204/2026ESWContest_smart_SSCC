@@ -6,8 +6,11 @@ import { createDataSource, type DataSource, type DeviceControl, type Snapshot, t
 import { maxRisk, phaseRisk } from '@/lib/labels'
 import type {
   Contact, CookingSession, Device, FallIncident, FallPolicy, InductionDevice, KitchenPhase,
-  KitchenPolicy, Location, Presence, Risk, SafetyEvent, Weather,
+  KitchenPolicy, Location, Presence, Risk, SafetyEvent, SensingSample, Weather,
 } from '@/types'
+
+/** 재실 판단 결과를 몇 개까지 들고 있을지 (1초 주기 → 약 1분 반) */
+const SENSING_KEEP = 90
 
 type AbsenceStage = 'none' | 'watch' | 'reduce' | 'off'
 
@@ -16,6 +19,8 @@ interface HomeState {
   devices: Device[]
   presence: { kitchen: Presence; bathroom: Presence }
   location: Location
+  /** 최근 최종 재실 판단 결과 (오래된 것부터) */
+  sensing: SensingSample[]
   activeSessionId: string | null
   sessions: Record<string, CookingSession>
   events: SafetyEvent[]
@@ -110,6 +115,14 @@ function reduceMessage(state: HomeState, m: StreamMessage): HomeState {
       return { ...state, location: m.data.location }
     case 'announcement':
       return { ...state, announcement: m.data }
+    case 'sensing.result': {
+      const last = state.sensing.at(-1)
+      if (last && last.at === m.data.at && last.room === m.data.room) return state
+      return { ...state, sensing: [...state.sensing, m.data].slice(-SENSING_KEEP) }
+    }
+    case 'voice.status':
+      // 음성 패널이 subscribeStream 으로 직접 받는다 (화면 상태에는 두지 않음)
+      return state
   }
 }
 
@@ -119,6 +132,7 @@ function reducer(state: HomeState, a: Action): HomeState {
       const s = a.snapshot
       return {
         ...state, ready: true, loadError: null, devices: s.devices, presence: s.presence, location: s.location,
+        sensing: s.sensing.slice(-SENSING_KEEP),
         activeSessionId: s.session?.sessionId ?? null,
         sessions: Object.fromEntries(s.sessions.map((x) => [x.sessionId, x])),
         events: s.events, fall: s.fall, contacts: s.contacts, policy: s.policy, fallPolicy: s.fallPolicy,
@@ -139,7 +153,7 @@ function reducer(state: HomeState, a: Action): HomeState {
 const initial: HomeState = {
   ready: false, devices: [],
   presence: {} as HomeState['presence'],
-  location: 'unknown', activeSessionId: null, sessions: {}, events: [], fall: null,
+  location: 'unknown', sensing: [], activeSessionId: null, sessions: {}, events: [], fall: null,
   contacts: { user: null, guardian: null },
   policy: {} as KitchenPolicy, fallPolicy: { autoReportSec: 60 },
   absenceStage: 'none', notice: null, fallAlertOpen: false, announcement: null, loadError: null,
@@ -171,6 +185,10 @@ interface HomeValue extends HomeState {
   retryLoad: () => void
   /** 시계 옆 날씨 (없으면 null) */
   weather: Weather | null
+  /** 가장 최근 재실 판단 결과 */
+  latestSensing: SensingSample | null
+  /** 실시간 메시지를 직접 받는다 (음성 패널의 voice.status 등). 해제 함수를 돌려준다 */
+  subscribeStream: (listener: (m: StreamMessage) => void) => () => void
 }
 
 const HomeContext = createContext<HomeValue | null>(null)
@@ -181,6 +199,12 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initial)
   const sourceRef = useRef<DataSource>(createDataSource())
   const [checkedAt, setCheckedAt] = useState<string | null>(null)
+
+  const streamListeners = useRef(new Set<(m: StreamMessage) => void>())
+  const subscribeStream = useCallback((listener: (m: StreamMessage) => void) => {
+    streamListeners.current.add(listener)
+    return () => { streamListeners.current.delete(listener) }
+  }, [])
 
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
@@ -194,7 +218,10 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
     }).catch((e: unknown) => {
       if (alive) dispatch({ type: 'loadError', message: e instanceof Error ? e.message : '서버에 연결하지 못했어요.' })
     })
-    const off = source.subscribe((message) => dispatch({ type: 'message', message }))
+    const off = source.subscribe((message) => {
+      dispatch({ type: 'message', message })
+      streamListeners.current.forEach((l) => { try { l(message) } catch { /* 듣는 쪽 오류가 다른 화면을 막지 않게 */ } })
+    })
     return () => { alive = false; off() }
   }, [attempt])
   const retryLoad = useCallback(() => setAttempt((n) => n + 1), [])
@@ -280,10 +307,10 @@ export function HomeStoreProvider({ children }: { children: ReactNode }) {
       kitchenPhase, kitchenRisk, bathroomRisk, overallRisk: maxRisk(kitchenRisk, bathroomRisk),
       onlineCount: state.devices.filter((d) => d.online).length,
       controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, dismissNotice, setFallAlert,
-      refresh, reconnect, checkedAt, retryLoad, weather,
+      refresh, reconnect, checkedAt, retryLoad, weather, latestSensing: state.sensing.at(-1) ?? null, subscribeStream,
     }
   }, [state, controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, dismissNotice, setFallAlert,
-    refresh, reconnect, checkedAt, retryLoad, weather])
+    refresh, reconnect, checkedAt, retryLoad, weather, subscribeStream])
 
   return <HomeContext.Provider value={value}>{children}</HomeContext.Provider>
 }

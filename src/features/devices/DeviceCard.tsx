@@ -11,13 +11,14 @@ import { cn } from '@/lib/cn'
  * 홈 화면 기기 카드 (v2 구성: 아이콘 / 이름 · 공간 / 상태 / 설명, 켜고 끌 수 있는 기기만 오른쪽 위 스위치).
  * 켜져 동작 중이면 밝은 카드 + 색 아이콘, 꺼졌거나 대기·연결 끊김이면 한 단계 어두운 카드 + 흐린 글자.
  * 인덕션·정수기는 조회 전용이라 스위치가 없다.
+ * 공기청정기는 공기질 등급을 크게, 자동으로 켜졌으면 그 이유를 설명 줄에 쓴다.
  */
 export function DeviceCard({ device: d, onOpen }: { device: Device; onOpen: () => void }) {
   const { controlDevice } = useHome()
   const s = summarize(d)
   const { Icon, on: glyph } = DEVICE_GLYPH[d.kind]
-  const switchable = d.online && (d.kind === 'fan' || d.kind === 'light')
-  const on = d.kind === 'fan' || d.kind === 'light' ? d.on : false
+  const switchable = d.online && (d.kind === 'fan' || d.kind === 'light' || d.kind === 'air')
+  const on = d.kind === 'fan' || d.kind === 'light' || d.kind === 'air' ? d.on : false
   const active = d.online && s.active
   const danger = s.risk === 'danger'
 

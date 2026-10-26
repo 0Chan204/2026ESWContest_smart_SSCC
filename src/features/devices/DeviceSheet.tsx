@@ -10,8 +10,8 @@ import { ListGroup, ListRow } from '@/components/ui/List'
 import { DEVICE_GLYPH } from '@/components/DeviceIcon'
 import { useHome } from '@/store/HomeStore'
 import { usePreferences } from '@/store/PreferencesContext'
-import { lightLevel, savingLevel, summarize } from '@/lib/device'
-import { BURNER_LABEL, PUBLISHER_LABEL, ROOM_LABEL } from '@/lib/labels'
+import { airAutoReason, lightLevel, savingLevel, summarize } from '@/lib/device'
+import { AIR_LEVEL_LABEL, BURNER_LABEL, PUBLISHER_LABEL, ROOM_LABEL } from '@/lib/labels'
 import { formatDuration, formatWhen } from '@/lib/format'
 import type { Device } from '@/types'
 import { cn } from '@/lib/cn'
@@ -76,6 +76,25 @@ export function DeviceSheet({ deviceId, onClose }: { deviceId: string | null; on
             <Segmented label="풍량" size={big ? 'lg' : 'touch'} value={d.speed}
               options={[{ value: 1, label: '약' }, { value: 2, label: '중' }, { value: 3, label: '강' }]}
               onChange={(v) => d.online && controlDevice(d.id, { speed: v })} />
+          </ListGroup>
+        </>
+      )}
+
+      {d.kind === 'air' && (
+        <>
+          <ListGroup className="mt-6">
+            <ListRow big={big} title="전원" trailing={<Toggle checked={d.on} disabled={!d.online} size={big ? 'lg' : 'md'} label="공기청정기 전원" onChange={(v) => controlDevice(d.id, { on: v })} />} />
+          </ListGroup>
+          <ListGroup title="운전 모드" className="mt-6" bodyClassName="p-2" footer="자동이면 공기질이 나쁠 때 스스로 켜지고, 좋아지면 꺼져요.">
+            <Segmented label="운전 모드" size={big ? 'lg' : 'touch'} value={d.mode}
+              options={[{ value: 'auto', label: '자동' }, { value: 'manual', label: '수동' }]}
+              onChange={(v) => d.online && controlDevice(d.id, { mode: v })} />
+          </ListGroup>
+          <ListGroup title="공기질" className="mt-6">
+            <ListRow big={big} title="등급" value={d.airQuality?.level ? AIR_LEVEL_LABEL[d.airQuality.level] : '–'} />
+            <ListRow big={big} title="초미세먼지 (PM2.5)" value={d.airQuality?.pm25 !== undefined ? `${Math.round(d.airQuality.pm25)} ㎍/㎥` : '–'} />
+            <ListRow big={big} title="미세먼지 (PM10)" value={d.airQuality?.pm10 !== undefined ? `${Math.round(d.airQuality.pm10)} ㎍/㎥` : '–'} />
+            <ListRow big={big} title="마지막 변경" value={d.on ? (airAutoReason(d) ? '자동' : '직접 켬') : d.auto ? '자동으로 꺼짐' : '직접'} />
           </ListGroup>
         </>
       )}

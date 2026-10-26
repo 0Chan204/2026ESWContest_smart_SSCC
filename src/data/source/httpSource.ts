@@ -1,18 +1,22 @@
 import type {
-  Burner, BurnerState, Contact, ContactSaveResult, CookingSession, Device, FallIncident, FallPolicy,
-  FallStatus, FanDevice, InductionDevice, KitchenPolicy, LightDevice, Location, Presence, Publisher, PurifierDevice,
-  HourlyWeather, RoomId, SafetyEvent, SafetyEventType, Severity, Weather, Zone,
+  AirLevel, AirPurifierDevice, AirQuality, Burner, BurnerState, Contact, ContactSaveResult, CookingSession, Device,
+  FallIncident, FallPolicy, FallStatus, FanDevice, HouseRoom, InductionDevice, KitchenPolicy, LightDevice, Location,
+  Presence, Publisher, PurifierDevice, HourlyWeather, RoomId, SafetyEvent, SafetyEventType, SensingNode, SensingSample,
+  Severity, Weather, Zone,
 } from '@/types'
-import type { DataSource, DeviceControl, Snapshot, StreamMessage } from './types'
+import type { DataSource, DeviceControl, Snapshot, StreamMessage, VoiceService, VoiceStatus } from './types'
 
 /**
- * 실제 백엔드 연동 (HomeVIS-Backend v0.4.x, develop).
+ * 실제 백엔드 연동 (HomeVIS-Backend v0.7.x, develop).
  *
  *   loadSnapshot   GET  /snapshot · /safety-events · /sessions/{id} · /user · /guardian
- *                       · /policies/kitchen-absence · /policies/fall-safety · /sensing/results/latest
+ *                       · /policies/kitchen-absence · /policies/fall-safety · /sensing/results?limit=60
  *   subscribe      WS   /stream  (끊기면 다시 연결, ?since={마지막 이벤트 id} 로 놓친 안전 이벤트 받기)
  *                  GET  /devices  (15초마다 — 기기 응답 없음 판정은 서버가 하고, 바뀐 것만 알린다)
- *   controlDevice  POST /devices/{id}/commands  (전등 on · off · fadeout, 환풍기 on · off · set_speed. 인덕션·정수기는 조회 전용)
+ *   controlDevice  POST /devices/{id}/commands  (전등 on · off · fadeout, 환풍기 on · off · set_speed,
+ *                       공기청정기 on · off · set_mode. 인덕션·정수기는 조회 전용)
+ *   loadSensingNodes GET /sensing/combined  (공간별 엣지 노드 신호 세기 · 수신 속도)
+ *   voice          POST /voice/commands · /voice/commands/{voiceId}/confirm  (진행 상황은 WS voice.status)
  *   submitFeedback POST /safety-events/{id}/feedback
  *   saveContact    PUT  /user | /guardian
  *   savePolicy     PUT  /policies/kitchen-absence
@@ -29,6 +33,8 @@ const API = '/api/v1'
 const DEVICE_POLL_MS = 15_000
 const HISTORY_LEN = 60
 const SESSION_FETCH_LIMIT = 10
+/** 노드 메시지가 이보다 오래되면 '응답 없음' */
+const NODE_STALE_SEC = 10
 
 // ── 작은 검사 도구 ─────────────────────────────────────────────────────────
 type Obj = Record<string, unknown>
@@ -41,21 +47,58 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 const nowIso = () => new Date().toISOString()
 
 // ── 백엔드 값 → 화면 값 ────────────────────────────────────────────────────
-/** 백엔드 구역 이름(kitchen / toilet / room …) → 화면 공간 */
+/** 백엔드 구역 이름(kitchen / toilet / room …) → 화면 공간. 모르는 구역은 '집' */
 function mapRoom(v: unknown): RoomId {
   switch (v) {
     case 'kitchen': return 'kitchen'
     case 'toilet': case 'bathroom': return 'bathroom'
     case 'room': case 'bedroom': return 'bedroom'
-    default: return 'living'
+    default: return 'home'
   }
 }
 
+/** 사용자 위치. 세 공간(주방 · 침실 · 욕실) 밖의 이름(living 등)은 '확인 중' */
 function mapLocation(v: unknown): Location {
-  if (v === null || v === undefined || v === '') return 'unknown'
   if (v === 'outside') return 'outside'
-  return mapRoom(v)
+  const r = mapRoom(v)
+  return r === 'home' ? 'unknown' : r
 }
+const houseRoom = (v: unknown): HouseRoom | null => {
+  const l = mapLocation(v)
+  return l === 'outside' || l === 'unknown' ? null : l
+}
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
+
+/** 최종 재실 판단 1건 (sensing.result · GET /sensing/results) */
+function mapSensing(v: unknown): SensingSample | null {
+  if (!isObj(v) || typeof v.observedAt !== 'string' || Number.isNaN(new Date(v.observedAt).getTime())) return null
+  const room = houseRoom(v.room)
+  const conf = optNum(v.confidence)
+  const actConf = optNum(v.activityConfidence)
+  const activity = optStr(v.activity)
+  return {
+    at: v.observedAt, room,
+    present: typeof v.present === 'boolean' ? v.present && room !== null : room !== null,
+    confidence: conf === undefined ? null : clamp01(conf),
+    activity: activity ? activity.slice(0, 40) : null,
+    activityConfidence: actConf === undefined ? null : clamp01(actConf),
+    validSec: Math.max(1, Math.min(600, num(v.validSec, 5))),
+  }
+}
+
+const AIR_LEVELS: readonly AirLevel[] = ['good', 'normal', 'bad']
+function mapAirQuality(v: unknown): AirQuality | undefined {
+  if (!isObj(v)) return undefined
+  const q: AirQuality = {
+    pm25: optNum(v.pm25), pm10: optNum(v.pm10),
+    level: AIR_LEVELS.includes(v.level as AirLevel) ? (v.level as AirLevel) : undefined,
+  }
+  return q.pm25 === undefined && q.pm10 === undefined && q.level === undefined ? undefined : q
+}
+
+const VOICE_STATUSES: readonly VoiceStatus[] = [
+  'received', 'thinking', 'confirm_required', 'executed', 'answered', 'cancelled', 'timeout', 'failed',
+]
 
 const BURNER_STATES: readonly BurnerState[] = ['off', 'on', 'overheated', 'cooling']
 function mapBurner(v: unknown): Burner | null {
@@ -157,7 +200,7 @@ function mapHourly(v: unknown): HourlyWeather[] | undefined {
   return items.length > 0 ? items.slice(0, 12) : undefined
 }
 
-const ROOM_NAME: Record<RoomId, string> = { kitchen: '주방', bathroom: '욕실', bedroom: '침실', living: '거실' }
+const ROOM_NAME: Record<RoomId, string> = { kitchen: '주방', bathroom: '욕실', bedroom: '침실', home: '집' }
 
 // ── 전등 · 환풍기 ──────────────────────────────────────────────────────────
 /**
@@ -168,15 +211,16 @@ const LIGHT_STEPS = [0, 20, 100] as const
 const SAVING_BRIGHTNESS = 20
 
 /** 전등 상태(current_state 또는 WS device.state) → 켜짐 · 밝기 · 절전 */
-function mapLightState(st: Obj, savingFlag?: unknown): Pick<LightDevice, 'on' | 'brightness' | 'saving'> {
+function mapLightState(st: Obj, savingFlag?: unknown): Pick<LightDevice, 'on' | 'brightness' | 'saving' | 'blinking'> {
   const on = st.power === 'on'
-  if (!on) return { on: false, brightness: 0, saving: false }
+  const blinking = st.mode === 'blink'
+  if (!on) return { on: false, brightness: 0, saving: false, blinking }
   // 밝기를 보내지 않는 전등은 켜져 있으면 100%. fadeout 중이면 곧 절전 밝기가 되므로 그 값을 먼저 보여준다
   const reported = Math.max(0, Math.min(100, num(st.brightness, 100)))
   const fading = st.mode === 'fadeout'
   const brightness = fading ? Math.min(reported, SAVING_BRIGHTNESS) : reported
   const saving = savingFlag === true || fading || (brightness > 0 && brightness <= SAVING_BRIGHTNESS)
-  return { on: true, brightness: brightness > 0 ? brightness : SAVING_BRIGHTNESS, saving }
+  return { on: true, brightness: brightness > 0 ? brightness : SAVING_BRIGHTNESS, saving, blinking }
 }
 
 type BackendSpeed = 'low' | 'mid' | 'high'
@@ -227,6 +271,13 @@ export function createHttpSource(base: string): DataSource {
   const sentCommands = new Set<string>()
   const tempHistory = new Map<string, number[]>()
   let fallPolicyRaw: Obj = { userAlertWaitSec: 30, autoReportSec: 60 }
+  /**
+   * 공기청정기를 누가 왜 켰는지 알아보기 위한 기록.
+   * - AI 판단(ai.decision)이 공기청정기를 켠 명령 id → 자동 여부 · 이유
+   * - 기기마다 마지막으로 본 명령 id (기기 상태가 판단보다 먼저 와도 나중에 이어 붙인다)
+   */
+  const airCommandReason = new Map<string, { auto: boolean; reason?: AirPurifierDevice['autoReason'] }>()
+  const lastAirCommand = new Map<string, string | null>()
 
   function pushTemp(id: string, t: number) {
     const h = tempHistory.get(id) ?? []
@@ -236,6 +287,7 @@ export function createHttpSource(base: string): DataSource {
 
   /** GET /snapshot 의 devices(DeviceInfo[]) + appliances(화구 상세) → 화면 기기 */
   function buildDevices(snapshot: Obj): Device[] {
+    lastAirCommand.clear()
     const appliances = arr(snapshot.appliances).filter(isObj)
     return arr(snapshot.devices).filter(isObj).flatMap((info): Device[] => {
       const id = str(info.deviceId)
@@ -275,6 +327,15 @@ export function createHttpSource(base: string): DataSource {
         }
         return [d]
       }
+      if (info.device === 'air_purifier') {
+        const d: AirPurifierDevice = {
+          id, kind: 'air', name: '공기청정기', room, online, auto,
+          on: isObj(info.current_state) ? cur.power === 'on' : info.is_on === true,
+          mode: cur.mode === 'manual' ? 'manual' : 'auto',
+          airQuality: mapAirQuality(cur.airQuality),
+        }
+        return [d]
+      }
       if (info.device === 'water_purifier') {
         const ml = optNum(cur.lastDispensedMl)
         const d: PurifierDevice = {
@@ -289,14 +350,14 @@ export function createHttpSource(base: string): DataSource {
   }
 
   async function loadSnapshot(): Promise<Snapshot> {
-    const [snap, evRes, user, guardian, policy, fallPolicy, sensing] = await Promise.all([
+    const [snap, evRes, user, guardian, policy, fallPolicy, sensingRes] = await Promise.all([
       get('/snapshot'),
       get('/safety-events?page=1&size=200'),
       getOrNull('/user'),
       getOrNull('/guardian'),
       get('/policies/kitchen-absence'),
       get('/policies/fall-safety'),
-      getOrNull('/sensing/results/latest'),
+      get(`/sensing/results?limit=${HISTORY_LEN}`).catch(() => null),
     ])
     if (!isObj(snap)) throw new ApiError('서버 응답 형식이 올바르지 않아요.')
 
@@ -316,13 +377,16 @@ export function createHttpSource(base: string): DataSource {
     const kitchen = presenceOf('kitchen') ?? unknownPresence('kitchen')
     const bathroom = presenceOf('toilet') ?? presenceOf('bathroom') ?? unknownPresence('bathroom')
 
-    let location: Location = isObj(sensing) ? mapLocation(sensing.room) : 'unknown'
+    // 오래된 것부터 온다
+    const sensing = arr(isObj(sensingRes) ? sensingRes.items : []).map(mapSensing).filter((x): x is SensingSample => x !== null)
+    const latest = sensing.at(-1)
+    let location: Location = latest ? (latest.room ?? 'unknown') : 'unknown'
     if (location === 'unknown' && kitchen.present) location = 'kitchen'
 
     if (isObj(fallPolicy)) fallPolicyRaw = fallPolicy
 
     return {
-      devices, presence: { kitchen, bathroom }, location, session, sessions, events,
+      devices, presence: { kitchen, bathroom }, location, sensing, session, sessions, events,
       // 진행 중인 낙상 사건 목록 API 가 없어 처음엔 비워 두고, WebSocket fall.incident 로 받는다
       fall: null,
       contacts: { user: mapContact(user), guardian: mapContact(guardian) },
@@ -348,6 +412,7 @@ export function createHttpSource(base: string): DataSource {
         const id = str(data.deviceId)
         if (!id || burners.length === 0) return []
         pushTemp(id, burners[0]!.temperature)
+        devices = devices.map((x) => (x.id === id && x.kind === 'induction' ? { ...x, burner: burners[0]! } : x))
         return [{ event: 'burner.telemetry', data: { deviceId: id, reportedAt: str(data.reportedAt, at), burners } }]
       }
       case 'presence.updated': {
@@ -381,6 +446,9 @@ export function createHttpSource(base: string): DataSource {
         if (d.kind === 'fan' && (st.power === 'on' || st.power === 'off')) {
           next = { ...d, online: true, auto, on: st.power === 'on', speed: mapSpeed(st.speed, d.speed) }
         }
+        if (d.kind === 'air' && (st.power === 'on' || st.power === 'off')) {
+          next = applyAirState(d, st)
+        }
         if (d.kind === 'purifier') {
           const ml = optNum(st.lastDispensedMl)
           next = { ...d, online: true, dispensing: st.status === 'dispensing',
@@ -390,10 +458,33 @@ export function createHttpSource(base: string): DataSource {
         devices = devices.map((x) => (x.id === next.id ? next : x))
         return [{ event: 'device.updated', data: next }]
       }
-      case 'sensing.result':
-        return [{ event: 'location.updated', data: { location: mapLocation(data.room), observedAt: str(data.observedAt, at) } }]
+      case 'sensing.result': {
+        const sample = mapSensing(data)
+        if (!sample) return []
+        return [
+          { event: 'location.updated', data: { location: sample.room ?? 'unknown', observedAt: sample.at } },
+          { event: 'sensing.result', data: sample },
+        ]
+      }
+      case 'ai.decision':
+        return airFromDecision(data)
+      case 'voice.status': {
+        const status = VOICE_STATUSES.includes(data.status as VoiceStatus) ? (data.status as VoiceStatus) : null
+        if (typeof data.voiceId !== 'string' || !status) return []
+        return [{
+          event: 'voice.status',
+          data: {
+            voiceId: data.voiceId, status,
+            answer: optStr(data.answer)?.trim().slice(0, 500) || undefined,
+            confirmText: optStr(data.confirmText)?.trim().slice(0, 200) || undefined,
+            confirmDeadline: optStr(data.confirmDeadline),
+          },
+        }]
+      }
       case 'ai.announcement':
       case 'weather.briefing': {
+        // 음성 명령의 답변(voiceId 있음)은 voice.status 의 answer 로만 보여주고 읽는다 (두 번 읽지 않도록)
+        if (event === 'ai.announcement' && typeof data.voiceId === 'string' && data.voiceId) return []
         const text = str(data.text).trim()
         if (!text) return []
         return [{ event: 'announcement', data: { id: `${event}:${str(data.decisionId, at)}`, text: text.slice(0, 500), at } }]
@@ -401,6 +492,60 @@ export function createHttpSource(base: string): DataSource {
       default:
         return []
     }
+  }
+
+  /** 공기청정기 상태(device.state) → 화면 기기. 누가 바꿨는지(lastControl)로 자동 여부·이유를 정한다 */
+  function applyAirState(d: AirPurifierDevice, st: Obj): AirPurifierDevice {
+    const on = st.power === 'on'
+    const lc = isObj(st.lastControl) ? st.lastControl : null
+    const cid = typeof lc?.commandId === 'string' ? lc.commandId : null
+    let auto = d.auto
+    let autoReason = d.autoReason
+    const known = cid ? airCommandReason.get(cid) : undefined
+    if (cid && sentCommands.has(cid)) { auto = false; autoReason = undefined }
+    else if (known) { auto = known.auto; autoReason = known.reason }
+    else if (lc?.publisher === 'system') {
+      // 기기가 스스로 바꿈: 켜졌다면 공기질이 나빠서 (백엔드 명세 v0.7)
+      auto = true; autoReason = on ? 'air' : undefined
+    } else if (cid && lastAirCommand.has(d.id) && lastAirCommand.get(d.id) !== cid) {
+      // 이 화면이 보내지 않은 새 명령 (음성 명령 · 다른 화면 등). AI 판단이면 ai.decision 이 오면 고친다
+      auto = false; autoReason = undefined
+    }
+    lastAirCommand.set(d.id, cid)
+    return {
+      ...d, online: true, on, auto, autoReason: on ? autoReason : undefined,
+      mode: st.mode === 'manual' ? 'manual' : st.mode === 'auto' ? 'auto' : d.mode,
+      airQuality: mapAirQuality(st.airQuality) ?? d.airQuality,
+    }
+  }
+
+  /**
+   * AI 판단(ai.decision)에서 공기청정기를 켠 명령을 찾아 이유를 기록한다.
+   * 음성 명령(voiceId)이면 사용자가 시킨 것이므로 자동이 아니다.
+   * 인덕션이 켜져 있을 때 켰거나 판단 이름·이유에 조리·인덕션이 있으면 '인덕션', 그 밖은 이유 없이 '자동'.
+   */
+  function airFromDecision(data: Obj): StreamMessage[] {
+    const byVoice = typeof data.voiceId === 'string' && data.voiceId !== ''
+    const stoveOn = devices.some((x) => x.kind === 'induction' && x.burner.deviceState === 'on')
+    const hint = /stove|induction|cook|인덕션|조리|요리/i.test(`${str(data.scenario)} ${str(data.reason)}`)
+    const out: StreamMessage[] = []
+    for (const a of arr(data.actions).filter(isObj)) {
+      if (a.device !== 'air_purifier' || typeof a.commandId !== 'string' || a.status !== 'sent') continue
+      const turnsOn = a.action === 'on'
+      const info = byVoice || !turnsOn
+        ? { auto: !byVoice }
+        : { auto: true, reason: stoveOn || hint ? 'induction' as const : undefined }
+      airCommandReason.set(a.commandId, info)
+      if (airCommandReason.size > 50) airCommandReason.delete(airCommandReason.keys().next().value!)
+      // 기기 상태가 판단보다 먼저 도착한 경우
+      const d = devices.find((x): x is AirPurifierDevice => x.kind === 'air' && x.id === a.deviceId)
+      if (d && lastAirCommand.get(d.id) === a.commandId) {
+        const next: AirPurifierDevice = { ...d, auto: info.auto, autoReason: d.on ? info.reason : undefined }
+        devices = devices.map((x) => (x.id === d.id ? next : x))
+        out.push({ event: 'device.updated', data: next })
+      }
+    }
+    return out
   }
 
   function subscribe(listener: (m: StreamMessage) => void): () => void {
@@ -454,7 +599,7 @@ export function createHttpSource(base: string): DataSource {
   }
 
   // ── 동작 ────────────────────────────────────────────────────────────────
-  async function command(deviceId: string, body: { type: string; speed?: BackendSpeed }) {
+  async function command(deviceId: string, body: { type: string; speed?: BackendSpeed; mode?: 'auto' | 'manual' }) {
     const r = await send('POST', `/devices/${encodeURIComponent(deviceId)}/commands`, body)
     if (isObj(r) && typeof r.commandId === 'string') {
       sentCommands.add(r.commandId)
@@ -489,7 +634,51 @@ export function createHttpSource(base: string): DataSource {
       if (control.on === undefined) throw new ApiError('환풍기는 켜기·끄기와 풍량만 바꿀 수 있어요.')
       return command(deviceId, { type: control.on ? 'on' : 'off' })
     }
+    if (d.kind === 'air') {
+      if (control.mode === 'auto' || control.mode === 'manual') return command(deviceId, { type: 'set_mode', mode: control.mode })
+      if (control.on === undefined) throw new ApiError('공기청정기는 켜기·끄기와 운전 모드만 바꿀 수 있어요.')
+      return command(deviceId, { type: control.on ? 'on' : 'off' })
+    }
     throw new ApiError('이 기기는 화면에서 제어할 수 없어요.')
+  }
+
+  /** 공간별 엣지 노드 상태. 서버는 노드 메시지를 해석하지 않으므로 여기서 신호 세기 · 수신 속도 · 시각만 본다 */
+  async function loadSensingNodes(): Promise<SensingNode[]> {
+    const r = await get('/sensing/combined')
+    const locations = isObj(r) && isObj(r.locations) ? r.locations : {}
+    const nowSec = Date.now() / 1000
+    const plan = [['kitchen', 'kitchen', 'r2'], ['room', 'bedroom', 'r1'], ['toilet', 'bathroom', 'r3']] as const
+    return plan.map(([key, room, fallbackId]): SensingNode => {
+      const entry = locations[key]
+      const node = isObj(entry) && isObj(entry.node) ? entry.node : null
+      if (!node) return { room, node: fallbackId, status: 'missing' }
+      const q = isObj(node.quality) ? node.quality : {}
+      const tEnd = optNum(node.t_end)
+      const stale = tEnd !== undefined && nowSec - tEnd > NODE_STALE_SEC
+      const raw = str(node.status)
+      const status: SensingNode['status'] = stale || raw === 'stopped' ? 'stale' : raw === 'ok' ? 'ok' : 'other'
+      const id = str(node.node, fallbackId)
+      return {
+        room, node: /^[\w-]{1,16}$/.test(id) ? id : fallbackId, status,
+        rssi: status === 'ok' ? optNum(q.rssi) : undefined, rateHz: status === 'ok' ? optNum(q.rate_hz) : undefined,
+      }
+    })
+  }
+
+  /** 음성 명령 (docs/VOICE.md). 인식한 전체 문장만 보낸다 — 음성 원본은 보내지 않는다 */
+  const voice: VoiceService = {
+    async send(text, meta) {
+      const body = {
+        text: text.trim().slice(0, 500), lang: 'ko-KR', source: 'voice', recognizedAt: meta.recognizedAt,
+        confidence: meta.confidence !== undefined && meta.confidence >= 0 && meta.confidence <= 1 ? meta.confidence : undefined,
+      }
+      const r = await send('POST', '/voice/commands', body)
+      if (!isObj(r) || typeof r.voiceId !== 'string' || !r.voiceId) throw new ApiError('음성 명령 응답 형식이 올바르지 않아요.')
+      return { voiceId: r.voiceId }
+    },
+    async confirm(voiceId, approved) {
+      await send('POST', `/voice/commands/${encodeURIComponent(voiceId)}/confirm`, { approved })
+    },
   }
 
   async function submitFeedback(eventId: string, verdict: 'approved' | 'rejected') {
@@ -533,5 +722,8 @@ export function createHttpSource(base: string): DataSource {
     }
   }
 
-  return { kind: 'http', loadSnapshot, subscribe, controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, loadWeather, demo: null }
+  return {
+    kind: 'http', loadSnapshot, subscribe, controlDevice, submitFeedback, saveContact, savePolicy, saveFallPolicy, loadWeather,
+    loadSensingNodes, voice, demo: null,
+  }
 }

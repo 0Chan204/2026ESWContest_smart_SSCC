@@ -1,10 +1,12 @@
 import {
-  DEFAULT_FALL_POLICY, DEFAULT_POLICY, GUIDANCE, isoAgo, seedDevices, seedHistory, seedPresence,
+  DEFAULT_FALL_POLICY, DEFAULT_POLICY, GUIDANCE, isoAgo, seedDevices, seedHistory, seedPresence, seedSensing,
 } from '@/data/seed'
 import { openDemoChannel, type DemoRequest, type DemoResponse } from '@/data/demoChannel'
+import { withObjectParticle } from '@/lib/korean'
 import type {
-  Contact, CookingSession, Device, FallIncident, FallPolicy, InductionDevice, KitchenPolicy,
-  Location, Presence, SafetyEvent, SafetyEventType, Severity,
+  AirLevel, AirPurifierDevice, Contact, CookingSession, Device, FallIncident, FallPolicy, FanDevice, HouseRoom,
+  InductionDevice, KitchenPolicy, LightDevice, Location, Presence, SafetyEvent, SafetyEventType, SensingNode,
+  SensingSample, Severity,
 } from '@/types'
 import type { DataSource, DeviceControl, Snapshot, StreamMessage } from './types'
 
@@ -15,6 +17,8 @@ import type { DataSource, DeviceControl, Snapshot, StreamMessage } from './types
  * - 인덕션 telemetry 3초 주기, 과열 진입 150°C / 해제 60°C
  * - 부재 정책: 관찰 → 화력 저감 → 전원 차단 (near 구역은 임계값 2배)
  * - 낙상: 인덕션 비상 차단 + 보호자 문자 + 미응답 시 자동 신고
+ * - 공기청정기(v0.7): 미세먼지가 조금씩 바뀌고, 자동 모드에서 나쁨이면 스스로 켜짐 · 인덕션이 켜지면 HomeVIS 가 켬
+ * - 최종 재실 판단(sensing.result) 1초 주기 · 공간별 엣지 노드 신호 세기
  * 시연 시간을 줄이기 위해 부재 시간만 실제보다 12배 빠르게 흐른다(1초 = 12초).
  */
 
@@ -23,6 +27,15 @@ const PRESENCE_MS = 1000
 const ABSENCE_SPEED = 12
 const ROOM_TEMP = 25
 const HISTORY_LEN = 60
+const SENSING_MS = 1000
+
+/** 백엔드 가짜 공기청정기와 같은 기준 (기기가 정함): 15 이하 좋음 · 35 이하 보통 · 그 위 나쁨 */
+const airLevel = (pm25: number): AirLevel => (pm25 <= 15 ? 'good' : pm25 <= 35 ? 'normal' : 'bad')
+const airOf = (pm25: number) => {
+  const v = Math.max(3, Math.round(pm25 * 10) / 10)
+  return { pm25: v, pm10: Math.round(v * 16) / 10, level: airLevel(v) }
+}
+const rand = (a: number, b: number) => a + Math.random() * (b - a)
 
 const now = () => new Date().toISOString()
 const uid = (p: string) => `${p}-${Math.random().toString(16).slice(2, 10)}`
@@ -43,6 +56,18 @@ export function createMockSource(): DataSource {
   let fall: FallIncident | null = null
   let fallToken = ''
   let fallTimer: ReturnType<typeof setTimeout> | null = null
+  /** 진행 중인 시연 연출(잠시 뒤 행동 바뀜 등) — 다음 단계를 누르면 취소 */
+  let stepTimers: ReturnType<typeof setTimeout>[] = []
+
+  // 최종 재실 판단: 사람이 있는 공간 · 행동 · 기준 신뢰도
+  const sensingHistory: SensingSample[] = seedSensing()
+  const person: { room: HouseRoom | null; activity: string; base: number; flicker: number } =
+    { room: 'kitchen', activity: 'standing', base: 0.91, flicker: 0 }
+  const nodes: (SensingNode & { base: number })[] = [
+    { room: 'kitchen', node: 'r2', status: 'ok', base: -51 },
+    { room: 'bedroom', node: 'r1', status: 'ok', base: -58 },
+    { room: 'bathroom', node: 'r3', status: 'ok', base: -63 },
+  ]
 
   const listeners = new Set<(m: StreamMessage) => void>()
   const timers: ReturnType<typeof setInterval>[] = []
@@ -50,6 +75,12 @@ export function createMockSource(): DataSource {
 
   const emit = (m: StreamMessage) => listeners.forEach((l) => l(clone(m)))
   const induction = () => devices.find((d): d is InductionDevice => d.kind === 'induction')!
+  const air = () => devices.find((d): d is AirPurifierDevice => d.kind === 'air')
+  const lightIn = (room: HouseRoom) => devices.find((d): d is LightDevice => d.kind === 'light' && d.room === room)
+  const fanIn = (room: HouseRoom) => devices.find((d): d is FanDevice => d.kind === 'fan' && d.room === room)
+  const later = (fn: () => void, ms: number) => { stepTimers.push(setTimeout(fn, ms)) }
+  const clearSteps = () => { stepTimers.forEach(clearTimeout); stepTimers = [] }
+  const announce = (text: string) => emit({ event: 'announcement', data: { id: uid('ann'), text, at: now() } })
 
   // 현재 조리 세션 (화구가 켜진 상태로 시작하므로 진행 중 세션 하나를 만든다)
   {
@@ -164,6 +195,54 @@ export function createMockSource(): DataSource {
       }
     }
     emitTelemetry()
+    tickAir()
+  }
+
+  // ── 공기청정기 (백엔드 tests/simulate_home_devices.py 와 같은 규칙) ─────
+  function tickAir() {
+    const a = air()
+    if (!a || !a.online) return
+    const pm = a.airQuality?.pm25 ?? 15
+    const next = a.on ? pm - rand(0.6, 1.8) : pm + rand(-0.5, 0.45)
+    a.airQuality = airOf(next)
+    // 공기질 때문에 스스로 켰다면, 좋아지면 스스로 끈다
+    if (a.on && a.mode === 'auto' && a.auto && a.autoReason === 'air' && a.airQuality.level === 'good') {
+      a.on = false; a.autoReason = undefined
+    } else if (!a.on && a.mode === 'auto' && a.airQuality.level === 'bad') {
+      a.on = true; a.auto = true; a.autoReason = 'air'
+    }
+    emit({ event: 'device.updated', data: a })
+  }
+
+  // ── 최종 재실 판단 (1초 주기) ────────────────────────────────────────────
+  function sample(): SensingSample {
+    let activity = person.activity
+    if (person.flicker > 0) { person.flicker -= 1; activity = 'walking' }
+    else if (person.room === 'kitchen' && person.activity === 'standing' && Math.random() < 0.06) person.flicker = 2
+    const conf = person.room ? Math.min(0.99, Math.max(0.6, person.base + rand(-0.035, 0.035))) : 0.9
+    return {
+      at: now(), room: person.room, present: person.room !== null, confidence: Math.round(conf * 100) / 100,
+      activity: person.room ? activity : null, activityConfidence: person.room ? Math.round(rand(0.72, 0.9) * 100) / 100 : null,
+      validSec: 5,
+    }
+  }
+  function tickSensing() {
+    const s = sample()
+    sensingHistory.push(s)
+    if (sensingHistory.length > HISTORY_LEN * 2) sensingHistory.splice(0, sensingHistory.length - HISTORY_LEN * 2)
+    emit({ event: 'sensing.result', data: s })
+  }
+  /** 사람 위치 · 행동을 바꾸고 바로 한 번 알린다 */
+  function moveTo(room: HouseRoom | null, activity = 'standing', base = 0.91) {
+    person.room = room; person.activity = activity; person.base = base; person.flicker = 0
+    setLocation(room ?? 'outside')
+    tickSensing()
+  }
+  function startSession(level: number) {
+    const id = uid('ses')
+    sessions.set(id, { sessionId: id, startedAt: now(), status: 'active', peakTemperature: induction().burner.temperature, timeline: [] })
+    activeSessionId = id
+    addTimeline('cooking_started', `화구 켜짐 · 화력 ${level}단`)
   }
 
   // ── 부재 정책 (BE safety_service.evaluate_presence 축소판) ───────────────
@@ -219,6 +298,13 @@ export function createMockSource(): DataSource {
     }
   }
 
+  function setKitchenPresence(present: boolean, zone: Presence['zone'] = present ? 'kitchen' : 'far') {
+    const k = presence.kitchen
+    k.present = present; k.zone = zone; k.absentSec = 0; k.confidence = 0.92; k.observedAt = now()
+    if (present) absenceStage = 'none'
+    emit({ event: 'presence.updated', data: k })
+  }
+
   function setLocation(next: Location) {
     location = next
     emit({ event: 'location.updated', data: { location, observedAt: now() } })
@@ -270,7 +356,7 @@ export function createMockSource(): DataSource {
 
     async loadSnapshot(): Promise<Snapshot> {
       return clone({
-        devices, presence, location,
+        devices, presence, location, sensing: sensingHistory.slice(-HISTORY_LEN),
         session: activeSessionId ? sessions.get(activeSessionId) ?? null : null,
         sessions: [...sessions.values()],
         events, fall: fallState(), contacts, policy, fallPolicy,
@@ -280,7 +366,7 @@ export function createMockSource(): DataSource {
     subscribe(listener) {
       listeners.add(listener)
       if (timers.length === 0) {
-        timers.push(setInterval(tickTelemetry, TELEMETRY_MS), setInterval(tickPresence, PRESENCE_MS))
+        timers.push(setInterval(tickTelemetry, TELEMETRY_MS), setInterval(tickPresence, PRESENCE_MS), setInterval(tickSensing, SENSING_MS))
         channel = openDemoChannel()
         if (channel) channel.onmessage = (e: MessageEvent<DemoRequest>) => handleDemoRequest(e.data)
       }
@@ -288,6 +374,7 @@ export function createMockSource(): DataSource {
         listeners.delete(listener)
         if (listeners.size === 0) {
           timers.splice(0).forEach(clearInterval)
+          clearSteps()
           channel?.close(); channel = null
         }
       }
@@ -296,12 +383,19 @@ export function createMockSource(): DataSource {
     async controlDevice(deviceId: string, control: DeviceControl) {
       const d = devices.find((x) => x.id === deviceId)
       // 인덕션·정수기는 원격 제어하지 않는다 (조회 전용).
-      if (!d || (d.kind !== 'fan' && d.kind !== 'light') || !d.online) throw new Error('제어할 수 없는 기기입니다.')
+      if (!d || (d.kind !== 'fan' && d.kind !== 'light' && d.kind !== 'air') || !d.online) throw new Error('제어할 수 없는 기기입니다.')
+      if (d.kind === 'air') {
+        if (control.on !== undefined) { d.on = control.on; d.auto = false; d.autoReason = undefined }
+        if (control.mode) d.mode = control.mode
+        emit({ event: 'device.updated', data: d })
+        return
+      }
       if (control.on !== undefined) { d.on = control.on; d.auto = false }
       if (d.kind === 'fan' && control.speed) { d.speed = control.speed; d.on = true; d.auto = false }
       if (d.kind === 'light') {
         // 직접 조작하면 절전 상태가 풀린다. 0% 는 끄기, 그 밖은 10~100%
         d.saving = false
+        d.blinking = false
         if (control.brightness !== undefined) {
           const b = Math.round(control.brightness)
           if (b <= 0) d.on = false
@@ -343,18 +437,65 @@ export function createMockSource(): DataSource {
         text: '서울은 지금 구름 조금, 21도예요. 오늘 최고 24도, 최저 15도이고 비 올 확률은 60%예요.' }
     },
 
+    async loadSensingNodes() {
+      // 신호 세기는 ±1.5dBm, 수신 속도는 25.5~27.5Hz 안에서 조금씩 흔들린다
+      return nodes.map(({ base, ...n }) => ({
+        ...n, rssi: Math.round((base + rand(-1.5, 1.5)) * 10) / 10, rateHz: Math.round(rand(25.5, 27.5) * 10) / 10,
+      }))
+    },
+
+    voice: null,
+
     demo: {
+      startCooking() {
+        clearSteps()
+        moveTo('kitchen', 'standing', 0.92)
+        setKitchenPresence(true)
+        const d = induction()
+        if (d.burner.deviceState === 'overheated') return
+        const wasOn = d.burner.deviceState === 'on'
+        if (!wasOn) {
+          d.burner.deviceState = 'on'; d.burner.level = 4; d.burner.activeSec = 0; d.lastControl = 'user'
+          startSession(4)
+          emitEvent('cooking_started', 'info', 'kitchen', { action: '화력 4단' })
+          emitTelemetry()
+        }
+        // HomeVIS: 인덕션이 켜지면 공기청정기 · 주방 환풍기를 켠다 (조리 연기 · 미세먼지 대비)
+        later(() => {
+          const turned: string[] = []
+          const a = air()
+          if (a && a.online && !a.on) { a.on = true; a.auto = true; a.autoReason = 'induction'; turned.push('공기청정기'); emit({ event: 'device.updated', data: a }) }
+          const f = fanIn('kitchen')
+          if (f && f.online && !f.on && f.auto) { f.on = true; f.speed = 2; turned.push('주방 환풍기'); emit({ event: 'device.updated', data: f }) }
+          if (turned.length === 0) return
+          emitEvent('ai_control', 'info', 'kitchen', {
+            trigger: `인덕션 켜짐 (화력 ${d.burner.level}단)`, action: `${turned.join(' · ')} 자동 켜짐`,
+            reasoning: '조리 중 생기는 연기와 미세먼지에 대비',
+          })
+          announce(`인덕션이 켜져 ${withObjectParticle(turned.join('와 '))} 켰어요.`)
+        }, 1200)
+      },
+      airWorse() {
+        const a = air()
+        if (!a) return
+        a.airQuality = airOf(52)
+        emit({ event: 'device.updated', data: a })
+        // 기기가 스스로 판단해 잠시 뒤 켠다 (자동 모드일 때만)
+        if (a.mode === 'auto' && !a.on) later(() => { a.on = true; a.auto = true; a.autoReason = 'air'; emit({ event: 'device.updated', data: a }) }, 1500)
+      },
       leaveKitchen(zone) {
-        const k: Presence = presence.kitchen
-        k.present = false; k.zone = zone; k.absentSec = 0; k.confidence = 0.92; k.observedAt = now()
-        setLocation(zone === 'near' ? 'living' : 'bedroom')
-        emit({ event: 'presence.updated', data: k })
+        clearSteps()
+        setKitchenPresence(false, zone)
+        // 주방을 나가 침실로 (평면도에 거실이 없어져 가까이 · 멀리 모두 침실. 기준 시간만 다르다)
+        moveTo('bedroom', 'walking', 0.88)
+        later(() => { person.activity = 'sitting'; tickSensing() }, 2000)
       },
       returnKitchen() {
+        clearSteps()
         const k = presence.kitchen
         const wasAway = !k.present
         k.present = true; k.zone = 'kitchen'; k.absentSec = 0; k.observedAt = now()
-        setLocation('kitchen')
+        moveTo('kitchen', 'standing', 0.92)
         if (wasAway && absenceStage !== 'none') {
           emitEvent('user_returned', 'info', 'kitchen', { action: '위험 상태 해제' })
           addTimeline('user_returned', '사용자 복귀')
@@ -366,12 +507,7 @@ export function createMockSource(): DataSource {
         const d = induction()
         if (d.burner.deviceState !== 'on') {
           d.burner.deviceState = 'on'; d.burner.level = 8; d.lastControl = 'user'
-          if (!activeSessionId) {
-            const id = uid('ses')
-            sessions.set(id, { sessionId: id, startedAt: now(), status: 'active', peakTemperature: d.burner.temperature, timeline: [] })
-            activeSessionId = id
-            addTimeline('cooking_started', '화구 켜짐 · 화력 8단')
-          }
+          if (!activeSessionId) startSession(8)
         }
         d.burner.level = 9
         d.burner.temperature = policy.overheatEnterC - 1
@@ -392,11 +528,14 @@ export function createMockSource(): DataSource {
           guardianNotified: contacts.guardian !== null, burnerShutOff: wasCooking,
         }
         presence.bathroom = { ...presence.bathroom, present: true, observedAt: detectedAt }
-        setLocation('bathroom')
-        const light = devices.find((x) => x.kind === 'light' && x.room === 'bathroom')
-        if (light && light.kind === 'light' && light.auto && !light.on) {
-          light.on = true; light.saving = false
+        clearSteps()
+        moveTo('bathroom', 'lying', 0.91)
+        // 낙상 알림: 욕실 전등 10초 깜빡임 (백엔드 blink 와 같은 동작) 뒤 켜 둔다
+        const light = lightIn('bathroom')
+        if (light) {
+          light.on = true; light.saving = false; light.blinking = true; light.brightness = 100
           emit({ event: 'device.updated', data: light })
+          later(() => { light.blinking = false; emit({ event: 'device.updated', data: light }) }, 10_000)
         }
         const e = emitEvent('fall_detected', 'danger', 'bathroom', {
           trigger: '서 있다가 누운 자세로 바뀐 뒤 10초간 움직임 없음',

@@ -1,4 +1,4 @@
-import { Droplet, Flame, PersonStanding, Undo2, UserX, WifiOff } from 'lucide-react'
+import { AirVent, CookingPot, Droplet, Flame, PersonStanding, Undo2, UserX, WifiOff } from 'lucide-react'
 import { Sheet } from '@/components/ui/Sheet'
 import { ListGroup, ListRow, SymbolIcon } from '@/components/ui/List'
 import { useHome } from '@/store/HomeStore'
@@ -27,6 +27,11 @@ export function DemoPanel({ open, onClose }: { open: boolean; onClose: () => voi
         <ListRow wrap chevron leading={<SymbolIcon icon={PersonStanding} color="red" />} title="욕실 낙상" subtitle="인덕션 비상 차단 · 보호자 문자 · 60초 후 자동 신고" onClick={() => run(() => demo.fall())} />
         <ListRow wrap chevron leading={<SymbolIcon icon={WifiOff} color="gray" />} title={purifier?.online === false ? '정수기 연결 복구' : '정수기 연결 끊김'}
           subtitle="응답 없음 표시 · 다시 연결 확인" onClick={() => run(() => { if (purifier) demo.toggleOffline(purifier.id) })} />
+      </ListGroup>
+      {/* v5: 공기청정기 자동 켜짐 두 가지 (인덕션 · 공기질) */}
+      <ListGroup title="공기청정기" className="mt-6">
+        <ListRow wrap chevron leading={<SymbolIcon icon={CookingPot} color="orange" />} title="인덕션 켜짐" subtitle="꺼져 있던 공기청정기가 자동으로 켜짐" onClick={() => run(() => demo.startCooking())} />
+        <ListRow wrap chevron leading={<SymbolIcon icon={AirVent} color="green" />} title="공기질 나빠짐" subtitle="초미세먼지 52 · 자동 모드면 스스로 켜짐" onClick={() => run(() => demo.airWorse())} />
       </ListGroup>
     </Sheet>
   )

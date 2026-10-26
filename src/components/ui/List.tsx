@@ -50,7 +50,7 @@ export function ListRow({
   const body = (
     <>
       {leading && <span className="flex shrink-0 items-center">{leading}</span>}
-      <span className={cn('row-sep flex min-w-0 flex-1 items-center gap-3 pr-4', big ? 'min-h-16 py-3' : 'min-h-[3.25rem] py-2.5')}>
+      <span className={cn('row-sep flex min-w-0 flex-1 items-center gap-3 pr-4', big ? 'min-h-16 py-3 short:min-h-14 short:py-2' : 'min-h-[3.25rem] py-2.5')}>
         <span className="min-w-0 flex-1">
           <span className={cn('block truncate text-ink', big ? 'text-[1.25rem]' : 'text-[1rem]', titleClass)}>{title}</span>
           {subtitle && <span className={cn('block text-ink-2', wrap ? 'leading-snug' : 'truncate', big ? 'text-[1rem]' : 'text-[0.8125rem]')}>{subtitle}</span>}

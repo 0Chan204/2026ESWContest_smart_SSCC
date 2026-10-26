@@ -1,5 +1,5 @@
 import type {
-  CookingSession, Device, FallPolicy, KitchenPolicy, Presence, SafetyEvent, SafetyEventType, Severity,
+  CookingSession, Device, FallPolicy, KitchenPolicy, Presence, SafetyEvent, SafetyEventType, SensingSample, Severity,
 } from '@/types'
 
 /**
@@ -54,7 +54,22 @@ export function seedDevices(): Device[] {
     },
     { id: 'fan-01', kind: 'fan', name: '주방 환풍기', room: 'kitchen', online: true, on: true, speed: 2, auto: true },
     { id: 'fan-bath-01', kind: 'fan', name: '욕실 환풍기', room: 'bathroom', online: true, on: false, speed: 1, auto: true },
+    // 백엔드 v0.7 공기청정기(air-01, 방). 조리 중이라 HomeVIS 가 켜 둔 상태
+    {
+      id: 'air-01', kind: 'air', name: '공기청정기', room: 'bedroom', online: true, on: true, mode: 'auto',
+      airQuality: { pm25: 24, pm10: 38, level: 'normal' }, auto: true, autoReason: 'induction',
+    },
   ]
+}
+
+/** 최근 1분 재실 판단 (주방에 서 있음) — 1초 간격 */
+export function seedSensing(): SensingSample[] {
+  const now = Date.now()
+  return Array.from({ length: 60 }, (_, i) => ({
+    at: new Date(now - (60 - i) * 1000).toISOString(), room: 'kitchen' as const, present: true,
+    confidence: Math.round((0.9 + Math.sin(i / 6) * 0.03 + (i % 7) * 0.003) * 100) / 100,
+    activity: i > 20 && i < 26 ? 'walking' : 'standing', activityConfidence: 0.8, validSec: 5,
+  }))
 }
 
 export function seedPresence(): { kitchen: Presence; bathroom: Presence } {

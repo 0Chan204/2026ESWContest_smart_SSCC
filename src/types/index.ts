@@ -11,10 +11,12 @@ export type Language = 'ko' | 'en'
 /** 화면 테마. 기본 light (밝은 주방 월패드). 다크·시스템은 설정에서 선택 */
 export type Theme = 'dark' | 'light' | 'system'
 
-/** 부스 구성: 침실 · 거실 · 주방 · 욕실 */
-export type RoomId = 'kitchen' | 'bathroom' | 'bedroom' | 'living'
+/** 부스 구성: 주방 · 침실 · 욕실 (서로 붙어 있음. 백엔드 kitchen / room / toilet) */
+export type HouseRoom = 'kitchen' | 'bedroom' | 'bathroom'
+/** 기기·기록의 공간. 백엔드가 모르는 구역 이름을 보내면 'home'(집 전체)으로 둔다 */
+export type RoomId = HouseRoom | 'home'
 /** 사용자 현재 위치 (중앙제어: 집 밖 / 판단 불가 포함) */
-export type Location = RoomId | 'outside' | 'unknown'
+export type Location = HouseRoom | 'outside' | 'unknown'
 
 /** 화면에 보여줄 위험 단계 (중앙제어 CAUTION/WARNING/DANGER + 센서 불확실) */
 export type Risk = 'normal' | 'caution' | 'warning' | 'danger' | 'uncertain'
@@ -82,9 +84,69 @@ export interface LightDevice extends DeviceBase {
   brightnessSteps?: number[]
   /** 절전 밝기로 낮춘 상태 (사람이 없어 HomeVIS 가 낮췄거나 절전을 고름) */
   saving?: boolean
+  /** 깜빡이는 중 (낙상 알림) */
+  blinking?: boolean
 }
 
-export type Device = InductionDevice | PurifierDevice | FanDevice | LightDevice
+export type AirLevel = 'good' | 'normal' | 'bad'
+export type AirMode = 'auto' | 'manual'
+
+/** 공기청정기 공기질 센서 값 (BE AirQuality). 기준은 기기가 정한다 */
+export interface AirQuality {
+  /** 초미세먼지 PM2.5 (㎍/㎥) */
+  pm25?: number
+  /** 미세먼지 PM10 (㎍/㎥) */
+  pm10?: number
+  level?: AirLevel
+}
+
+/** 공기청정기 (BE air_purifier, v0.7). 정수기(purifier)와 다른 기기 */
+export interface AirPurifierDevice extends DeviceBase {
+  kind: 'air'
+  on: boolean
+  /** auto = 공기질에 따라 기기가 스스로 켜고 끔, manual = 직접 */
+  mode: AirMode
+  airQuality?: AirQuality
+  /** 마지막 변경이 HomeVIS·기기 자동 동작인지 */
+  auto: boolean
+  /**
+   * 자동으로 켠 이유 (확실히 알 때만).
+   * air = 기기가 공기질이 나빠 스스로 켬, induction = 인덕션이 켜져 HomeVIS 가 켬
+   */
+  autoReason?: 'air' | 'induction'
+}
+
+export type Device = InductionDevice | PurifierDevice | FanDevice | LightDevice | AirPurifierDevice
+
+// ── 최종 재실 판단 (BE sensing.result, docs/EDGE-MQTT.md 6장) ────────────
+/** 재실 판단 담당이 1초마다 보내는 최종 결과 1건. 사람이 있는 공간 하나만 알려준다 */
+export interface SensingSample {
+  /** 판단 기준 시각 (ISO) */
+  at: string
+  /** 사람이 있는 공간. 아무도 없거나 알 수 없으면 null */
+  room: HouseRoom | null
+  present: boolean
+  /** 0~1. 판단 담당이 보내지 않으면 null */
+  confidence: number | null
+  /** 행동 원문 (standing / sitting / lying / walking …) */
+  activity: string | null
+  activityConfidence: number | null
+  /** 결과를 유효하게 볼 시간(초) */
+  validSec: number
+}
+
+/** 공간별 센서 노드 상태 (BE GET /sensing/combined) */
+export interface SensingNode {
+  room: HouseRoom
+  /** 노드 이름 (r1 · r2 · r3) */
+  node: string
+  /** ok = 정상 수신, stale = 오래됨·응답 없음, missing = 아직 받은 적 없음, other = 노드가 보낸 다른 상태 */
+  status: 'ok' | 'stale' | 'missing' | 'other'
+  /** 신호 세기 (dBm) */
+  rssi?: number
+  /** 수신 속도 (Hz) */
+  rateHz?: number
+}
 
 // ── 재실 (BE PresenceReport) ─────────────────────────────────────────────
 export type Zone = 'kitchen' | 'near' | 'far' | 'unknown'

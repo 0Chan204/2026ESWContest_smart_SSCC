@@ -18,14 +18,15 @@ export function PageHeader({ title, right }: { title: string; right?: ReactNode 
 
   return (
     <>
-      <header className="flex shrink-0 items-end justify-between gap-6 px-5 pt-5 md:px-8 md:pt-6 wall:short:pt-4">
+      <header className="flex shrink-0 flex-wrap items-end justify-between gap-x-6 gap-y-2 px-5 pt-5 md:px-8 md:pt-6 wall:short:pt-4">
         <div className="min-w-0">
           <p className={cn('font-semibold text-ink-3', elderly ? 'text-lg' : 'text-[0.8125rem]')}>{formatToday(now)}</p>
           <h1 className={cn('font-bold tracking-[-0.02em] text-ink', elderly ? 'text-[2.5rem]' : 'text-[2.125rem]', 'leading-tight')}>{title}</h1>
         </div>
         <div className="flex shrink-0 items-center gap-4 md:gap-6">
           {right}
-          {elderly && <FontScaleControl />}
+          {/* 휴대폰 폭에서는 자리가 없어 설정 > 화면에서만 바꾼다 */}
+          {elderly && <span className="hidden md:block"><FontScaleControl /></span>}
           <WeatherNow hour={now.getHours()} />
           <p className={cn('tabular leading-none font-light tracking-[-0.03em] text-ink', elderly ? 'text-[3.25rem]' : 'text-[2.75rem]')}
             aria-label={`현재 시각 ${formatClock(now)}`}>

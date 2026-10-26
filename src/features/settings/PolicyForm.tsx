@@ -32,7 +32,7 @@ export function PolicyForm() {
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-6" noValidate>
-      <Group title="조리 중 주방 이탈" footer="거실 등 주방 근처에 있으면 시간에 배수를 곱해 덜 민감하게 판단해요.">
+      <Group title="조리 중 주방 이탈" footer="주방 근처에 있으면 시간에 배수를 곱해 덜 민감하게 판단해요.">
         <Num label="지켜보기 시작" unit="초" value={p.watchAfterSec} onChange={set('watchAfterSec')} min={10} max={3600} />
         <Num label="화력 자동 저감" unit="초" value={p.reduceAfterSec} onChange={set('reduceAfterSec')} min={20} max={3600} />
         <Num label="전원 자동 차단" unit="초" value={p.offAfterSec} onChange={set('offAfterSec')} min={30} max={7200} />

@@ -1,5 +1,6 @@
-import type { Device, Risk } from '@/types'
+import type { AirPurifierDevice, Device, Risk } from '@/types'
 import { formatDuration, formatWhen } from './format'
+import { AIR_LEVEL_LABEL } from './labels'
 
 const SPEED = { 1: '약', 2: '중', 3: '강' } as const
 
@@ -39,10 +40,31 @@ export function summarize(d: Device): DeviceSummary {
         : { active: false, status: '꺼짐', detail: d.auto ? (kitchen ? '조리를 시작하면 자동으로 켜져요' : '필요하면 자동으로 켜져요') : '자동 운전 꺼짐', risk: 'normal' }
     }
     case 'light':
+      if (d.blinking) return { active: true, status: '깜빡이는 중', detail: '낙상 알림', risk: 'normal' }
       if (!d.on) return { active: false, status: '꺼짐', detail: d.auto ? '사람이 들어오면 자동으로 켜져요' : '자동 점등 꺼짐', risk: 'normal' }
       if (d.saving) return { active: true, status: `절전 ${d.brightness}%`, detail: d.auto ? '사람이 없어 밝기를 낮췄어요' : '절전 밝기', risk: 'normal' }
       return { active: true, status: `밝기 ${d.brightness}%`, detail: d.auto ? '사람이 있어 자동으로 켜짐' : '직접 켬', risk: 'normal' }
+    case 'air': {
+      const level = d.airQuality?.level
+      const status = level ? `공기 ${AIR_LEVEL_LABEL[level]}` : d.on ? '켜짐' : '꺼짐'
+      const reason = d.on ? airAutoReason(d) : null
+      return { active: d.on, status, detail: reason ?? `${pm25Text(d)} · ${d.on ? (d.mode === 'auto' ? '자동 운전' : '수동 운전') : '꺼짐'}`, risk: 'normal' }
+    }
   }
+}
+
+/** 초미세먼지 글자 (값이 없으면 '측정값 없음') */
+export function pm25Text(d: AirPurifierDevice): string {
+  const v = d.airQuality?.pm25
+  return v === undefined ? '측정값 없음' : `초미세먼지 ${Math.round(v)}`
+}
+
+/** 자동으로 켜진 이유 문장. 자동으로 켜진 게 아니면 null. short = 좁은 칸용 */
+export function airAutoReason(d: AirPurifierDevice, short = false): string | null {
+  if (!d.auto || !d.on) return null
+  if (d.autoReason === 'air') return short ? '공기질 나빠 자동 켜짐' : '공기질이 나빠 자동으로 켰어요'
+  if (d.autoReason === 'induction') return short ? '인덕션 켜져 자동 켜짐' : '인덕션이 켜져 자동으로 켰어요'
+  return short ? 'HomeVIS 자동 켜짐' : 'HomeVIS 가 자동으로 켰어요'
 }
 
 /** 화면에서 쓰는 전등 밝기 (꺼져 있으면 0) */
@@ -78,6 +100,6 @@ export function brightnessLabel(v: number, saving?: number): string {
 export const FAN_SPEED_LABEL = SPEED
 
 /** 원격 제어를 허용하는 기기 (인덕션·정수기는 조회 전용) */
-export function isControllable(d: Device): boolean {
-  return d.kind === 'fan' || d.kind === 'light'
+export function isControllable(d: Device): d is Extract<Device, { kind: 'fan' | 'light' | 'air' }> {
+  return d.kind === 'fan' || d.kind === 'light' || d.kind === 'air'
 }

@@ -11,6 +11,7 @@ import { useHome } from '@/store/HomeStore'
 import { usePreferences } from '@/store/PreferencesContext'
 import type { Language, Mode, Theme } from '@/types'
 import { PERMISSIONS } from '@/features/onboarding/permissions'
+import { speechSupported } from '@/features/voice/speech'
 import { cn } from '@/lib/cn'
 
 type SymColor = ComponentProps<typeof SymbolIcon>['color']
@@ -51,7 +52,7 @@ export function SettingsPage() {
                 <button key={id} type="button" onClick={() => setParams({ section: id })} aria-current={on ? 'page' : undefined}
                   className={cn('flex w-full items-center gap-3 pl-3 text-left', on ? 'bg-brand text-white' : 'press text-ink hover:bg-sunken')}>
                   <SymbolIcon icon={Icon} color={color} />
-                  <span className={cn('flex flex-1 items-center gap-2 pr-3', elderly ? 'min-h-16 text-xl' : 'min-h-12 text-[1rem]', !on && 'row-sep')}>
+                  <span className={cn('flex flex-1 items-center gap-2 pr-3', elderly ? 'min-h-16 text-xl short:min-h-14' : 'min-h-12 text-[1rem]', !on && 'row-sep')}>
                     <span className="flex-1">{label}</span>
                     {id === 'contacts' && !contacts.guardian && <span className={cn('h-2.5 w-2.5 rounded-full', on ? 'bg-white' : 'bg-warn')} aria-label="등록 필요" />}
                     <ChevronRight className={cn('h-4 w-4 md:hidden', on ? 'text-white' : 'text-ink-3')} strokeWidth={2.4} aria-hidden="true" />
@@ -129,11 +130,18 @@ function ContactsSection() {
 }
 
 function VoiceSection() {
-  const { voiceEnabled, setVoiceEnabled, ttsEnabled, setTtsEnabled, elderly } = usePreferences()
+  const { voiceEnabled, setVoiceEnabled, wakeWordEnabled, setWakeWordEnabled, ttsEnabled, setTtsEnabled, elderly } = usePreferences()
+  const supported = speechSupported()
   return (
     <>
-      <ListGroup title="음성 명령" footer="왼쪽 아래 마이크 버튼으로 화면 이동, 조명·환풍기 켜고 끄기를 할 수 있어요. 브라우저 음성 인식은 음성이 브라우저 제공사 서버로 전송될 수 있어요. 꺼져 있으면 예시 명령으로 동작만 보여드려요.">
+      <ListGroup title="음성 명령" footer="마이크 버튼으로 화면 이동, 조명·환풍기·공기청정기 조작을 할 수 있어요. 인식을 위해 음성이 브라우저 제공사 서버로 전송될 수 있어요. 꺼져 있으면 예시 명령으로 동작만 보여드려요.">
         <ListRow big={elderly} title="음성 명령 사용" trailing={<Toggle checked={voiceEnabled} onChange={setVoiceEnabled} label="음성 명령 사용" size={elderly ? 'lg' : 'md'} />} />
+      </ListGroup>
+      <ListGroup title="호출어" footer={!supported ? '이 브라우저는 음성 인식을 지원하지 않아요.'
+        : '켜 두면 “홈비스”라고 부를 때까지 마이크가 계속 켜져 있고, 기다리는 동안의 음성도 인식을 위해 브라우저 제공사 서버로 전송돼요.'}>
+        <ListRow big={elderly} title="호출어로 부르기 (홈비스)" subtitle={voiceEnabled ? undefined : '음성 명령을 먼저 켜 주세요'}
+          trailing={<Toggle checked={wakeWordEnabled && voiceEnabled} disabled={!voiceEnabled || !supported} onChange={setWakeWordEnabled}
+            label="호출어로 부르기" size={elderly ? 'lg' : 'md'} />} />
       </ListGroup>
       <ListGroup title="위험 알림" footer="위험 알림이 뜨면 내용을 읽어드려요. 기기에 내장된 음성만 사용해요.">
         <ListRow big={elderly} title="음성 안내" trailing={<Toggle checked={ttsEnabled} onChange={setTtsEnabled} label="음성 안내" size={elderly ? 'lg' : 'md'} />} />
@@ -176,7 +184,7 @@ function AboutSection() {
   const { elderly } = usePreferences()
   return (
     <ListGroup title="정보">
-      <ListRow big={elderly} title="버전" value="HomeVIS 3.0" />
+      <ListRow big={elderly} title="버전" value="HomeVIS 5.0" />
       <ListRow big={elderly} title="데이터" value={source.kind === 'mock' ? '시연용 (백엔드 미연결)' : '백엔드 연결됨'} />
       <ListRow big={elderly} title="화면" value="월패드 · 태블릿 · 휴대폰" />
       <ListRow big={elderly} title="인덕션 원격 제어" value="제공 안 함" />

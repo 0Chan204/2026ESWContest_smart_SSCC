@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Calendar, ClipboardList, Search } from 'lucide-react'
 import { PageHeader } from '@/app/PageHeader'
 import { Card, SectionTitle } from '@/components/ui/Card'
@@ -15,7 +15,7 @@ import type { SafetyEvent } from '@/types'
 import { cn } from '@/lib/cn'
 
 type CategoryFilter = EventCategory | 'all'
-type RoomFilter = 'all' | 'kitchen' | 'bathroom'
+type RoomFilter = 'all' | 'kitchen' | 'bedroom' | 'bathroom'
 
 function defaultRange() {
   const to = new Date(); const from = new Date(); from.setDate(from.getDate() - 6)
@@ -47,7 +47,16 @@ export function HistoryPage() {
   const [q, setQ] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<string | null>(null)
-  const perPage = elderly ? 4 : 6
+  // 세로가 짧은 월패드(1280×720)에서 어르신 글자가 크면 한 쪽에 3건만 (목록 안 스크롤이 생기지 않도록)
+  const [short, setShort] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(max-height: 760px)').matches)
+  useEffect(() => {
+    const mq = window.matchMedia?.('(max-height: 760px)')
+    if (!mq) return
+    const on = (e: MediaQueryListEvent) => setShort(e.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  const perPage = elderly ? (short ? 3 : 4) : 6
 
   const records = useMemo(() => events.filter(isRecord), [events])
   const filtered = useMemo(() => {
@@ -102,7 +111,7 @@ export function HistoryPage() {
         <label className={field}>
           <span className="sr-only">공간</span>
           <select value={room} onChange={(e) => update(() => setRoom(e.target.value as RoomFilter))} className="cursor-pointer bg-transparent outline-none">
-            <option value="all">모든 공간</option><option value="kitchen">주방</option><option value="bathroom">욕실</option>
+            <option value="all">모든 공간</option><option value="kitchen">주방</option><option value="bedroom">침실</option><option value="bathroom">욕실</option>
           </select>
         </label>
         <div className={field}>

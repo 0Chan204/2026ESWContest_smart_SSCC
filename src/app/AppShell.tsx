@@ -19,11 +19,11 @@ export function AppShell() {
   const [demoOpen, setDemoOpen] = useState(false)
   return (
     <div className="flex h-dvh overflow-hidden">
-      <NavRail onVoice={voice.start} voiceActive={voice.open} onDemo={() => setDemoOpen(true)} />
+      <NavRail onVoice={voice.start} voiceActive={voice.open} wakeListening={voice.wakeListening} onDemo={() => setDemoOpen(true)} />
       <main className="min-w-0 flex-1 overflow-y-auto pb-24 md:pb-0 wall:overflow-hidden">
         <Outlet />
       </main>
-      <BottomBar onVoice={voice.start} voiceActive={voice.open} onDemo={() => setDemoOpen(true)} />
+      <BottomBar onVoice={voice.start} voiceActive={voice.open} wakeListening={voice.wakeListening} onDemo={() => setDemoOpen(true)} />
       <ActionNoticeSheet />
       <FallAlertSheet />
       <AnnouncementSpeaker />

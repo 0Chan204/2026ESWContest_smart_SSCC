@@ -6,7 +6,13 @@ import { RISK_TONE } from '@/lib/labels'
 import type { Risk } from '@/types'
 import { cn } from '@/lib/cn'
 
-interface NavProps { onVoice: () => void; voiceActive: boolean; onDemo: () => void }
+interface NavProps {
+  onVoice: () => void
+  voiceActive: boolean
+  /** 호출어 대기 중 (마이크 켜짐) — 마이크 버튼에 주황 점과 글자로 알린다 */
+  wakeListening: boolean
+  onDemo: () => void
+}
 
 function useNavItems() {
   const { elderly } = usePreferences()
@@ -33,7 +39,7 @@ function RiskDot({ risk, label }: { risk?: Risk; label: string }) {
  * 왼쪽 메뉴 (태블릿·월패드, 768px 이상). iPad 탭 막대처럼 선택된 항목만 파란 글자.
  * 음성 버튼은 아래에 고정해 콘텐츠를 가리지 않는다.
  */
-export function NavRail({ onVoice, voiceActive, onDemo }: NavProps) {
+export function NavRail({ onVoice, voiceActive, wakeListening, onDemo }: NavProps) {
   const { elderly } = usePreferences()
   const { source } = useHome()
   const items = useNavItems()
@@ -70,25 +76,30 @@ export function NavRail({ onVoice, voiceActive, onDemo }: NavProps) {
             <FlaskConical className="h-5 w-5" aria-hidden="true" />
           </button>
         )}
-        <VoiceButton onVoice={onVoice} voiceActive={voiceActive} elderly={elderly} />
+        <VoiceButton onVoice={onVoice} voiceActive={voiceActive} wakeListening={wakeListening} elderly={elderly} />
+        {wakeListening && <span className={cn('-mt-1 font-medium text-ink-3', elderly ? 'text-[0.875rem]' : 'text-[0.6875rem]')} aria-hidden="true">호출어 대기</span>}
       </div>
     </nav>
   )
 }
 
-function VoiceButton({ onVoice, voiceActive, elderly, compact = false }: { onVoice: () => void; voiceActive: boolean; elderly: boolean; compact?: boolean }) {
+function VoiceButton({ onVoice, voiceActive, wakeListening, elderly, compact = false }: {
+  onVoice: () => void; voiceActive: boolean; wakeListening: boolean; elderly: boolean; compact?: boolean
+}) {
   return (
-    <button type="button" onClick={onVoice} aria-label="음성으로 말하기" aria-expanded={voiceActive}
-      className={cn('press flex items-center justify-center rounded-full text-white',
+    <button type="button" onClick={onVoice} aria-label={wakeListening ? '음성으로 말하기 · 호출어 대기 중' : '음성으로 말하기'} aria-expanded={voiceActive}
+      className={cn('press relative flex items-center justify-center rounded-full text-white',
         compact ? 'h-12 w-12' : elderly ? 'h-[68px] w-[68px]' : 'h-14 w-14',
         voiceActive ? 'bg-brand-dark' : 'bg-brand')}>
       <Mic className={elderly && !compact ? 'h-7 w-7' : 'h-6 w-6'} strokeWidth={2} aria-hidden="true" />
+      {/* iOS 처럼 마이크가 켜져 있으면 주황 점 */}
+      {wakeListening && <span className="absolute top-0.5 right-0.5 h-3 w-3 rounded-full bg-sym-orange ring-2 ring-canvas" aria-hidden="true" />}
     </button>
   )
 }
 
 /** 휴대폰 폭(768px 미만) 하단 탭 막대. 음성 버튼은 오른쪽 끝. */
-export function BottomBar({ onVoice, voiceActive, onDemo }: NavProps) {
+export function BottomBar({ onVoice, voiceActive, wakeListening, onDemo }: NavProps) {
   const { elderly } = usePreferences()
   const { source } = useHome()
   const items = useNavItems()
@@ -113,7 +124,7 @@ export function BottomBar({ onVoice, voiceActive, onDemo }: NavProps) {
           <FlaskConical className="h-5 w-5" aria-hidden="true" />
         </button>
       )}
-      <VoiceButton onVoice={onVoice} voiceActive={voiceActive} elderly={elderly} compact />
+      <VoiceButton onVoice={onVoice} voiceActive={voiceActive} wakeListening={wakeListening} elderly={elderly} compact />
     </nav>
   )
 }
