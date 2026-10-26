@@ -1,5 +1,6 @@
 """Python 3.11 TOML settings; environment overrides never enter status/log files."""
 from dataclasses import dataclass, field
+from ipaddress import IPv6Address
 import os
 from pathlib import Path
 import tomllib
@@ -30,10 +31,24 @@ class MQTTSettings:
     join_wait_seconds: float = 0.25
 
     def __post_init__(self):
-        if not self.host or not self.client_id or not self.location_topic:
+        if any(not isinstance(value, str) or not value.strip()
+               for value in (self.host, self.client_id, self.location_topic)):
             raise ValueError("MQTT host, client_id and location_topic are required")
+        if "://" in self.host or "/" in self.host or any(c.isspace() for c in self.host):
+            raise ValueError("MQTT host must be a hostname or IP address without a scheme, port or path")
+        if ":" in self.host:
+            try:
+                IPv6Address(self.host)
+            except ValueError:
+                raise ValueError("MQTT port belongs in port, not host") from None
         if type(self.port) is not int or not 1 <= self.port <= 65535:
             raise ValueError("MQTT port must be 1..65535")
+        if type(self.tls) is not bool:
+            raise ValueError("MQTT tls must be true or false")
+        if self.ca_file is not None and (not isinstance(self.ca_file, str) or not self.ca_file.strip()):
+            raise ValueError("MQTT ca_file must be a non-empty path or omitted")
+        if self.ca_file and not self.tls:
+            raise ValueError("MQTT ca_file requires tls=true")
         topics = [x for x in (self.location_topic, self.behavior_topic, self.fall_status_topic, self.voice_topic) if x]
         if len(set(topics)) != len(topics) or any("#" in x or "+" in x for x in topics):
             raise ValueError("MQTT input topics must be distinct exact topics")
@@ -107,10 +122,18 @@ def load_settings(path=DEFAULT_CONFIG, *, environ=None, mode=None, base_url=None
     if env.get("HOMEVIS_BACKEND_TOKEN"):
         backend["headers"] = {"Authorization": "Bearer " + env["HOMEVIS_BACKEND_TOKEN"]}
     for key, variable in (("host", "HOMEVIS_MQTT_HOST"), ("port", "HOMEVIS_MQTT_PORT"),
+                          ("client_id", "HOMEVIS_MQTT_CLIENT_ID"), ("ca_file", "HOMEVIS_MQTT_CA_FILE"),
                           ("location_topic", "HOMEVIS_LOCATION_TOPIC"), ("behavior_topic", "HOMEVIS_BEHAVIOR_TOPIC"),
                           ("fall_status_topic", "HOMEVIS_FALL_STATUS_TOPIC")):
         if variable in env:
             mqtt[key] = int(env[variable]) if key == "port" else env[variable]
+    if "HOMEVIS_MQTT_TLS" in env:
+        value = env["HOMEVIS_MQTT_TLS"].strip().lower()
+        if value not in {"true", "false"}:
+            raise ValueError("HOMEVIS_MQTT_TLS must be true or false")
+        mqtt["tls"] = value == "true"
+    if mqtt.get("ca_file") == "":
+        mqtt["ca_file"] = None  # Empty means use the system's trusted CA certificates.
     if "username" in mqtt or "password" in mqtt:
         raise ValueError("put MQTT credentials in environment, not TOML")
     mqtt.update(username=env.get("HOMEVIS_MQTT_USERNAME", ""), password=env.get("HOMEVIS_MQTT_PASSWORD", ""))

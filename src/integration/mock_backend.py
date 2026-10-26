@@ -16,6 +16,12 @@ def sample_devices(timestamp: float) -> dict:
         {"device": "water_purifier", "deviceId": "water-01", "room": "kitchen", "online": True,
          "is_on": False, "current_state": {"status": "idle", "lastDispensedMl": 250},
          "control_state": None, "updatedAt": iso_time(timestamp)},
+        {"device": "light", "deviceId": "light-00", "room": "toilet", "online": True,
+         "is_on": False, "current_state": {"power": "off", "mode": "steady"},
+         "control_state": "homevis", "updatedAt": iso_time(timestamp)},
+        {"device": "light", "deviceId": "light-02", "room": "kitchen", "online": True,
+         "is_on": False, "current_state": {"power": "off", "mode": "steady"},
+         "control_state": "homevis", "updatedAt": iso_time(timestamp)},
     ]}
 
 
@@ -54,7 +60,7 @@ class MockBackend:
             if original != payload:
                 return HTTPResult(409, {})
             return HTTPResult(200, {**deepcopy(response), "duplicate": True})
-        actions = [{"device": a["device"], "deviceId": "mock-device", "action": a["action"],
+        actions = [{"device": a["device"], "deviceId": a.get("deviceId", "mock-device"), "action": a["action"],
                     "status": self.action_status, "commandId": f"mock-cmd-{identity}-{i}",
                     "message": None if self.action_status == "sent" else "mock failure"}
                    for i, a in enumerate(payload["actions"])]

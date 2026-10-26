@@ -13,7 +13,7 @@ python -m src.integration --sensing-source backend --base-url http://백엔드IP
 ```
 
 기본 설정도 backend HTTP 모드입니다. 기존 `.env`의 `HOMEVIS_SENSING_SOURCE`가 mqtt면 backend로 바꾸세요.
-센싱 GET은 기본 1초, 기기 GET은 2초이며 판단은 기존 `POST /api/v1/ai/decisions`로만 전송합니다.
+센싱 GET과 기기 GET은 기본 1초이며 판단은 기존 `POST /api/v1/ai/decisions`로만 전송합니다.
 AI는 raw CSI 재처리/학습이나 기기 MQTT command 발행을 하지 않습니다. 백엔드·센싱 추론기는 별도 실행되어야 합니다.
 
 ## 실제로 확인된 필드와 아직 모르는 것

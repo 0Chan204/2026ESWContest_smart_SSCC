@@ -65,7 +65,9 @@ PowerShell에서 활성화가 제한되면 이후 명령의 `python` 대신 `.\.
 
 ### 백엔드 주소 설정
 
-`.env`에서 실제 서버 주소를 지정합니다. AI가 보드 밖에서 실행된다면 `localhost`가 아닌 보드 주소를 사용하세요.
+`config/decision_policy.toml`의 `[backend]`, `[mqtt]`에서 기본 주소를 설정합니다.
+`.env` 또는 OS 환경변수로 덮어쓸 수도 있습니다. AI가 보드 밖에서 실행된다면 `localhost`가 아닌 보드 주소를 사용하세요.
+기존 `.env`에 주소가 남아 있으면 TOML보다 우선하므로, TOML 값을 쓰려면 해당 환경변수를 제거하거나 주석 처리하세요.
 
 ```ini
 HOMEVIS_MODE=live
@@ -81,7 +83,15 @@ LLM_PROVIDER=none
 ```
 
 `HOMEVIS_BACKEND_URL`에는 서버 기본 주소를 넣습니다. `/api/v1` 경로는 클라이언트가 붙입니다.
+`HOMEVIS_MQTT_HOST`에는 IP/호스트명만 넣고 포트는 `HOMEVIS_MQTT_PORT`로 설정합니다.
+MQTT 클라이언트 ID·TLS·CA는 각각 `HOMEVIS_MQTT_CLIENT_ID`, `HOMEVIS_MQTT_TLS=true/false`,
+`HOMEVIS_MQTT_CA_FILE`로 덮어씁니다. CA 경로는 TLS를 켰을 때 사용하며 빈 값이면 시스템 인증서를 사용합니다.
 토큰·API 키·MQTT 비밀번호는 실제 값을 저장소에 작성하지 않습니다.
+
+전등은 **방 `room/light-01`, 화장실 `toilet/light-00`, 주방 `kitchen/light-02`** 기준입니다.
+기본 `multi_room_lights=true`에서 백엔드 기기 상태 API가 보내는 각 전등의 `deviceId`와 `room`으로
+켜기·끄기를 요청합니다. 주방 기기가 백엔드 API에 등록되어 있으면 별도 AI 토픽 변경 없이 `light-02`를 사용합니다.
+`HOMEVIS_LOCATION_TOPIC`은 센싱 수신용이므로 전등 ID로 바꾸지 않습니다. 실제 전등 MQTT 발행은 백엔드가 담당합니다.
 
 ### 먼저 Mock으로 확인
 
@@ -125,7 +135,7 @@ Wi-Fi 센싱·추론
    │  ※ Wi-Fi → 백엔드 형식 변환 연결은 팀 확인·구현 필요
    ▼
 백엔드 센싱 저장 ── HTTP GET (기본 1초) ──┐
-백엔드 기기 상태 ── HTTP GET (기본 2초) ──┼→ AI 유효성 검사·시간 정렬
+백엔드 기기 상태 ── HTTP GET (기본 1초) ──┼→ AI 유효성 검사·시간 정렬
                                         │     ├─ 중앙 판단·confidence·시나리오
                                         │     └─ 조리 공청기·전체 외출 규칙
                                         │                ↓
@@ -329,14 +339,17 @@ API 어댑터는 클라이언트를 재사용하고 timeout·제한적 재시도
 
 ## 8. 설정·저장·장애 대응
 
-**판단 기준은 [config/decision_policy.toml](config/decision_policy.toml) 한 파일에서 조정합니다.**
+**연결 정보·판단 기준은 [config/decision_policy.toml](config/decision_policy.toml) 한 파일에서 조정합니다.**
 현재 기본값이 들어 있으며, `python -m src.integration` 실행기가 시작할 때 읽어 각 판단 모듈에 전달합니다.
-네트워크 주소·토픽·실행 주기는 [config/homevis.toml](config/homevis.toml), 환경변수 예시는 [.env.example](.env.example)입니다.
+백엔드 주소·MQTT 접속·센싱 수신 토픽도 같은 파일에서 설정합니다.
+실행 주기·음성 연결·시나리오 경로는 [config/homevis.toml](config/homevis.toml), 환경변수 예시는 [.env.example](.env.example)입니다.
 지원되는 항목에 한해 **CLI > OS 환경변수 > .env > TOML** 순으로 적용합니다.
 모든 TOML 키에 환경변수 별칭이 있는 것은 아닙니다.
 
 | decision_policy.toml 항목 | 조정 대상 / 예시 |
 | --- | --- |
+| `[backend]` | 백엔드 기본 URL, HTTP 제한 시간, 기기 상태 조회 간격 |
+| `[mqtt]` | 브로커 호스트·포트·클라이언트 ID·TLS·CA·센싱 수신 토픽 |
 | `[automation]` | 주방 이탈 40초·복귀 5초, 전등 ON 5초·OFF 30초, 화력 감소 단계 |
 | `[confidence.weights.location_level_v1.시나리오]` | 현재 운영 프로필의 항목별 가중치. 시나리오별 합계 1.0 |
 | `[confidence.thresholds]` | 실행 기준 점수. 예: `light_auto_on = 0.72` |
@@ -364,7 +377,7 @@ Llama는 아직 미구현이라 정책 파일에서 선택하면 시작 시 거�
 수정 후 `python -m src.integration --check-config`로 확인하고 프로그램을 재시작하면 적용됩니다.
 가중치 합계·지원하지 않는 항목·시간 순서·범위가 잘못되면 시작을 거부합니다.
 정책 파일 경로는 `homevis.toml`의 `decision_policy`에 지정하며, 해당 TOML 파일의 디렉터리를 기준으로 찾습니다.
-두 파일에 같은 판단 항목을 중복 정의하면 오류로 알립니다. 정책 파일을 지정하지 않은 기존 단일 TOML도 지원합니다.
+두 파일에 같은 연결·판단 항목을 중복 정의하면 오류로 알립니다. 정책 파일을 지정하지 않은 기존 단일 TOML도 지원합니다.
 
 가중치나 가중치 상·하한을 바꾸면 그 구성 전용 `user_weights.*.policy-<식별자>.json`을 사용하므로
 저장된 이전 학습값이 새 설정을 덮지 않습니다. 같은 설정으로 재시작하면 해당 학습값을 이어 쓰며,
@@ -373,7 +386,7 @@ Llama는 아직 미구현이라 정책 파일에서 선택하면 시작 시 거�
 
 | 설정 | 기본값 / 용도 |
 | --- | --- |
-| `[backend].poll_interval` | 2초, 기기 상태 GET |
+| `[backend].poll_interval` | 1초, 기기 상태 GET |
 | `[runtime].sensing_poll_interval` | 1초, 센싱 GET |
 | `[runtime].tick_interval` | 0.1초, 판단 루프 |
 | `decision_policy.toml: [sensing].allowed_lateness` | 4초, 측정 시각 정렬 |

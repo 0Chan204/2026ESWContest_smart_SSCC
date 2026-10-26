@@ -14,7 +14,9 @@ python -m pip install -r requirements-runtime.txt
 다른 PC에서 실행하면 `HOMEVIS_BACKEND_URL=http://<보드 IP>:8000`, `HOMEVIS_MQTT_HOST=<보드 IP>`를 사용합니다.
 `.env`는 Git에서 제외되며 OS 환경변수가 파일 값보다 우선합니다. 인증은 환경변수의
 `HOMEVIS_BACKEND_TOKEN`(Bearer), `HOMEVIS_MQTT_USERNAME/PASSWORD`로 전달하고 로그에는 출력하지 않습니다.
-MQTT TLS/CA는 `config/homevis.toml`의 `mqtt.tls/ca_file`에서 설정합니다.
+백엔드·MQTT 기본 주소 및 수신 토픽은 `config/decision_policy.toml`의 `[backend]`, `[mqtt]`에서 설정합니다.
+MQTT TLS/CA도 같은 파일의 `mqtt.tls/ca_file`이며 `HOMEVIS_MQTT_TLS`, `HOMEVIS_MQTT_CA_FILE`로 덮어쓸 수 있습니다.
+클라이언트 ID는 `mqtt.client_id` 또는 `HOMEVIS_MQTT_CLIENT_ID`입니다. 연결 정보는 OS 환경변수 > `.env` > TOML 순입니다.
 
 ```sh
 python run_homevis.py
@@ -81,15 +83,15 @@ Qwen 어댑터의 torch/transformers import를 초기화 시점으로 옮겼다.
 
 2026-10-24에 팀 저장소의 다음 버전을 읽고 구현했습니다.
 
-- [백엔드 AI 연동 v0.5](https://github.com/2026ESEC-SSCC/HomeVIS-Backend/blob/3a23128d5dedb4eed279472b2fc1aac7ded07fe6/docs/AI-INTEGRATION.md)
-- [백엔드 센싱 MQTT 계약](https://github.com/2026ESEC-SSCC/HomeVIS-Backend/blob/3a23128d5dedb4eed279472b2fc1aac7ded07fe6/docs/EDGE-MQTT.md)
-- [실제 Wi-Fi 토픽 정의](https://github.com/2026ESEC-SSCC/HomeVIS-AI_Wifi/blob/f73c0ff0d72bcdf1e04769270e7fb401103bde90/src/mqtt_util.py)
+- [백엔드 AI 연동 v0.5](https://github.com/2026ESWC-SSCC/HomeVIS-Backend/blob/3a23128d5dedb4eed279472b2fc1aac7ded07fe6/docs/AI-INTEGRATION.md)
+- [백엔드 센싱 MQTT 계약](https://github.com/2026ESWC-SSCC/HomeVIS-Backend/blob/3a23128d5dedb4eed279472b2fc1aac7ded07fe6/docs/EDGE-MQTT.md)
+- [실제 Wi-Fi 토픽 정의](https://github.com/2026ESWC-SSCC/HomeVIS-AI_Wifi/blob/f73c0ff0d72bcdf1e04769270e7fb401103bde90/src/mqtt_util.py)
 
 | 흐름 | 실제 연결 |
 | --- | --- |
 | 기본 센싱 수신 | GET `/api/v1/sensing/results?since=...&limit=5000`, 기본 1초 주기 |
 | 기존 직접 센싱 선택 | `--sensing-source mqtt`: MQTT `wifi/occupancy/state` |
-| 기기 상태 | GET `/api/v1/ai/device-states`, 기본 2초 주기 |
+| 기기 상태 | GET `/api/v1/ai/device-states`, 기본 1초 주기 |
 | 모든 기기 제어·안내 | POST `/api/v1/ai/decisions` |
 | 진행 중 낙상 | GET `/api/v1/fall-incidents/{fallIncidentId}` |
 

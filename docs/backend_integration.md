@@ -159,6 +159,22 @@ status를 실제 행동 측정으로 복제하지 않는다. 전원·level·last
 ## 기기 변환 및 복구
 
 기본 기기 식별은 stove/induction-01, light/light-01, water_purifier/water-01이다.
+2026-10-27에 백엔드 `develop`의 주방 전등 추가 커밋 `c92b11a9e5cffcc77f58a552abf01da7672f5959`를 대조했다.
+[기기 등록 코드](https://github.com/2026ESWC-SSCC/HomeVIS-Backend/blob/c92b11a9e5cffcc77f58a552abf01da7672f5959/app/device_registry.py),
+[AI 연동 명세](https://github.com/2026ESWC-SSCC/HomeVIS-Backend/blob/c92b11a9e5cffcc77f58a552abf01da7672f5959/docs/AI-INTEGRATION.md)의 전등 매핑은 다음과 같다.
+
+| 구역 | deviceId | MQTT 토픽 (`state`, `command`, `ack`) |
+| --- | --- | --- |
+| 방 `room` | `light-01` | `home/room/light/light-01/{state,command,ack}` |
+| 화장실 `toilet` | `light-00` | `home/toilet/light/light-00/{state,command,ack}` |
+| 주방 `kitchen` | `light-02` | `home/kitchen/light/light-02/{state,command,ack}` |
+
+기본 실행 설정의 `multi_room_lights=true`는 기기 상태 API에 등록된 전등의 `deviceId`/`room`을 그대로 사용한다.
+따라서 주방 전등이 백엔드 API에 `light-02/kitchen`으로 반환되면 AI는 해당 ID로 HTTP 결정을 전송한다.
+전등 MQTT command/state 토픽 변경은 백엔드 담당이며 AI의 위치 수신 토픽을 `light-02`로 바꾸지 않는다.
+백엔드 `.env`에서 `HOMEVIS_DEVICES`를 직접 지정한 경우 기본 등록 목록 전체를 대체하므로 주방 전등도 그 목록에 포함되어야 한다.
+로컬 Mock도 세 전등을 제공하며, 낙상 깜빡임은 백엔드와 같이 낙상 구역의 전등을 선택한다.
+실제 배포 서버·브로커·전등 연결은 이 소스 대조와 로컬 검증에 포함되지 않는다.
 공간은 `room/kitchen/toilet`, 기기는 `stove/light/water_purifier`로 통일한다.
 전등은 `device=light`와 별도의 `room`으로 구분한다. `room` 위치 관측과 같은 방의 전등 상태를
 취침·기상 및 재실 판단에 사용한다. 미등록 기기/공간은 진단을 남기며 toilet 전등을 room 전등으로 대체하지 않는다.

@@ -75,7 +75,7 @@ python -m src.integration
 docker compose --profile sim stop voice-ai-simulator
 ```
 
-고정 MQTT `client_id`는 `config/homevis.toml`의 `[mqtt]`에서 설정합니다. 기본 `homevis-ai`를 사용하는 프로세스는
+고정 MQTT `client_id`는 `config/decision_policy.toml`의 `[mqtt]` 또는 `HOMEVIS_MQTT_CLIENT_ID`에서 설정합니다. 기본 `homevis-ai`를 사용하는 프로세스는
 하나만 실행하세요. 다른 데이터 디렉터리의 두 번째 AI도 같은 음성 요청을 구독하면 안 됩니다.
 브로커 ACL·인증·TLS를 설정하기 전에는 신뢰할 수 있는 사설망에서만 사용하세요.
 

@@ -1,14 +1,10 @@
 # Run: python -m src.integration
-# The URLs/topics/scenario names must match the board's deployed services.
-# Decision weights, durations and thresholds live in this file (relative path).
+# Connection defaults and decision criteria live in the referenced file (relative path).
 decision_policy = "decision_policy.toml"
 
 [backend]
 mode = "live"
-base_url = "http://localhost:8000"
 data_dir = "output/integration"
-poll_interval = 2.0
-http_timeout = 3.0
 evaluation_audit_interval = 1.0
 temperature_is_celsius = true
 # Current firmware repeats the last temperature when its sensor fails.
@@ -19,6 +15,8 @@ backend_restore = true
 backend_v05 = true
 rule_confidence_policy = "observed"
 # Discover registered lights in room/kitchen/toilet; send only through the backend.
+# Team mapping: room=light-01, toilet=light-00, kitchen=light-02.
+# deviceId and room come from GET /api/v1/ai/device-states, not MQTT subscriptions.
 multi_room_lights = true
 # Verified against HomeVIS-Backend develop 3a23128, docs/AI-INTEGRATION.md v0.5.
 backend_fall_scenario = "fall_detected"
@@ -27,15 +25,7 @@ fall_status_path = "/api/v1/fall-incidents/{incident_id}"
 mock_behavior_contract = false
 
 [mqtt]
-host = "localhost"
-port = 1883
-client_id = "homevis-ai"
-# Verified against HomeVIS-AI_Wifi main f73c0ff, src/mqtt_util.py.
-location_topic = "wifi/occupancy/state"
-# The current Wi-Fi project publishes location only. Enable an agreed behavior producer here.
-behavior_topic = ""
-fall_status_topic = ""
-tls = false
+# Broker and input topic settings are in decision_policy.toml.
 queue_size = 1000
 max_payload_bytes = 65536
 join_wait_seconds = 0.25

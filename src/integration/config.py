@@ -16,7 +16,7 @@ class IntegrationConfig:
     base_url: str = ""
     headers: dict[str, str] = field(default_factory=dict, repr=False)
     data_dir: Path = Path("output/integration")
-    poll_interval: float = 2.0
+    poll_interval: float = 1.0
     http_timeout: float = 3.0
     max_attempts: int = 3
     retry_interval: float = 2.0

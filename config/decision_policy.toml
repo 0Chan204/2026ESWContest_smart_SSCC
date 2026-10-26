@@ -1,13 +1,38 @@
-# HomeVIS 판단 기준 통합 설정
+# HomeVIS 연결 정보·판단 기준 통합 설정
 # 이 파일 수정 → python -m src.integration --check-config → 실행 중인 프로그램 재시작
 # 시간은 별도 표기가 없으면 초, 신뢰도/가중치는 0~1입니다.
-# 현재 운영값을 그대로 옮겼습니다. 네트워크 주소·토픽은 homevis.toml에서 설정합니다.
+# 백엔드·MQTT 주소/수신 토픽은 아래에서 설정합니다. 실행 중 변경은 재시작해야 적용됩니다.
+# 연결 정보 우선순위: CLI(지원 항목) > OS 환경변수 > .env > 이 파일의 기본값.
+# .env는 실행 디렉터리에서 읽습니다. 다른 경로는 --env-file로 지정합니다.
 # 가중치 합은 시나리오마다 1.0이어야 합니다. 잘못된 값/오타는 시작 시 거부합니다.
 # 가중치 또는 가중치 상·하한 변경 시 별도 학습 파일을 사용합니다.
 # 기존 학습 파일은 보존하며, 같은 설정으로 재시작하면 해당 설정의 학습값을 이어 씁니다.
 # 시간값을 키우면 해당 확인/유지 기간이 길어집니다. 만료 시간은 클수록 오래된 데이터를 허용합니다.
 # 신뢰도 하한·실행 점수는 클수록 실행 조건이 엄격해집니다.
 # 가중치는 클수록 해당 근거를 점수에 더 많이 반영합니다. 실제 제어는 별도 상태 검증도 통과해야 합니다.
+
+[backend]
+base_url = "http://localhost:8000" # HOMEVIS_BACKEND_URL; 원격 보드이면 http://<보드 IP>:8000. /api/v1은 붙이지 않음
+http_timeout = 3.0 # 백엔드 HTTP 요청 제한 시간(초)
+poll_interval = 1.0 # 백엔드 기기 상태 조회 간격(초); 센싱 조회 간격은 homevis.toml의 runtime 설정
+# 인증은 .env/OS의 HOMEVIS_BACKEND_TOKEN으로만 설정합니다. TOML에 토큰을 넣지 않습니다.
+
+[mqtt]
+host = "localhost" # HOMEVIS_MQTT_HOST; 브로커 IP/호스트명만 입력. mqtt:// 또는 포트는 붙이지 않음
+port = 1883 # HOMEVIS_MQTT_PORT; 브로커 포트 (TLS 사용 시 서버에 설정된 TLS 포트 지정)
+client_id = "homevis-ai" # HOMEVIS_MQTT_CLIENT_ID; 고정 ID, 같은 ID로 여러 AI 프로세스를 실행하지 않음
+tls = false # HOMEVIS_MQTT_TLS=true/false; 브로커 TLS 설정과 맞춤
+ca_file = "" # HOMEVIS_MQTT_CA_FILE; TLS CA 인증서 경로. 빈 문자열이면 시스템 신뢰 인증서 사용
+# 인증은 .env/OS의 HOMEVIS_MQTT_USERNAME, HOMEVIS_MQTT_PASSWORD로만 설정합니다.
+# 아래는 AI가 받는 센싱 토픽입니다. 전등 ID(light-00/01/02)를 여기에 넣지 않습니다.
+# 전등 매핑: 방(room)=light-01, 화장실(toilet)=light-00, 주방(kitchen)=light-02.
+# HomeVIS-Backend develop c92b11a의 device_registry.py/AI-INTEGRATION.md와 대조함.
+# AI는 백엔드 기기 상태의 deviceId/room을 따라 HTTP로 제어를 요청합니다. 기기 MQTT 발행은 백엔드 담당입니다.
+location_topic = "wifi/occupancy/state" # HOMEVIS_LOCATION_TOPIC; sensing_source=mqtt일 때 직접 위치 수신
+behavior_topic = "" # HOMEVIS_BEHAVIOR_TOPIC; 합의된 행동 생산자가 있을 때만 설정
+fall_status_topic = "" # HOMEVIS_FALL_STATUS_TOPIC; 선택적 낙상 후속 상태 수신
+# 음성 토픽은 HOMEVIS_VOICE_TOPIC (기본 home/voice/request), 활성화는 HOMEVIS_VOICE_ENABLED=true.
+# 기본 센싱은 백엔드 HTTP입니다. 직접 MQTT 센싱은 HOMEVIS_SENSING_SOURCE=mqtt로 선택합니다.
 
 [llm]
 provider = "" # 사용할 LLM: "exaone", "gpt", "qwen", "gemini", "none". ""이면 기존 LLM_PROVIDER 사용

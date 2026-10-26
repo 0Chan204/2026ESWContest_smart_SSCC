@@ -5,9 +5,9 @@
 
 ## 확인한 소스와 현재 가능한 범위
 
-- [백엔드 AI 계약](https://github.com/2026ESEC-SSCC/HomeVIS-Backend/blob/fb22929879d255f6c1788f465df48c941b9338b7/docs/AI-INTEGRATION.md), [음성 계약](https://github.com/2026ESEC-SSCC/HomeVIS-Backend/blob/fb22929879d255f6c1788f465df48c941b9338b7/docs/VOICE.md): develop `fb22929879d255f6c1788f465df48c941b9338b7`, v0.7.
+- [백엔드 AI 계약](https://github.com/2026ESWC-SSCC/HomeVIS-Backend/blob/fb22929879d255f6c1788f465df48c941b9338b7/docs/AI-INTEGRATION.md), [음성 계약](https://github.com/2026ESWC-SSCC/HomeVIS-Backend/blob/fb22929879d255f6c1788f465df48c941b9338b7/docs/VOICE.md): develop `fb22929879d255f6c1788f465df48c941b9338b7`, v0.7.
 - 같은 커밋의 `app/schemas.py`, `app/ai_service.py`, 음성 처리 코드도 확인했습니다. 문서 예시만으로 연결 가능하다고 가정하지 않았습니다.
-- [임베디드 저장소](https://github.com/2026ESEC-SSCC/HomeVIS-EM.devices/tree/d73f7f71fc5d0ba355622c7cdf432954145ee156): `d73f7f7`에 인덕션·전등·정수기 Dummy_Data는 있으나 공청기 펌웨어는 확인하지 못했습니다.
+- [임베디드 저장소](https://github.com/2026ESWC-SSCC/HomeVIS-EM.devices/tree/d73f7f71fc5d0ba355622c7cdf432954145ee156): `d73f7f7`에 인덕션·전등·정수기 Dummy_Data는 있으나 공청기 펌웨어는 확인하지 못했습니다.
 - Wi-Fi 행동 라벨·위치 연동은 기존 [Wi-Fi 행동 문서](wifi_behavior.md)를 유지합니다. 행동 `none`은 집 전체 부재가 아닙니다.
 
 | 기능 | 구현 상태 / 운영 제한 |
@@ -23,7 +23,7 @@
 
 ```text
 백엔드 센싱 GET (기본 1초) ─┐
-백엔드 기기 상태 GET (2초) ─┼→ 기존 IntegrationRuntime
+백엔드 기기 상태 GET (1초) ─┼→ 기존 IntegrationRuntime
                          │   ├─ 기존 중앙 판단·confidence·시나리오
                          │   └─ HomeAutomation: 조리 연동 / 전체 부재 규칙
                          └→ 기존 DecisionMapper → SQLite Outbox

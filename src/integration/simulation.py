@@ -43,8 +43,12 @@ class SimulationBackend(MockBackend):
                 if payload["scenario"] == self.fall_scenario:
                     response.body["fallIncidentId"] = "mock-fall-" + payload["decisionId"]
                     response.body["actions"] = [
-                        {"device": "stove", "deviceId": "induction-01", "action": "turn_off", "status": "sent"},
-                        {"device": "light", "deviceId": "light-01", "action": "blink", "status": "sent"}]
+                        {"device": "stove", "deviceId": "induction-01", "action": "turn_off", "status": "sent"}]
+                    lights = [item for item in self.snapshot["items"] if item["device"] == "light"]
+                    if lights:
+                        light = next((item for item in lights if item["room"] == payload["room"]), lights[0])
+                        response.body["actions"].append(
+                            {"device": "light", "deviceId": light["deviceId"], "action": "blink", "status": "sent"})
                     self.incidents[response.body["fallIncidentId"]] = {
                         "incidentId": response.body["fallIncidentId"], "status": "pending", "stage": "user",
                         "detectedAt": payload["timestamp"], "confidence": payload["confidence"]}
@@ -59,6 +63,8 @@ class SimulationBackend(MockBackend):
                                 and (not action.get("deviceId") or d["deviceId"] == action["deviceId"]))
                     if action["action"] in {"turn_on", "on"}:
                         item["is_on"] = True
+                        if item["device"] in {"light", "air_purifier"}:
+                            item["current_state"]["power"] = "on"
                     elif action["action"] in {"turn_off", "off"}:
                         item["is_on"] = False
                         if item["device"] == "stove":

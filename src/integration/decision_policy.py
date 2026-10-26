@@ -1,4 +1,4 @@
-"""Load operator-editable decision criteria without changing decision algorithms."""
+"""Load operator-editable connections and decision criteria."""
 from dataclasses import fields, replace
 from datetime import time
 from pathlib import Path
@@ -13,6 +13,11 @@ INTEGRATION_KEYS = {
     "sensing": {"allowed_lateness", "device_max_age", "behavior_max_skew"},
     "automation": {"automation_profile", "automation_absence_seconds", "automation_return_seconds",
                    "light_on_seconds", "light_off_seconds", "stove_reduce_steps"},
+}
+CONNECTION_KEYS = {
+    "backend": {"base_url", "http_timeout", "poll_interval"},
+    "mqtt": {"host", "port", "client_id", "location_topic", "behavior_topic",
+             "fall_status_topic", "tls", "ca_file"},
 }
 CONFIDENCE_SCALARS = {
     "medium_confidence_threshold", "feedback_learning_rate", "feedback_apply_threshold",
@@ -62,7 +67,7 @@ def merge_policy(raw, config_path):
         raise ValueError("decision_policy must name a TOML file")
     with (Path(config_path).resolve().parent / reference).open("rb") as stream:
         policy = tomllib.load(stream)
-    table(policy, "decision policy", set(INTEGRATION_KEYS) | {
+    table(policy, "decision policy", set(INTEGRATION_KEYS) | set(CONNECTION_KEYS) | {
         "realtime", "scenarios", "home_automation", "confidence", "voice", "llm"})
     merged = {key: dict(value) if isinstance(value, dict) else value for key, value in raw.items()}
 
@@ -70,9 +75,11 @@ def merge_policy(raw, config_path):
         destination = merged.setdefault(section, {})
         overlap = set(destination) & set(values)
         if overlap:
-            raise ValueError(f"decision criteria defined twice in {section}: {sorted(overlap)}")
+            raise ValueError(f"settings defined twice in {section}: {sorted(overlap)}")
         destination.update(values)
 
+    for section, allowed in CONNECTION_KEYS.items():
+        add(section, table(policy.get(section, {}), section, allowed))
     for section, allowed in INTEGRATION_KEYS.items():
         add("backend", table(policy.get(section, {}), section, allowed))
     for section in ("scenarios", "home_automation"):
