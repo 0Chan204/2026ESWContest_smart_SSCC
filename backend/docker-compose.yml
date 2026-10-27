@@ -1,0 +1,144 @@
+# HomeVIS 백엔드 실행 구성 (MongoDB + Mosquitto + 백엔드 [+ 가짜 인덕션·전등·정수기])
+#
+# 라즈베리파이 4(대회 보드) / 노트북 / 맥 어디서든 같은 파일로 실행합니다.
+#   전체 실행:            docker compose up -d
+#   가짜 가전까지 실행:    docker compose --profile sim up -d   (가짜 인덕션 + 가짜 전등·정수기)
+#   GitHub 이미지로 갱신:  docker compose pull && docker compose up -d
+#   이 PC에서 직접 빌드:   docker compose up -d --build
+#   종료:                 docker compose down        (DB 데이터는 볼륨에 남음)
+#
+# 개발할 때 브로커만 필요하면: docker compose up -d mosquitto
+#
+# .env 파일(이 폴더)에 비밀값을 넣어 두면 백엔드 컨테이너에 전달됩니다. (.env.example 참고)
+# MONGODB_URI를 비워 두면 같이 뜨는 로컬 MongoDB(mongo 컨테이너)를 사용하고,
+# Atlas 주소를 넣으면 Atlas를 사용합니다.
+
+services:
+  mongo:
+    # 라즈베리파이 4의 CPU(ARMv8.0)에서는 MongoDB 5.0 이상이 실행되지 않아 4.4를 기본으로 씁니다.
+    # 파이 5나 노트북에서 최신 버전을 쓰려면 .env에 MONGO_IMAGE=mongo:7 을 넣으면 됩니다.
+    image: ${MONGO_IMAGE:-mongo:4.4}
+    container_name: homevis-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # 이 기기 안에서만 접속 가능 (외부 공개 X). Compass로 보려면 이 기기에서 접속하거나 SSH 터널 사용
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      # 4.4 이미지에는 mongo 셸만, 7 이미지에는 mongosh만 있어서 둘 다 시도합니다.
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ping: 1}).ok' 2>/dev/null || mongo --quiet --eval 'db.adminCommand({ping: 1}).ok'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: homevis-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  backend:
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    build: .
+    container_name: homevis-backend
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # 컨테이너 안에서는 localhost가 아니라 서비스 이름으로 서로를 찾습니다.
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017}
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+  simulator:
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_device.py"]
+    # 이미지의 헬스체크는 백엔드(8000 포트)용이라 시뮬레이터에서는 끕니다.
+    healthcheck:
+      disable: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+    depends_on:
+      - mosquitto
+      - backend
+
+  home-simulator:
+    # 가짜 전등·정수기 (v0.3). 실제 기기가 준비되면 이 서비스는 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-home-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_home_devices.py"]
+    healthcheck:
+      disable: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: "1883"
+    depends_on:
+      - mosquitto
+      - backend
+
+  edge-simulator:
+    # 가짜 엣지 노드 3개 (v0.4, docs/EDGE-MQTT.md). 실제 라즈베리파이 노드가 연결되면 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-edge-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_edge_nodes.py", "--host", "mosquitto"]
+    healthcheck:
+      disable: true
+    depends_on:
+      - mosquitto
+      - backend
+
+  fusion-simulator:
+    # 가짜 최종 재실 판단 (v0.4). 재실 판단 담당의 실제 모델이 연결되면 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-fusion-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_fusion.py", "--host", "mosquitto"]
+    healthcheck:
+      disable: true
+    depends_on:
+      - mosquitto
+      - backend
+
+  voice-ai-simulator:
+    # 가짜 AI 판정 엔진의 음성 명령 처리 (v0.6). 실제 판정 엔진이 연결되면 띄우지 않습니다.
+    image: ghcr.io/2026esec-sscc/homevis-backend:${IMAGE_TAG:-develop}
+    container_name: homevis-voice-ai-simulator
+    profiles: ["sim"]
+    restart: unless-stopped
+    command: ["python", "tests/simulate_voice_ai.py", "--host", "mosquitto", "--api", "http://backend:8000"]
+    healthcheck:
+      disable: true
+    depends_on:
+      - mosquitto
+      - backend
+
+volumes:
+  mongo-data:

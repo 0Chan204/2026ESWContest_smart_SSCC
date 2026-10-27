@@ -1,0 +1,26 @@
+# 이미지에 들어갈 필요가 없는 파일들 (용량 절약 + 비밀값 유출 방지)
+.git
+.github
+.idea
+.DS_Store
+venv
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+*.log
+.env
+.env.*
+docs
+Claude outputs
+mosquitto
+docker-compose.yml
+README.md
+
+# tests 폴더는 빼되, 시뮬레이터 스크립트만 포함
+tests
+!tests/simulate_device.py
+!tests/simulate_home_devices.py
+!tests/simulate_edge_nodes.py
+!tests/simulate_fusion.py
+!tests/simulate_voice_ai.py
