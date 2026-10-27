@@ -125,6 +125,38 @@ class Settings:
     # 음성 문장은 개인정보라 이 기간(일)이 지나면 DB에서 자동 삭제합니다.
     VOICE_COMMAND_TTL_DAYS: int = int(os.getenv("VOICE_COMMAND_TTL_DAYS", "30"))
 
+    # --- 보드 마이크 음성 명령 (v0.9, docs/VOICE.md 5장) ---
+    # 보드에는 브라우저 음성 인식이 없어서, 서버가 보드 마이크로 녹음하고 음성 인식(STT)·음성 안내(TTS)를 합니다.
+    # VOICE_LISTEN_ENABLED=false면 POST /voice/listen이 503입니다 (마이크가 없는 개발 PC 등).
+    VOICE_LISTEN_ENABLED: bool = os.getenv("VOICE_LISTEN_ENABLED", "true").lower() in ("1", "true", "yes")
+    # 녹음 명령(pulseaudio의 parecord). 컨테이너에서는 PULSE_SERVER=unix:/run/pulse/native 로 보드 소리 장치에 붙습니다.
+    VOICE_RECORD_CMD: str = os.getenv("VOICE_RECORD_CMD", "parecord")
+    # 마이크 장치 이름 (pactl list short sources). 비우면 기본 입력 장치
+    VOICE_MIC_DEVICE: str = os.getenv("VOICE_MIC_DEVICE", "")
+    # 버튼을 누른 뒤 이 시간(초) 안에 말소리가 없으면 no_speech
+    VOICE_LISTEN_START_SEC: float = float(os.getenv("VOICE_LISTEN_START_SEC", "5"))
+    # 말이 끝나고 이 시간(초) 동안 조용하면 녹음을 끝냅니다
+    VOICE_LISTEN_SILENCE_SEC: float = float(os.getenv("VOICE_LISTEN_SILENCE_SEC", "1.0"))
+    # 한 번에 녹음하는 최대 시간(초). 대시보드는 20초 동안 소식이 없으면 닫으므로 너무 길게 두지 않습니다.
+    VOICE_LISTEN_MAX_SEC: float = float(os.getenv("VOICE_LISTEN_MAX_SEC", "8"))
+    # 이 음량(RMS, 16비트 기준) 이상이면 말소리로 봅니다. 마이크·방 소음에 맞춰 조절
+    VOICE_SPEECH_RMS: int = int(os.getenv("VOICE_SPEECH_RMS", "500"))
+
+    # OpenAI 음성 인식·음성 합성 (키는 .env로만. 코드·이미지에 넣지 않음)
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    OPENAI_STT_MODEL: str = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+    OPENAI_STT_TIMEOUT_SEC: float = float(os.getenv("OPENAI_STT_TIMEOUT_SEC", "8"))
+    # 인식 결과에 신뢰도 정보(logprobs)가 없을 때 쓰는 값. 판정 엔진은 0.6 미만이면 제어하지 않습니다.
+    VOICE_STT_FALLBACK_CONFIDENCE: float = float(os.getenv("VOICE_STT_FALLBACK_CONFIDENCE", "0.8"))
+    VOICE_TTS_ENABLED: bool = os.getenv("VOICE_TTS_ENABLED", "true").lower() in ("1", "true", "yes")
+    OPENAI_TTS_MODEL: str = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+    OPENAI_TTS_VOICE: str = os.getenv("OPENAI_TTS_VOICE", "alloy")
+    OPENAI_TTS_TIMEOUT_SEC: float = float(os.getenv("OPENAI_TTS_TIMEOUT_SEC", "10"))
+    # 재생 명령(pulseaudio의 paplay)과 스피커 장치 이름 (비우면 기본 출력 장치)
+    VOICE_PLAY_CMD: str = os.getenv("VOICE_PLAY_CMD", "paplay")
+    VOICE_SPEAKER_DEVICE: str = os.getenv("VOICE_SPEAKER_DEVICE", "")
+
     # --- 날씨 안내 (v0.3.2, Open-Meteo: API 키 불필요) ---
     # 대회장 인터넷이 불안정하므로 요청이 올 때 받지 않고, WEATHER_REFRESH_SEC마다 미리 받아 캐시합니다.
     # WEATHER_ENABLED=false면 날씨를 받으러 나가지 않습니다 (마지막으로 저장된 값만 사용).

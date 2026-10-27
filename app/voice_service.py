@@ -13,7 +13,11 @@
 4) 시간 초과: VOICE_AI_TIMEOUT_SEC 안에 판단이 없으면 timeout,
    VOICE_CONFIRM_TIMEOUT_SEC 안에 확인이 없으면 cancelled
 
-상태가 바뀔 때마다 WebSocket voice.status로 대시보드에 알립니다.
+(v0.9) 보드 마이크 음성 명령은 app/voice_listen_service.py가 녹음·음성 인식을 한 뒤
+submit_recognized()로 같은 흐름(2~4)에 넣습니다. listening -> recognizing -> received -> thinking ...
+
+상태가 바뀔 때마다 WebSocket voice.status로 대시보드에 알리고,
+확인 문구·답변은 보드 스피커로 읽어 줍니다(app/voice_speaker.py, 설정 speak).
 판정 엔진 응답·사용자 확인·시간 초과가 동시에 일어나도 state_store.transition_voice_command()가
 한 가지만 반영합니다.
 """
@@ -25,7 +29,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from app import device_registry, state_store, ws_hub
+from app import device_registry, state_store, voice_speaker, ws_hub
 from app.config import settings
 from app.schemas import AiAction, AiActionResult, VoiceCommand, VoiceCommandIn
 
@@ -80,12 +84,26 @@ def _iso(value: datetime) -> str:
     return value.isoformat(timespec="milliseconds")
 
 
-def _new_voice_id() -> str:
+def new_voice_id() -> str:
     return f"voice-{_now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
 
 
-def _broadcast(command: VoiceCommand) -> None:
+
+def broadcast(command: VoiceCommand) -> None:
+    """대시보드에 voice.status로 알리고, 확인 문구·답변은 보드 스피커로 읽어 줍니다."""
     ws_hub.broadcast_threadsafe("voice.status", command.model_dump(exclude={"pendingActions"}))
+    voice_speaker.on_voice_status(command)
+
+
+
+def fail(voice_id: str, reason: str, expected: set[str]) -> Optional[VoiceCommand]:
+    """아직 expected 상태면 failed(+이유)로 바꾸고 알립니다."""
+    failed = state_store.transition_voice_command(
+        voice_id, expected, status="failed", reason=reason, updatedAt=_iso(_now())
+    )
+    if failed is not None:
+        broadcast(failed)
+    return failed
 
 
 def _seconds_until(iso_time: Optional[str]) -> float:
@@ -122,7 +140,7 @@ def create_command(request: VoiceCommandIn) -> VoiceCommand:
         raise EmptyVoiceCommand(request.text)
     now = _now()
     command = VoiceCommand(
-        voiceId=_new_voice_id(),
+        voiceId=new_voice_id(),
         text=text,
         rawText=request.text,
         wakeWord=wake_word,
@@ -136,7 +154,31 @@ def create_command(request: VoiceCommandIn) -> VoiceCommand:
         updatedAt=_iso(now),
     )
     state_store.save_voice_command(command)
+    return _dispatch(command)
 
+
+def submit_recognized(voice_id: str, raw_text: str, confidence: Optional[float]) -> Optional[VoiceCommand]:
+    """(v0.9) 보드 마이크로 인식한 문장을 기존 음성 명령 흐름에 넣습니다.
+    인식 중(recognizing)이 아니면(취소됨 등) 아무것도 하지 않고 None. 시작어만 있으면 failed(no_speech)."""
+    text, wake_word = strip_wake_word(raw_text)
+    if not text:
+        return fail(voice_id, "no_speech", {"recognizing"})
+    now = _now()
+    command = state_store.transition_voice_command(
+        voice_id, {"recognizing"},
+        text=text, rawText=raw_text, wakeWord=wake_word, confidence=confidence, recognizedAt=_iso(now),
+        status="received", expiresAt=_iso(now + timedelta(seconds=settings.VOICE_AI_TIMEOUT_SEC)), updatedAt=_iso(now),
+    )
+    if command is None:
+        return None
+    try:
+        return _dispatch(command)
+    except VoicePublishFailed:
+        return state_store.get_voice_command(voice_id)
+
+
+def _dispatch(command: VoiceCommand) -> VoiceCommand:
+    """저장된 음성 명령(received)을 판정 엔진에 MQTT로 보내고 thinking으로 바꿉니다."""
     from app import mqtt_client  # 지연 import: 순환 참조 방지
 
     try:
@@ -145,18 +187,14 @@ def create_command(request: VoiceCommandIn) -> VoiceCommand:
             raise RuntimeError(f"rc={info.rc}")
     except Exception as exc:
         logger.error("음성 명령을 판정 엔진에 보내지 못했습니다 (voiceId=%s): %s", command.voiceId, exc)
-        failed = state_store.transition_voice_command(
-            command.voiceId, WAITING_AI, status="failed", updatedAt=_iso(_now())
-        )
-        if failed is not None:
-            _broadcast(failed)
+        fail(command.voiceId, "publish_failed", WAITING_AI)
         raise VoicePublishFailed(command.voiceId) from exc
 
     thinking = state_store.transition_voice_command(
         command.voiceId, {"received"}, status="thinking", updatedAt=_iso(_now())
     )
     if thinking is not None:
-        _broadcast(thinking)
+        broadcast(thinking)
         command = thinking
     logger.info("음성 명령 전달 (voiceId=%s): %s", command.voiceId, command.text)
     ws_hub.run_coroutine_threadsafe(_ai_timeout_watchdog(command.voiceId))
@@ -257,7 +295,7 @@ def claim_for_decision(
         changes.update(status="executed" if actions else "answered")
     claimed = state_store.transition_voice_command(voice_id, WAITING_AI, **changes)
     if claimed is not None and claimed.status == "confirm_required":
-        _broadcast(claimed)
+        broadcast(claimed)
         ws_hub.run_coroutine_threadsafe(_confirm_timeout_watchdog(voice_id))
     return claimed
 
@@ -268,7 +306,7 @@ def finish(voice_id: str, results: list[AiActionResult]) -> Optional[VoiceComman
         voice_id, {"executed", "answered"}, actions=results, updatedAt=_iso(_now())
     )
     if command is not None:
-        _broadcast(command)
+        broadcast(command)
     return command
 
 
@@ -289,7 +327,7 @@ def confirm(voice_id: str, approved: bool) -> VoiceCommand:
         if cancelled is None:
             raise VoiceCommandError(409, f"확인을 기다리는 명령이 아닙니다 (현재 상태: {command.status}).")
         _close_decision(cancelled, "cancelled")
-        _broadcast(cancelled)
+        broadcast(cancelled)
         return cancelled
 
     approved_command = state_store.transition_voice_command(
@@ -305,7 +343,7 @@ def confirm(voice_id: str, approved: bool) -> VoiceCommand:
         voice_id, {"executed"}, actions=results, pendingActions=[], updatedAt=_iso(_now())
     )
     command = finished or approved_command
-    _broadcast(command)
+    broadcast(command)
     return command
 
 
@@ -329,7 +367,7 @@ def expire_if_waiting(voice_id: str) -> Optional[VoiceCommand]:
     expired = state_store.transition_voice_command(voice_id, WAITING_AI, status="timeout", updatedAt=_iso(_now()))
     if expired is not None:
         logger.warning("판정 엔진 응답이 없어 음성 명령을 timeout 처리합니다 (voiceId=%s)", voice_id)
-        _broadcast(expired)
+        broadcast(expired)
     return expired
 
 
@@ -342,7 +380,7 @@ def cancel_if_unconfirmed(voice_id: str) -> Optional[VoiceCommand]:
     if cancelled is not None:
         logger.info("확인 시간이 지나 음성 명령을 취소합니다 (voiceId=%s)", voice_id)
         _close_decision(cancelled, "확인 시간 초과")
-        _broadcast(cancelled)
+        broadcast(cancelled)
     return cancelled
 
 
@@ -367,7 +405,10 @@ def resume_pending() -> int:
     이미 기한이 지났으면 곧바로 timeout·취소됩니다."""
     count = 0
     for command in state_store.list_voice_commands():
-        if command.status in WAITING_AI:
+        if command.status in ("listening", "recognizing"):
+            # (v0.9) 녹음·인식 중에 서버가 꺼졌던 명령은 이어서 할 수 없으니 실패로 끝냅니다.
+            fail(command.voiceId, "interrupted", {"listening", "recognizing"})
+        elif command.status in WAITING_AI:
             ws_hub.run_coroutine_threadsafe(_ai_timeout_watchdog(command.voiceId))
             count += 1
         elif command.status in WAITING_CONFIRM:

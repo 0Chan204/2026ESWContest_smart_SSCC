@@ -779,9 +779,14 @@ class SensingResultListResponse(BaseModel):
 # voice.status로 대시보드에 알립니다. 흐름과 형식은 docs/VOICE.md 참고.
 # ---------------------------------------------------------------------------
 
+# v0.9: listening(보드 마이크로 듣는 중), recognizing(음성 인식 중) 추가
 VoiceStatus = Literal[
-    "received", "thinking", "confirm_required", "executed", "answered", "cancelled", "timeout", "failed"
+    "listening", "recognizing",
+    "received", "thinking", "confirm_required", "executed", "answered", "cancelled", "timeout", "failed",
 ]
+
+# v0.9: failed 이유 (보드 마이크 음성 명령)
+VoiceFailReason = Literal["mic_unavailable", "no_speech", "stt_error", "publish_failed", "interrupted"]
 
 
 class VoiceCommandIn(BaseModel):
@@ -813,10 +818,11 @@ class VoiceCommand(BaseModel):
     wakeWord: bool = Field(default=False, description="문장 앞에 시작어(홈비스)가 있었으면 true (v0.7)")
     lang: str = "ko-KR"
     confidence: Optional[float] = None
-    source: str = "voice"
+    source: str = Field(default="voice", description="입력 경로: voice(문장 전송) / button(보드 마이크 버튼, v0.9) / wakeword(호출어)")
     recognizedAt: Optional[str] = None
     receivedAt: str
     status: VoiceStatus
+    reason: Optional[VoiceFailReason] = Field(default=None, description="(v0.9) status=failed일 때 이유")
     expiresAt: str = Field(..., description="이 시각까지 판정 엔진의 판단이 없으면 timeout")
     decisionId: Optional[str] = None
     answer: Optional[str] = Field(default=None, description="사용자에게 들려줄 답변 (판정 엔진의 announcement)")
@@ -842,3 +848,28 @@ class VoiceCommandListResponse(BaseModel):
 
 class VoiceConfirmRequest(BaseModel):
     approved: bool = Field(..., description="true: 실행 / false: 취소")
+
+
+# v0.9: 보드 마이크 음성 명령 (docs/VOICE.md 5장)
+
+class VoiceListenAccepted(BaseModel):
+    voiceId: str
+    status: Literal["listening"] = "listening"
+    receivedAt: str
+
+
+class VoiceListenCancelRequest(BaseModel):
+    voiceId: str = Field(..., min_length=1, max_length=128)
+
+
+class VoiceSettings(BaseModel):
+    """보드 음성 설정. GET/PUT /voice/settings 응답, WebSocket voice.settings"""
+
+    wakeWord: bool = Field(default=False, description="호출어(홈비스)로 부르기")
+    standby: bool = Field(default=False, description="지금 호출어를 기다리는 중인지 (상시 듣기 기능이 붙기 전까지 항상 false)")
+    speak: bool = Field(default=True, description="답변·위험 안내를 보드 스피커로 읽어 주기")
+
+
+class VoiceSettingsUpdate(BaseModel):
+    wakeWord: Optional[bool] = None
+    speak: Optional[bool] = None

@@ -36,6 +36,7 @@ from app.schemas import (
     AiDecisionRecord,
     SensingResult,
     VoiceCommand,
+    VoiceSettings,
     WeatherSnapshot,
 )
 
@@ -126,6 +127,9 @@ _voice_order: list[str] = []
 _voice_seq: dict[str, int] = {}
 _next_voice_seq = 1
 
+# --- v0.9: 보드 음성 설정 (호출어 · 음성 안내). standby는 저장하지 않고 그때그때 계산합니다 ---
+_voice_settings: VoiceSettings = VoiceSettings()
+
 _POLICY_KITCHEN_ABSENCE = "kitchen-absence"
 _POLICY_FALL_SAFETY = "fall-safety"
 _CONTACT_USER = "user"
@@ -135,6 +139,7 @@ _STATE_ABSENCE_STAGES = "absence_stages"
 _STATE_RESTORE_LEVELS = "restore_levels"
 _STATE_POWER_SAVING_LIGHTS = "power_saving_lights"
 _STATE_WEATHER = "weather"
+_STATE_VOICE_SETTINGS = "voice_settings"
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +149,10 @@ _STATE_WEATHER = "weather"
 def reset_memory() -> None:
     """메모리의 모든 데이터를 초기 상태로 되돌립니다. (DB는 건드리지 않음. 시작 시, 테스트에서 사용)"""
     global _policy, _fall_policy, _guardian, _user, _next_event_seq, _next_sms_seq, _next_ai_seq, _weather
-    global _next_sensing_seq, _next_voice_seq
+    global _next_sensing_seq, _next_voice_seq, _voice_settings
     with _lock:
         _weather = None
+        _voice_settings = VoiceSettings()
         _voice_order.clear()
         _next_voice_seq = 1
         _sensing_results.clear()
@@ -271,7 +277,7 @@ def load_from_db() -> None:
             _next_sms_seq = max(_next_sms_seq, doc["seq"] + 1)
 
     def load_runtime_state() -> None:
-        global _weather
+        global _weather, _voice_settings
         for doc in db.find_all(db.RUNTIME_STATE):
             if doc["_id"] == _STATE_ACTIVE_SESSIONS:
                 _active_session_by_device.update(doc.get("values", {}))
@@ -283,6 +289,8 @@ def load_from_db() -> None:
                 _power_saving_lights.update(doc.get("values", []))
             elif doc["_id"] == _STATE_WEATHER and doc.get("value"):
                 _weather = WeatherSnapshot.model_validate(doc["value"])
+            elif doc["_id"] == _STATE_VOICE_SETTINGS and doc.get("value"):
+                _voice_settings = VoiceSettings.model_validate({**doc["value"], "standby": False})
 
     def load_device_states() -> None:
         for doc in db.find_all(db.DEVICE_STATES):
@@ -844,3 +852,22 @@ def list_voice_commands() -> list[VoiceCommand]:
     """오래된 것부터 순서대로 돌려줍니다."""
     with _lock:
         return [_voice_commands[v] for v in _voice_order if v in _voice_commands]
+
+
+# ---------------------------------------------------------------------------
+# v0.9: 보드 음성 설정
+# ---------------------------------------------------------------------------
+
+def get_voice_settings() -> VoiceSettings:
+    with _lock:
+        return _voice_settings
+
+
+def update_voice_settings(**changes) -> VoiceSettings:
+    """wakeWord · speak 중 받은 값만 바꿉니다. standby는 저장하지 않습니다."""
+    global _voice_settings
+    with _lock:
+        _voice_settings = _voice_settings.model_copy(update={k: v for k, v in changes.items() if v is not None})
+        snapshot = _voice_settings.model_dump(exclude={"standby"})
+    db.upsert(db.RUNTIME_STATE, _STATE_VOICE_SETTINGS, {"value": snapshot})
+    return _voice_settings

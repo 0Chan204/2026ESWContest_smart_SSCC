@@ -40,6 +40,7 @@ from app import (
     safety_service,
     state_store,
     voice_service,
+    voice_speaker,
     weather_service,
     ws_hub,
 )
@@ -310,8 +311,10 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
 
 
 def _announce(request: AiDecisionRequest, announced_at: str) -> None:
-    """대시보드가 화면에 표시하고 음성으로 읽습니다.
-    음성 명령의 답변이면 voiceId가 들어 있으니, 대시보드는 voice.status의 answer와 중복 재생하지 않습니다."""
+    """대시보드가 화면에 표시하고, (v0.9) 보드 스피커로도 읽습니다.
+    음성 명령의 답변이면 voiceId가 들어 있으니 여기서는 읽지 않고 voice.status의 answer로 한 번만 읽습니다."""
+    if request.voiceId is None:
+        voice_speaker.speak(request.announcement)
     ws_hub.broadcast_threadsafe(
         "ai.announcement",
         {
