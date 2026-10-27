@@ -105,7 +105,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
 | `air_purifier` | `on`, `off`, `set_mode` | `set_mode`는 `mode` **필수**: `auto`(공기질 자동) / `manual` |
 
 `deviceId`는 생략할 수 있습니다(같은 `room`의 기기를 먼저 고름). 시연 구성:
-인덕션 `induction-01`(부엌), 전등 `light-01`(방)·`light-00`(화장실), 정수기 `water-01`(부엌), 환풍기 `fan-01`(부엌)·`fan-02`(화장실),
+인덕션 `induction-01`(부엌), 전등 `light-01`(방)·`light-00`(화장실)·`light-02`(부엌), 정수기 `water-01`(부엌), 환풍기 `fan-01`(부엌)·`fan-02`(화장실),
 공기청정기 `air-01`(방)
 
 환풍기 자동 운전(조리할 때 켜기 등)과 "인덕션이 켜지면 공기청정기 켜기"는 판정 엔진이 기기 상태를 보고 판단해서
@@ -239,6 +239,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
 | --- | --- |
 | 전등 `light-01` (방) | `home/room/light/light-01/` |
 | 전등 `light-00` (화장실) | `home/toilet/light/light-00/` |
+| 전등 `light-02` (부엌) | `home/kitchen/light/light-02/` |
 | 정수기 `water-01` (부엌) | `home/kitchen/water_purifier/water-01/` |
 | 환풍기 `fan-01` (부엌) | `home/kitchen/fan/fan-01/` |
 | 환풍기 `fan-02` (화장실) | `home/toilet/fan/fan-02/` |
@@ -303,7 +304,7 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
 
 ## 3. 기기 목록 바꾸기
 
-기본 구성은 전등 2개(`light-01` 방, `light-00` 화장실), 정수기 1개(`water-01` 부엌), 환풍기 2개(`fan-01` 부엌, `fan-02` 화장실),
+기본 구성은 전등 3개(`light-01` 방, `light-00` 화장실, `light-02` 부엌), 정수기 1개(`water-01` 부엌), 환풍기 2개(`fan-01` 부엌, `fan-02` 화장실),
 공기청정기 1개(`air-01` 방)입니다.
 바꾸려면 `.env`에 JSON으로 넣습니다. **값을 넣으면 기본 구성 전체를 대신하므로** 필요한 기기를 모두 적어야 합니다.
 

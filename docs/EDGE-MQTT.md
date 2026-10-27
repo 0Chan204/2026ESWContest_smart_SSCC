@@ -46,14 +46,20 @@
 전체 토픽 한눈에 보기 (시연 구성)
 
 ```
-home/room/light/light-01/{state|command|ack}             전등
+home/room/light/light-01/{state|command|ack}             방 전등
+home/room/air_purifier/air-01/{state|command|ack}        방 공기청정기
 home/room/edge/r1/features                               방 엣지 노드
 home/kitchen/induction/induction-01/{state|command|ack}  인덕션
+home/kitchen/light/light-02/{state|command|ack}          부엌 전등
 home/kitchen/water_purifier/water-01/{state|command|ack} 정수기
+home/kitchen/fan/fan-01/{state|command|ack}              부엌 환풍기
 home/kitchen/edge/r2/features                            부엌 엣지 노드
+home/toilet/light/light-00/{state|command|ack}           화장실 전등
+home/toilet/fan/fan-02/{state|command|ack}               화장실 환풍기
 home/toilet/edge/r3/features                             화장실 엣지 노드
 home/edge/combined                                       서버 → 재실 판단 담당 (합친 메시지)
 home/edge/result                                         재실 판단 담당 → 서버 (최종 결과)
+home/voice/request                                       서버 → AI 판정 엔진 (음성 명령 문장)
 ```
 
 구독 예시: 엣지 노드 전체 `home/+/edge/#`, 합친 메시지·최종 결과 `home/edge/#`, 모든 메시지 `home/#`
