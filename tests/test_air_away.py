@@ -88,6 +88,34 @@ def test_air_quality_extra_fields_are_kept(client):
     assert client.get(f"{PREFIX}/devices/{AIR}").json()["current_state"]["airQuality"]["co2"] == 600
 
 
+@pytest.mark.parametrize("level", ["good", "normal", "bad", "very_bad"])
+def test_air_quality_ppm_and_four_levels(client, broadcasts, level):
+    """v0.11: 임베디드가 ppm 하나와 등급 4단계(좋음/보통/나쁨/매우 나쁨)를 보낸다."""
+    _state(AIR, "air_purifier", power="on", mode="auto", airQuality={"ppm": 412, "level": level})
+
+    event = next(d for e, d in broadcasts if e == "device.state" and d["deviceId"] == AIR)
+    assert (event["state"]["airQuality"]["ppm"], event["state"]["airQuality"]["level"]) == (412, level)
+
+    info = client.get(f"{PREFIX}/devices/{AIR}").json()
+    assert (info["current_state"]["airQuality"]["ppm"], info["current_state"]["airQuality"]["level"]) == (412, level)
+
+    item = next(d for d in client.get(f"{PREFIX}/ai/device-states").json()["items"] if d["deviceId"] == AIR)
+    assert item["current_state"]["airQuality"]["level"] == level
+
+
+@pytest.mark.parametrize("air_quality", [{"ppm": 50, "level": "worst"}, {"ppm": -1, "level": "good"}])
+def test_invalid_air_quality_is_ignored(client, broadcasts, air_quality):
+    """모르는 등급이나 음수 ppm이 오면 메시지를 무시하고 이전 상태를 유지한다."""
+    _state(AIR, "air_purifier", power="off", airQuality={"ppm": 20, "level": "good"})
+    broadcasts.clear()
+    _state(AIR, "air_purifier", power="on", airQuality=air_quality)
+
+    assert not [d for e, d in broadcasts if e == "device.state"]
+    info = client.get(f"{PREFIX}/devices/{AIR}").json()
+    assert info["current_state"]["airQuality"] == {"ppm": 20, "level": "good", "pm25": None, "pm10": None}
+    assert info["is_on"] is False
+
+
 def test_air_purifier_commands(client, published):
     assert client.post(f"{PREFIX}/devices/{AIR}/commands", json={"type": "on"}).status_code == 202
     assert (published[-1]["deviceId"], published[-1]["type"]) == (AIR, "on")

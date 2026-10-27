@@ -1,5 +1,5 @@
 """
-최종 재실 판단 결과 조회 (v0.4). AI 중앙 판정 엔진이 HTTP로 꺼내 씁니다.
+최종 재실 판단 결과 조회 (v0.4, v0.10: 재실 + 행동추론). AI 중앙 판정 엔진이 HTTP로 꺼내 씁니다.
 결과는 재실 판단 담당이 MQTT(home/edge/result)로 보내고, 서버는 판단 없이 저장된 값을 그대로 돌려줍니다.
 실제 로직은 app/edge_service.py에 있습니다.
 """
@@ -20,6 +20,10 @@ def read_latest_result() -> SensingResult:
     """
     재실 판단 담당이 보낸 가장 최근 결과를 그대로 돌려줍니다. 아직 받은 결과가 없으면 404입니다.
     결과가 얼마나 오래됐는지(observedAt, validSec)는 받는 쪽에서 판단합니다.
+
+    (v0.10) 재실 + 행동추론
+    - 재실: room, present, confidence / 판단 불가면 present=null, presenceReason
+    - 행동: activity, activityConfidence / 판단 불가면 activity="unknown", activityReason
     """
     result = state_store.get_latest_sensing_result()
     if result is None:

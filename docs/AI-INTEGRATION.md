@@ -24,20 +24,20 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
       "control_state": null, "updatedAt": "..." },
     { "device": "air_purifier", "deviceId": "air-01", "room": "room", "online": true, "is_on": true,
       "current_state": { "reportedAt": "...", "power": "on", "mode": "auto",
-                         "airQuality": { "pm25": 42, "pm10": 60, "level": "bad" } },
+                         "airQuality": { "ppm": 412, "level": "very_bad" } },
       "control_state": "homevis", "updatedAt": "..." }
   ]
 }
 ```
 
 - `is_on`: 인덕션은 화구가 켜져 있으면, 전등·환풍기·공기청정기는 켜져 있으면(절전 밝기여도 켜짐), 정수기는 출수 중이면 `true`
-- 공기청정기 `current_state.airQuality`: 기기가 보낸 공기질(`pm25`, `pm10`, `level`). 공기질이 나빠 기기가 스스로 켜면
+- 공기청정기 `current_state.airQuality`: 기기가 보낸 공기질(`ppm`, `level`: `good` / `normal` / `bad` / `very_bad`, v0.11). 공기질이 나빠 기기가 스스로 켜면
   `control_state`가 `homevis`입니다 (사용자가 켠 것이 아님)
 - 전등 `current_state.brightness`: 밝기(%). 밝기를 보내지 않는 전등은 켜져 있으면 100, 꺼져 있으면 0으로 채웁니다.
   `powerSaving`: 절전(`power_saving`)으로 낮춘 전등이면 `true`
 - `control_state`: 마지막으로 상태를 바꾼 주체. `user`(사용자), `homevis`(HomeVIS 자동 제어), 기록 없으면 `null`
 
-### 최종 재실 판단 결과 조회: `GET /api/v1/sensing/results/latest`, `GET /api/v1/sensing/results` (v0.4)
+### 최종 재실 판단 결과 조회: `GET /api/v1/sensing/results/latest`, `GET /api/v1/sensing/results` (v0.4, v0.10: 재실 + 행동추론)
 
 재실 판단 담당이 MQTT(`home/edge/result`)로 보낸 최종 결과를 서버가 저장해 두고, 판정 엔진은 HTTP로 꺼내 씁니다.
 서버는 값을 판단하지 않고 저장된 그대로 돌려줍니다. 결과가 오래됐는지는 `observedAt`, `validSec`으로 판정 엔진이 판단합니다.
@@ -46,18 +46,28 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
 
 ```json
 {
-  "resultId": "res-20261017-000123",
-  "observedAt": "2026-10-17T12:00:02+00:00",
-  "savedAt": "2026-10-17T12:00:02.150+00:00",
+  "resultId": "res-20261027-000123",
+  "observedAt": "2026-10-27T21:00:02+09:00",
+  "savedAt": "2026-10-27T12:00:02.150+00:00",
   "room": "kitchen",
   "present": true,
   "confidence": 0.91,
+  "presenceReason": null,
   "activity": "standing",
   "activityConfidence": 0.80,
-  "modelVersion": "fusion-0.1",
+  "activityReason": null,
+  "modelVersion": "fusion-0.2",
   "validSec": 5
 }
 ```
+
+| 구분 | 필드 | 판단 불가일 때 |
+| --- | --- | --- |
+| 재실 | `room`, `present`, `confidence` | `present: null`, `room: null`, `presenceReason`에 이유 |
+| 행동 (v0.10) | `activity`, `activityConfidence` | `activity: "unknown"`, `activityReason`에 이유 |
+
+- 재실과 행동은 따로 판단됩니다. 재실은 `true`인데 행동만 `unknown`일 수 있습니다.
+- 행동 이름 · 이유 값 목록은 재실 판단 담당(지우님) 모델이 정합니다 (`docs/EDGE-MQTT.md` 6장).
 
 `GET /api/v1/sensing/results?since=2026-10-17T11:40:00%2B00:00&until=...&limit=500`
 
@@ -66,7 +76,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
 - 서버 메모리의 최근 5000건(1초마다면 약 1시간 20분) 안에서 찾습니다.
 - 주소에 넣을 때 `+`는 `%2B`로 바꾸거나, `Z`(UTC)로 끝나는 시각을 쓰세요.
 
-결과 형식과 MQTT 규칙은 `docs/EDGE-MQTT.md` 7장 참고.
+결과 형식과 MQTT 규칙은 `docs/EDGE-MQTT.md` 6장 참고.
 
 ### 판단 결과 전송: `POST /api/v1/ai/decisions`
 
@@ -262,7 +272,7 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
   "lastControl": { "publisher": "api", "commandId": "cmd-20261017-9a8b7c6d" } }
 // 공기청정기 (공기질이 나빠 스스로 켬)
 { "reportedAt": "2026-10-25T14:00:00+09:00", "power": "on", "mode": "auto",
-  "airQuality": { "pm25": 42, "pm10": 60, "level": "bad" },
+  "airQuality": { "ppm": 412, "level": "very_bad" },
   "lastControl": { "publisher": "system" } }
 ```
 
@@ -270,7 +280,8 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
   - 절전 밝기로 낮추는 중에는 `mode: "fadeout"`, 다 낮춘 뒤에는 `fadeout` 또는 `steady` 둘 다 됩니다. `power`는 계속 `on`
   - `brightness`를 보내지 않으면 켜져 있을 때 100으로 봅니다
 - 환풍기 `power`: `on` / `off`, `speed`: `low`(약) / `mid`(중) / `high`(강)
-- 공기청정기 `power`: `on` / `off`, `mode`: `auto` / `manual`, `airQuality`: `pm25`·`pm10`(㎍/㎥), `level`(`good` / `normal` / `bad`)
+- 공기청정기 `power`: `on` / `off`, `mode`: `auto` / `manual`, `airQuality`: `ppm`(공기질, v0.11), `level`(`good` 좋음 / `normal` 보통 / `bad` 나쁨 / `very_bad` 매우 나쁨)
+  - 예전 형식(`pm25`·`pm10`)도 받으면 그대로 저장하지만, 대시보드는 `ppm`만 표시합니다.
   - 공기질 판단과 자동 작동은 기기가 합니다. 스스로 켜거나 끄면 `lastControl.publisher`를 `system`으로 보냅니다.
   - `airQuality`에 다른 센서 값(예: `co2`)을 더 넣어도 그대로 저장·전달합니다.
 - 정수기 `status`: `idle` / `dispensing`
