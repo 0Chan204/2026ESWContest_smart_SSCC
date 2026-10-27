@@ -212,6 +212,9 @@ def parse_args():
     p.add_argument("--deadline", type=float, default=2.0, help="t_end 후 이 시간까지 노드 메시지를 기다림(초)")
     p.add_argument("--theta", type=float, default=None, help="판단 불가 임계값 (기본: .pkl 에 저장된 값)")
     p.add_argument("--switch", type=int, default=2, help="장소 전환에 필요한 연속 초 수")
+    p.add_argument("--min-rate-ratio", type=float, default=0.7,
+                   help="재실: 수신 속도가 fs×이 값보다 낮으면 poor_signal (기본 0.7 = 17.5Hz). 속도가 낮은 환경에서 0.5(12.5Hz) 등으로 낮춤. "
+                        "낮출수록 판단은 되지만 학습 때와 특징 분포가 달라 정확도가 떨어질 수 있음")
     p.add_argument("--no-ood", action="store_true", help="학습 범위 검사 끄기")
     # --- 행동 추론 (behavior_engine.py). 같은 Pi 메시지의 "behavior" 필드를 사용 ---
     default_beh = SCRIPT_DIR / "behavior_svm.pkl"
@@ -256,7 +259,8 @@ def main():
 
     if not os.path.exists(args.model):
         raise SystemExit(f"[오류] 모델 파일이 없습니다: {args.model}  (--model 로 경로를 지정하세요)")
-    engine = OccupancyEngine(args.model, theta=args.theta, switch_k=args.switch, use_ood=not args.no_ood)
+    engine = OccupancyEngine(args.model, theta=args.theta, switch_k=args.switch, use_ood=not args.no_ood,
+                             min_rate_ratio=args.min_rate_ratio)
     nodes = engine.locs
     collector = FeatureCollector(nodes)
     os.makedirs(args.log_dir, exist_ok=True)
