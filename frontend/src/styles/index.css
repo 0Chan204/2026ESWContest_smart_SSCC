@@ -1,0 +1,277 @@
+@import 'tailwindcss';
+
+/* ──────────────────────────────────────────────────────────────────────────
+   HomeVIS Design Tokens  (상세: docs/style-guide.md)
+
+   기준: Apple Human Interface Guidelines 의 시스템 색상·글자 체계와
+   iPad '홈' 앱의 타일 표현, 아파트 월패드의 큰 시계·방별 구성.
+   - 바탕·면은 순백(#fff)·순흑(#000) 대신 살짝 따뜻한 중성색(웜 그레이)을 쓴다.
+     넓은 흰 면의 눈부심을 줄이고, 병원 같은 차가운 느낌 대신 집 안 패널처럼 보이게 하기 위함.
+     구분은 Apple 방식(바탕보다 카드가 한 단계 밝음, 대비 약 1.11)을 따른다.
+   - 상태색은 Apple 시스템 색 계열이며, 글자로 쓰는 색은 바탕·카드 위에서 4.5:1 이상으로 맞췄다.
+   - 상자는 타일·목록에만 쓰고, 나머지는 여백과 글자 크기로 구분한다.
+   - 켜진 기기 타일은 밝게 반전된다(홈 앱 방식). 꺼진 타일은 어둡다.
+
+   --spacing 을 px 로 고정해 어르신 모드 글자 확대가 배치를 흔들지 않게 한다.
+   외부 폰트 요청 없음 — 시스템 글꼴(Mac: SF · Apple SD Gothic Neo / Windows: Segoe UI · 맑은 고딕)을 쓴다.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* 월패드 배치: 가로가 넓고 세로도 충분할 때만 한 화면 고정(스크롤 없음) */
+@custom-variant wall (@media (min-width: 1180px) and (min-height: 660px));
+/* 세로가 짧은 월패드(1280×720 등) */
+@custom-variant short (@media (max-height: 760px));
+
+@theme {
+  --spacing: 4px;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
+  --radius-full: 9999px;
+
+  /* Mac: SF + 애플 SD 고딕 Neo / Windows(시연 PC): 영문·숫자는 Segoe UI, 한글은 맑은 고딕 */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Apple SD Gothic Neo', 'Pretendard',
+    'Segoe UI Variable Text', 'Segoe UI', 'Malgun Gothic', 'Noto Sans KR', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ── 라이트 (iOS Light) ─────────────────────────────── */
+  --color-canvas: #efeeea;          /* systemGroupedBackground */
+  --color-surface: #fbfaf8;         /* secondarySystemGroupedBackground */
+  --color-sunken: #efeeea;          /* 칸 안 입력·바탕 (systemGray6) */
+  --color-raised: #fbfaf8;
+  --color-line: #e3e1dc;            /* separator (opaque) */
+  --color-track: #d3d0ca;           /* 꺼진 스위치 */
+  --color-fill: rgba(120, 113, 102, 0.12);  /* systemFill — 회색 버튼·세그먼트 바탕 */
+  --color-thumb: #fdfcfa;           /* 세그먼트 선택 */
+
+  --color-ink: #1e1d1b;
+  --color-ink-2: #54514c;
+  --color-ink-3: #65625d;
+
+  --color-brand: #0071e3;           /* 흰 글자를 올리는 채움 */
+  --color-brand-dark: #0062c4;
+  --color-brand-soft: #e3edf8;
+  --color-brand-ink: #005fbf;       /* 링크·선택 글자 */
+  --color-switch: #34c759;          /* systemGreen — 스위치 켜짐 */
+
+  --color-ok: #1d7434;              /* systemGreen (고대비) */
+  --color-ok-soft: #e3f1e6;
+  --color-caution: #805500;
+  --color-caution-soft: #f8efd6;
+  --color-warn: #b03000;            /* systemOrange (고대비) */
+  --color-warn-soft: #fbe9df;
+  --color-danger: #c20f1e;          /* systemRed (고대비) */
+  --color-danger-soft: #fbe6e6;
+  --color-danger-fill: #c8101f;
+  --color-muted-soft: #e8e6e1;
+
+  /* 홈 앱 타일 */
+  --color-tile-on: #fdfcfa;
+  --color-tile-on-ink: #1e1d1b;
+  --color-tile-on-ink-2: #65625d;
+  --color-card-on: #fdfcfa;           /* 홈 기기 카드: 동작 중 */
+  --color-tile-off: #e2e0db;          /* 꺼진 기기: 바탕보다 확실히 어둡게 */
+
+  /* 켜진 기기 아이콘 색 (홈 앱: 조명 노랑 · 환기 청록 · 물 파랑 · 화구 주황) */
+  --color-glyph-light: #e6a100;
+  --color-glyph-fan: #0a9fb8;
+  --color-glyph-water: #0a84ff;
+  --color-glyph-heat: #ff8a00;
+  --color-glyph-air: #23966a;       /* 공기청정기 (맑은 공기 초록) */
+
+  /* iOS 설정 앱 아이콘 바탕 (두 테마 공통) */
+  --color-sym-blue: #007aff;
+  --color-sym-green: #34c759;
+  --color-sym-gray: #8e8e93;
+  --color-sym-red: #ff3b30;
+  --color-sym-orange: #ff9500;
+  --color-sym-indigo: #5856d6;
+}
+
+:root {
+  --font-size-base: 16px;
+  --scrim: rgba(0, 0, 0, 0.32);
+  --shadow-pop: 0 10px 40px rgba(0, 0, 0, 0.18);
+  --shadow-tile: 0 1px 2px rgba(60, 50, 30, 0.06), 0 2px 8px rgba(60, 50, 30, 0.06);
+  --shadow-thumb: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+  color-scheme: light;
+}
+
+/* ── 다크 (iOS Dark · 플랫폼 샘플과 같은 어두운 대시보드) ─────────────────── */
+[data-theme='dark'] {
+  --color-canvas: #0e0e0d;
+  --color-surface: #1c1c1a;
+  --color-sunken: #2a2927;
+  --color-raised: #393835;
+  --color-line: #363532;
+  --color-track: #3a3936;
+  --color-fill: rgba(118, 118, 128, 0.24);
+  --color-thumb: #5f5d59;
+
+  --color-ink: #f3f1ed;
+  --color-ink-2: #b3afa8;
+  --color-ink-3: #8f8b85;
+
+  --color-brand: #0071e3;
+  --color-brand-dark: #0062c4;
+  --color-brand-soft: #0d2a4d;
+  --color-brand-ink: #409cff;
+  --color-switch: #30d158;
+
+  --color-ok: #30d158;
+  --color-ok-soft: #12301c;
+  --color-caution: #ffd60a;
+  --color-caution-soft: #352e0b;
+  --color-warn: #ff9f0a;
+  --color-warn-soft: #3a2808;
+  --color-danger: #ff453a;
+  --color-danger-soft: #3d1614;
+  --color-danger-fill: #d70015;
+  --color-muted-soft: #2a2927;
+
+  --color-tile-on: #f3f1ed;
+  --color-tile-on-ink: #1e1d1b;
+  --color-tile-on-ink-2: #65625d;
+  --color-card-on: #2b2a28;
+  --color-tile-off: #141413;          /* 꺼진 기기: 목록 칸(#1c1c1e)보다 어둡게 */
+
+  --color-glyph-light: #e6a100;
+  --color-glyph-fan: #0a9fb8;
+  --color-glyph-water: #0a84ff;
+  --color-glyph-heat: #ff8a00;
+  --color-glyph-air: #30b47f;
+
+  --scrim: rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-tile: none;
+  --shadow-thumb: 0 3px 8px rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+html {
+  font-size: var(--font-size-base);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* 보호자 모바일 페이지(/fall)는 세로 스크롤을 허용한다 */
+.page-mobile {
+  height: 100dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+button,
+a,
+input,
+select,
+[role='button'] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 터치했을 때 살짝 어두워지는 반응 (iOS 기본 버튼과 같은 방식) */
+.press {
+  transition: transform 140ms ease, opacity 140ms ease, background-color 160ms ease;
+}
+.press:active:not(:disabled) {
+  opacity: 0.72;
+  transform: scale(0.985);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* iOS 목록: 두 번째 줄부터 위쪽에 얇은 구분선 (아이콘 뒤에서 시작) */
+.inset-list > * + * .row-sep,
+.inset-list [data-row] + [data-row] .row-sep {
+  border-top: 1px solid var(--color-line);
+}
+
+:focus-visible:not([tabindex='-1']) {
+  outline: 3px solid var(--color-brand-ink);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+:focus:not(:focus-visible),
+[tabindex='-1']:focus {
+  outline: none;
+}
+
+input[type='range'] {
+  accent-color: var(--color-brand);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-track) transparent;
+}
+
+/* 위험 상태에서만 쓰는 느린 점멸 */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.soft-pulse {
+  animation: soft-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+.spin-slow {
+  animation: spin-slow 0.9s linear infinite;
+}
+
+/* 현재 위치 표시 — 은은하게 퍼지는 원 */
+@keyframes locate {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+.locate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: locate 2.2s ease-out infinite;
+}
+
+/* 음성 입력 막대 */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+.wave > span {
+  animation: wave 1s ease-in-out infinite;
+  transform-origin: center;
+}
+.wave > span:nth-child(2) { animation-delay: 0.15s; }
+.wave > span:nth-child(3) { animation-delay: 0.3s; }
+.wave > span:nth-child(4) { animation-delay: 0.45s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

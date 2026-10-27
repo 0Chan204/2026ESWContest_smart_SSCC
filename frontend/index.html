@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      태블릿/월패드 킥오스크용. 확대 자체를 막지는 않는다(접근성).
+      글자 크기는 앱 내부 '어르신 모드 글자 크기' 컨트롤로 조절한다.
+      Content-Security-Policy 는 프로덕션 빌드 시 vite.config.ts 에서 주입된다.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#efeeea" />
+    <meta name="description" content="HomeVIS - 집 안 공간의 사용자 상태와 가전 상태를 모니터링하고 위험 상황을 알려주는 스마트홈 안전 모니터링 화면" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>HomeVIS</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>HomeVIS 를 사용하려면 브라우저에서 JavaScript 를 허용해주세요.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

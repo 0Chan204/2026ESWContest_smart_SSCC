@@ -1,0 +1,28 @@
+# 의존성 / 빌드 산출물
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+# 환경변수 — 실제 값이 든 파일은 절대 커밋하지 않는다.
+# .env.example 만 예외로 추적한다.
+.env
+.env.*
+!.env.example
+# 로컬 백엔드 연결 모드 설정 (127.0.0.1 주소만, 비밀값 없음)
+!.env.api
+
+# 로컬 전용 설정 (개인 경로·로컬 상태가 들어갈 수 있음)
+.idea/
+.vscode/
+.claude/settings.local.json
+*.local
+
+# OS / 로그
+.DS_Store
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# 디자인 원본 반입 시 임시 폴더
+_design-reference/
