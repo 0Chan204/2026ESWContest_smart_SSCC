@@ -205,14 +205,23 @@ def handle_decision(request: AiDecisionRequest) -> tuple[AiDecisionRecord, bool]
         if not request.requiresConfirmation and _turns_on_stove(request.actions):
             logger.info("음성으로 인덕션을 켜는 판단이라 사용자 확인을 받습니다 (decisionId=%s)", request.decisionId)
             request = request.model_copy(update={"requiresConfirmation": True})
+        # (v0.12) 자동 승인: 확인 창 없이 바로 실행 (인덕션 켜기·화력 조절은 항상 확인)
+        auto_confirm = settings.VOICE_AUTO_CONFIRM and not _turns_on_stove(request.actions)
         claimed = voice_service.claim_for_decision(
             request.voiceId, request.decisionId, request.announcement, request.actions,
-            request.requiresConfirmation, request.room,
+            request.requiresConfirmation, request.room, auto_confirm=auto_confirm,
         )
         if claimed is None:
             return _record_expired(request, why="음성 명령이 이미 끝난 뒤(시간 초과·다른 판단) 도착한 판단이라"), False
         if claimed.status == "confirm_required":
-            return _record_awaiting_confirmation(request), False
+            if not auto_confirm:
+                return _record_awaiting_confirmation(request), False
+            # 판정 엔진에는 평소처럼 "확인 대기"로 답하고(계약 유지), 서버가 바로 승인해 실행합니다.
+            # "확인 화면에서 승인해 주세요" 같은 안내 대신 "~할게요." 문장을 안내로 씁니다.
+            record = _record_awaiting_confirmation(request.model_copy(update={"announcement": claimed.answer}))
+            logger.info("음성 명령 자동 승인 (voiceId=%s, decisionId=%s)", request.voiceId, request.decisionId)
+            voice_service.confirm(request.voiceId, True)
+            return record, False
 
     results: list[AiActionResult] = []
     fall_incident_id: Optional[str] = None
