@@ -54,20 +54,24 @@ def initial_state(device) -> dict:
     return {"status": "idle", "lastDispensedMl": None, "lastControl": no_control}
 
 
-def air_quality(pm25: float) -> dict:
-    level = "good" if pm25 <= 15 else ("normal" if pm25 <= 35 else "bad")
-    return {"pm25": round(pm25, 1), "pm10": round(pm25 * 1.6, 1), "level": level}
+# v0.11: 공기질은 ppm 값 하나 + 등급 4단계. 등급 기준은 실제로는 임베디드가 정합니다 (아래는 가짜 기준)
+AIR_LEVELS = ((30, "good"), (80, "normal"), (150, "bad"))
+
+
+def air_quality(ppm: float) -> dict:
+    level = next((name for limit, name in AIR_LEVELS if ppm <= limit), "very_bad")
+    return {"ppm": round(ppm, 1), "level": level}
 
 
 def drift_air(device) -> None:
-    """미세먼지 값을 조금씩 바꾸고, auto 모드면 공기질에 따라 스스로 켜고 끕니다."""
+    """공기질 값을 조금씩 바꾸고, auto 모드면 공기질에 따라 스스로 켜고 끕니다."""
     with _lock:
         state = _states[device.deviceId]
-        pm25 = state["airQuality"]["pm25"]
-        pm25 = pm25 - random.uniform(1, 4) if state["power"] == "on" else pm25 + random.uniform(-2, 3)
-        state["airQuality"] = air_quality(max(pm25, 3.0))
+        ppm = state["airQuality"]["ppm"]
+        ppm = ppm - random.uniform(3, 10) if state["power"] == "on" else ppm + random.uniform(-4, 8)
+        state["airQuality"] = air_quality(max(ppm, 5.0))
         level = state["airQuality"]["level"]
-        if state["mode"] == "auto" and level == "bad" and state["power"] == "off":
+        if state["mode"] == "auto" and level in ("bad", "very_bad") and state["power"] == "off":
             state.update(power="on", lastControl={"publisher": "system", "commandId": None})
             print(f"[가짜 {device.deviceId}] 공기질 나쁨 -> 자동으로 켬")
         elif state["mode"] == "auto" and level == "good" and state["power"] == "on" and state["lastControl"]["publisher"] == "system":

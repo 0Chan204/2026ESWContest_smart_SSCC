@@ -24,14 +24,14 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
       "control_state": null, "updatedAt": "..." },
     { "device": "air_purifier", "deviceId": "air-01", "room": "room", "online": true, "is_on": true,
       "current_state": { "reportedAt": "...", "power": "on", "mode": "auto",
-                         "airQuality": { "pm25": 42, "pm10": 60, "level": "bad" } },
+                         "airQuality": { "ppm": 412, "level": "very_bad" } },
       "control_state": "homevis", "updatedAt": "..." }
   ]
 }
 ```
 
 - `is_on`: 인덕션은 화구가 켜져 있으면, 전등·환풍기·공기청정기는 켜져 있으면(절전 밝기여도 켜짐), 정수기는 출수 중이면 `true`
-- 공기청정기 `current_state.airQuality`: 기기가 보낸 공기질(`pm25`, `pm10`, `level`). 공기질이 나빠 기기가 스스로 켜면
+- 공기청정기 `current_state.airQuality`: 기기가 보낸 공기질(`ppm`, `level`: `good` / `normal` / `bad` / `very_bad`, v0.11). 공기질이 나빠 기기가 스스로 켜면
   `control_state`가 `homevis`입니다 (사용자가 켠 것이 아님)
 - 전등 `current_state.brightness`: 밝기(%). 밝기를 보내지 않는 전등은 켜져 있으면 100, 꺼져 있으면 0으로 채웁니다.
   `powerSaving`: 절전(`power_saving`)으로 낮춘 전등이면 `true`
@@ -272,7 +272,7 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
   "lastControl": { "publisher": "api", "commandId": "cmd-20261017-9a8b7c6d" } }
 // 공기청정기 (공기질이 나빠 스스로 켬)
 { "reportedAt": "2026-10-25T14:00:00+09:00", "power": "on", "mode": "auto",
-  "airQuality": { "pm25": 42, "pm10": 60, "level": "bad" },
+  "airQuality": { "ppm": 412, "level": "very_bad" },
   "lastControl": { "publisher": "system" } }
 ```
 
@@ -280,7 +280,8 @@ QoS 1. 기기는 **5초마다, 그리고 상태가 바뀔 때마다** `state`를
   - 절전 밝기로 낮추는 중에는 `mode: "fadeout"`, 다 낮춘 뒤에는 `fadeout` 또는 `steady` 둘 다 됩니다. `power`는 계속 `on`
   - `brightness`를 보내지 않으면 켜져 있을 때 100으로 봅니다
 - 환풍기 `power`: `on` / `off`, `speed`: `low`(약) / `mid`(중) / `high`(강)
-- 공기청정기 `power`: `on` / `off`, `mode`: `auto` / `manual`, `airQuality`: `pm25`·`pm10`(㎍/㎥), `level`(`good` / `normal` / `bad`)
+- 공기청정기 `power`: `on` / `off`, `mode`: `auto` / `manual`, `airQuality`: `ppm`(공기질, v0.11), `level`(`good` 좋음 / `normal` 보통 / `bad` 나쁨 / `very_bad` 매우 나쁨)
+  - 예전 형식(`pm25`·`pm10`)도 받으면 그대로 저장하지만, 대시보드는 `ppm`만 표시합니다.
   - 공기질 판단과 자동 작동은 기기가 합니다. 스스로 켜거나 끄면 `lastControl.publisher`를 `system`으로 보냅니다.
   - `airQuality`에 다른 센서 값(예: `co2`)을 더 넣어도 그대로 저장·전달합니다.
 - 정수기 `status`: `idle` / `dispensing`

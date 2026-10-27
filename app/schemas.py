@@ -164,14 +164,21 @@ class FanState(BaseModel):
     lastControl: Optional[LastControl] = None
 
 
+AirLevel = Literal["good", "normal", "bad", "very_bad"]
+
+
 class AirQuality(BaseModel):
-    """공기청정기 센서 값 (v0.7). 좋음/나쁨 판단 기준은 임베디드가 정합니다."""
+    """공기청정기 센서 값 (v0.7, v0.11: ppm 하나 + 등급 4단계). 등급 판단 기준은 임베디드가 정합니다."""
 
     model_config = ConfigDict(extra="allow")
 
-    pm25: Optional[float] = Field(default=None, ge=0, description="초미세먼지 PM2.5 (㎍/㎥)")
-    pm10: Optional[float] = Field(default=None, ge=0, description="미세먼지 PM10 (㎍/㎥)")
-    level: Optional[Literal["good", "normal", "bad"]] = Field(default=None, description="공기질 등급")
+    ppm: Optional[float] = Field(default=None, ge=0, description="(v0.11) 공기질 (ppm). 대시보드는 이 값만 표시")
+    level: Optional[AirLevel] = Field(
+        default=None, description="공기질 등급: good(좋음) / normal(보통) / bad(나쁨) / very_bad(매우 나쁨, v0.11)"
+    )
+    # v0.7 형식. 지금은 ppm을 쓰지만, 보내면 그대로 저장합니다 (대시보드는 표시하지 않음)
+    pm25: Optional[float] = Field(default=None, ge=0, description="(예전 형식) 초미세먼지 PM2.5 (㎍/㎥)")
+    pm10: Optional[float] = Field(default=None, ge=0, description="(예전 형식) 미세먼지 PM10 (㎍/㎥)")
 
 
 class AirPurifierState(BaseModel):
