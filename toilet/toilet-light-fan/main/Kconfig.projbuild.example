@@ -1,0 +1,67 @@
+menu "HomeVIS toilet light and fan"
+
+    config TLF_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+
+    config TLF_WIFI_PASSWORD
+        string "Wi-Fi password (empty for open network)"
+        default ""
+
+    config TLF_MQTT_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.0.2:1883"
+        help
+            Use mqtt://host:port or mqtts://host:port.
+            TLS uses the ESP-IDF public CA certificate bundle.
+
+    config TLF_MQTT_USERNAME
+        string "MQTT username (empty for anonymous)"
+        default ""
+
+    config TLF_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config TLF_MQTT_CLIENT_ID
+        string "MQTT client ID (unique per physical board)"
+        default "homevis-toilet-light-fan"
+
+    config TLF_NTP_SERVER
+        string "NTP server"
+        default "pool.ntp.org"
+
+    config TLF_LED_GPIO
+        int "WS2812B DIN GPIO"
+        range 0 10
+        default 4
+        help
+            Use an exposed SuperMini GPIO. GPIO2/8/9 are rejected at boot
+            because they are strapping pins. GPIO8 is also a board LED
+            on common SuperMini variants. USB GPIO18/19 stay reserved.
+
+    config TLF_LED_COUNT
+        int "Number of WS2812B pixels"
+        range 1 120
+        default 1
+
+    config TLF_LED_MAX_BRIGHTNESS
+        int "White channel value at logical brightness 100 percent (1-255)"
+        range 1 255
+        default 32
+        help
+            All pixels show white. This caps each R/G/B channel to limit
+            light intensity and supply current; MQTT brightness stays 0-100.
+
+    config TLF_RELAY_GPIO
+        int "Fan relay IN GPIO"
+        range 0 10
+        default 5
+
+    config TLF_RELAY_ACTIVE_LOW
+        bool "Relay turns on when IN is LOW"
+        default y
+        help
+            Disable for an active-high relay module. Both outputs start OFF.
+
+endmenu
