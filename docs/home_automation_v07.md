@@ -14,7 +14,7 @@
 | --- | --- |
 | 조리 중 공청기 ON | 최신 인덕션 ON + 유효한 공청기 OFF이면 기존 API로 1회 요청 |
 | 조리 종료 후 공청기 OFF | 상태 전이·30초 양호·정확한 명령 출처가 모두 필요. 현재 백엔드 GET은 출처를 제외하므로 운영에서는 보류 |
-| 외출 전체 OFF | 600초 유효한 집 전체 부재 규칙 구현. 생산자의 전체 구역 부재 의미 확인 전에는 설정상 비활성 |
+| 외출 전체 OFF | 첫 유효한 집 전체 `empty`에서 즉시 판단. 생산자의 전체 구역 부재 의미 확인 전에는 설정상 비활성 |
 | 음성 공청기 제어 | ON/OFF/auto/manual, 사용자 확인 요청 |
 | 음성 인덕션 ON | 명시적 단계 1~9 + 안전 검증 + 백엔드 확인 필요 |
 | 임베디드와 우선순위 공유 | 계약 없음. AI 내부 우선순위·중복 방지만 구현, 기기 상태 유지 보장은 불가 |
@@ -72,10 +72,14 @@ AI가 접수한 공청기 음성 제어는 별도로 기록해 조리 연동보�
 
 확인 후에도 아래 조건을 모두 만족해야 합니다.
 
-1. 기존 백엔드 결과의 `present=false`, 명시적 `room=null`, 측정 시각·양수 정수 `validSec`, 신뢰도 기본 0.8 이상.
-2. 센싱 결과가 오래되거나 미래 시각이 아니고 오류 reason·mock 표시가 없어야 합니다.
-3. 새 관측들이 유효기간 안에서 연속으로 이어져야 합니다. 센싱 단절·불확실·단일 구역 부재·unknown/empty는 누적 시간을 끊습니다.
-4. 측정 시각 기준 600초 이상 유지되어야 합니다. 단일 결과를 10분 동안 반복 조회해도 충족하지 않습니다.
+1. 기본 HTTP 입력은 `present=false`, 명시적 `room=null`, `observedAt`·양수 정수 `validSec`, 신뢰도 기본 0.8 이상이어야 합니다. `normalize_result`가 이를 내부 `empty`로 변환하되 원본 계약도 별도로 검사합니다.
+2. 직접 MQTT 입력은 `location=empty`, `time`, `location_confidence`를 검사합니다. 선택적 `valid_until`을 준수하고, 유효기간이 없는 기존 Wi-Fi 포맷은 기존 `UNKNOWN_TIMEOUT`으로 만료시킵니다. 이 시간은 확인 대기가 아닙니다.
+3. 두 경로 모두 측정 시각이 수신 시각보다 미래이거나 `allowed_lateness`보다 오래되면 거부합니다. 만료·오류 reason·invalid·unknown·누락을 부재로 간주하지 않으며, 백엔드 mock 계약도 부재 근거로 쓰지 않습니다.
+4. 첫 유효한 `empty`를 수신한 처리 주기의 `HomeAutomation.tick()`에서 즉시 요청을 생성합니다. `away_confirm_seconds`는 제거했으며 행동 결합 버퍼와 이벤트 재정렬을 기다리지 않습니다. 중앙 위치·행동 판단에는 기존 결합·재정렬 정책이 계속 적용됩니다.
+
+`InputRouter` → 수신 시점 재실 검증 → `HomeAutomation` → 기존 outbox/episode ID →
+`POST /api/v1/ai/decisions` 순서로 전달합니다. 동일 외출 에피소드의 반복 결과는 새 명령을 만들지 않고,
+응답 유실 시 기존 decision ID로 재시도합니다. 마지막 측정 시각을 저장하여 귀가·재시작 후 과거 `empty` 재생도 차단합니다.
 
 HTTP 입력의 잘못된 형식·미래 시각·요청 실패·큐 초과는 내부 `SensingFault`로 판단기에 전달합니다.
 이는 센싱 관측이나 새 MQTT/API 필드가 아닙니다. 조인 버퍼를 비우고 외출·행동 근거를 중단하며,
@@ -120,7 +124,7 @@ AI 내부 적용 순서는 안전·외출 전체 OFF → 확인 가능한 사용
 - 조리 연동: `1 - max(인덕션 updatedAt 나이, 공청기 updatedAt 나이, 공기질 reportedAt 나이) / device_max_age`.
   모든 관측이 최신·유효한 경우에만 계산하는 **최신성 휴리스틱**이며 정확도 확률이나 학습된 confidence가 아닙니다.
   백엔드 예시의 0.9를 고정 사용하지 않으며 `confidence_basis=telemetry_freshness_not_probability`로 기록합니다.
-- 전체 외출: 연속 부재 구간에서 실제 받은 신뢰도의 최솟값, `minimum_absence_confidence`.
+- 전체 외출: 첫 유효한 부재 관측에서 실제 받은 신뢰도, `observed_absence_confidence`.
 - 기존 `rule_confidence_policy=block`이면 신규 규칙도 전송하지 않습니다.
 
 에피소드 ID로 안정적인 decisionId를 만들고 기존 SQLite Outbox와 DecisionHistory에
@@ -190,7 +194,7 @@ HOMEVIS_WHOLE_HOME_PRESENCE_VERIFIED=false
 HOMEVIS_VOICE_ENABLED=false
 ```
 
-`config/homevis.toml`의 `[home_automation]`:
+`config/decision_policy.toml`의 `[home_automation]` (`homevis.toml`에서 자동 연결):
 
 | 설정 | 기본값 | 의미 |
 | --- | --- | --- |
@@ -198,7 +202,7 @@ HOMEVIS_VOICE_ENABLED=false
 | air_purifier_off_on_good_or_normal | true | 출처가 확인된 경우에만 OFF 검토 |
 | air_purifier_clean_hold_seconds | 30 | 양호한 새 관측의 연속 유지 시간 |
 | away_all_off_enabled / whole_home_presence_verified | true / false | 규칙 준비 / 전체 집 부재 계약 확인 |
-| away_confirm_seconds / away_min_confidence | 600 / 0.8 | 연속 부재 시간 / 최소 관측 신뢰도 |
+| away_min_confidence | 0.8 | 전체 부재 관측의 최소 신뢰도; 추가 확인 대기 없음 |
 
 기존 코드의 직접 `IntegrationConfig()` 생성은 호환성을 위해 신규 규칙이 기본 OFF입니다.
 위 설정 파일을 사용하는 실행기에서만 해당 설정이 적용됩니다.
@@ -215,29 +219,19 @@ HOMEVIS_VOICE_ENABLED=false
 | `runtime.py`, `host.py` | 기존 tick/수신/송신 전 검사 연결, 복구 차단, 상태 표시 |
 | `src/interaction/contracts.py`, `intent.py`, `control.py`, `coordinator.py` | v0.7 음성 필드·명령·확인 정책 |
 | `src/interaction/response.py`, `explanation.py` | 공기질 조회·출처/외출 이력 설명 |
-| `config/homevis.toml`, `.env.example`, `README.md`, 문서 | 설정·실행법·미확정 계약 명시 |
-| `tests/test_home_automation.py`, `test_voice_v07.py`, `test_home_backend_v07.py` | 신규 Mock·실제 스키마 오프라인 테스트 |
-| `tests/test_voice_interaction.py` | 이전 인덕션 ON 무조건 금지 검증을 새 안전 조건 검증으로 조정 |
+| `config/homevis.toml`, `config/decision_policy.toml`, `.env.example`, `README.md`, 문서 | 연결 설정·판단 기준·실행법·미확정 계약 명시 |
 
 ## 검증
 
-```powershell
-python -m pip install pytest
-python -m pytest tests/test_home_automation.py tests/test_voice_v07.py -q
-python -m pytest -q
-python -m src.integration --env-file .env.example --mode mock --duration 5
-```
-
-실제 백엔드 소스에 대한 추가 **오프라인** 검증은 Pydantic 2와 위 커밋을 포함한 로컬 clone이 있을 때 실행합니다.
+개발용 테스트 파일은 이후 삭제했습니다. 아래 수치와 테스트 설명은 삭제 전 검증 기록입니다.
+현재 기동 확인은 실행 파일을 사용합니다.
 
 ```powershell
-$env:HOMEVIS_BACKEND_CHECKOUT = 'C:\path\to\HomeVIS-Backend'
-python -m pytest tests/test_home_backend_v07.py -q
+python run_homevis.py --check-config
+python run_homevis.py --mode mock --duration 15
 ```
 
-백엔드 checkout이 없으면 해당 선택 테스트만 skip하며 핵심 Mock 테스트는 실행 가능합니다.
-실제 `get_device_info()` 함수와 요청 모델을 이용해 lastControl 누락과 자동 OFF 보류도 재현합니다.
-EXAONE/GPT 실API 테스트는 기존 명시적 opt-in 방식을 유지합니다.
+삭제 전에는 실제 `get_device_info()` 함수와 요청 모델로 lastControl 누락과 자동 OFF 보류도 검증했습니다.
 이번 작업에서는 실제 유료 API·브로커·실서버·가전 제어를 실행하지 않았습니다.
 
 초기 v0.7 통합 테스트: **77 passed** (선택적 실제 백엔드 소스 검증 5건 포함).
@@ -253,15 +247,118 @@ CLI 계약 표시는 v0.7로 갱신했으며 온도 유효성 확인 설정도 �
 수정 후 integration/interaction/관련 테스트 34개 파일의 Python 3.11 문법 검사와 `git diff --check`도 통과했습니다.
 `.env` 및 실행 출력은 기존 `.gitignore`에 의해 제외됩니다.
 
-## 팀 확인 사항 / LG OS 배포 전 확인
+## 팀 전달용 요청사항
 
-1. 백엔드: AI GET에서 확인 가능한 제어 출처·명령 ID, 외부 수동 변경, 동시에 활성인 임베디드 자동 요구를 어떻게 표현할지.
-2. 임베디드·백엔드: 조리 ON 유지와 외출 OFF 유지의 우선순위, 해제·재부팅·수동 조작·ACK 규칙. 현재 A/B는 미해결입니다.
-3. 센싱·백엔드: present=false/room=null이 집 전체 유효 부재인지, 모든 구역 커버리지와 일부 노드 고장/unknown을 구분하는 근거.
-4. 음성 확인 후 실행 시점의 최종 재실·온도·위험 재검증과 취소. 현재 AI의 송신 전 검사만으로 확인 대기 이후 안전을 보장하지 않습니다.
-5. 보드 LG OS의 Python 3.11+, arm64 패키지 설치, 쓰기 가능한 상태 디렉터리, 시각 동기화, HTTP/MQTT 인증·TLS, 자동 재시작·중복 프로세스 방지.
-6. 실제 배포 v0.7 지원, 모의 음성 AI 중지, 실제 공청기 상태·제어 결과·TTS 경로의 현장 시험.
-7. Wi-Fi→백엔드 메시지 변환 배포와 온도 센서 오류·측정 시각 전달 계약. AI의 보수적인 차단만으로 이 연결을 완료했다고 볼 수 없습니다.
+작성 기준: 2026-10-26. **아래는 팀 간 확인·수정 요청이며 확정 API 명세가 아닙니다.**
+이번 범위는 AI 저장소의 보호 로직과 문서입니다. Wi-Fi·백엔드·임베디드 저장소를 수정하거나
+새 MQTT 토픽·API·우선순위 필드를 임의로 만들지 않습니다. 담당자 이름과 일정은 팀에서 정해야 합니다.
 
-Windows/Python 3.13.5에서 자동 검증하며 Python 3.11 문법 호환성을 별도로 검사합니다.
+AI의 연속 GET·판단 POST, 잘못된 센싱 이후 누적 근거 초기화, 정상 cooling 종료 처리,
+온도 계약 미확인 시 가열·복구 차단은 이미 반영했습니다. 기존 중앙 confidence·피드백 학습 구조는 유지합니다.
+팀에는 아래 항목별로 **적용 커밋/배포 버전, 실제 입출력 샘플, 정상·오류 시험 결과**를 요청합니다.
+키·토큰·사용자 음성 원문 등 민감정보는 공유 자료에서 제거하세요.
+
+### 요청 요약
+
+| ID | 협의할 팀 | 요청 / 완료 확인 | 미완료 시 AI 처리 |
+| --- | --- | --- | --- |
+| R1 | Wi-Fi + 백엔드 | 최종 추론 MQTT → 백엔드 저장 → 센싱 GET까지 같은 측정이 전달되는지 확인 | HTTP 경로 유지, 잘못된 결과는 진단·거절. 임의 MQTT 우회 없음 |
+| R2 | Wi-Fi + 백엔드 | 집 전체 부재·unknown·노드 고장 구분, 구역/노드 매핑 확정 | 전체 외출 OFF 보류 |
+| R3 | Wi-Fi + 백엔드 | 실제 행동 JSON, 신뢰도·시각·이벤트 중복·설명 계약 제공 | 미측정 자세·still·행동을 생성하지 않음 |
+| R4 | 임베디드 + 백엔드 | 온도 센서 유효성·실제 측정 시각·오류가 AI GET까지 전달됨을 검증 | live 인덕션 ON·증가·복구 보류 |
+| R5 | 백엔드 + 임베디드 | 실제 제어 출처와 commandId 보존, 동시에 유효한 공기질 자동 요구 식별 | 소유권 없는 공청기 OFF 보류 |
+| R6 | 백엔드 + 임베디드 | 조리 ON/외출 OFF 유지, 수동 변경·재시작·해제 우선순위 합의 | 중복 요청은 막지만 물리적 ON/OFF 유지 보장은 불가 |
+| R7 | 백엔드 + 임베디드 + 대시보드 | 음성 승인 후 최종 안전 검증, 낙상 사건 종료, 실제 ACK·음성 출력 검증 | AI 송신 전 검증만 수행, 미확인 실행 성공·사건 종료를 주장하지 않음 |
+
+### Wi-Fi 담당에게: R1·R2·R3
+
+1. **백엔드까지 전달되는 최종 결과 연결을 정해주세요.**
+   - 확인한 Wi-Fi 출력은 `wifi/occupancy/state`의 `time/location/location_confidence`입니다.
+   - 백엔드는 `home/edge/result`의 `observedAt/room/confidence` 등을 저장합니다.
+   - 변환을 생산자에서 할지 백엔드에서 할지 담당을 정해주세요. 토픽 이름만 바꾸면 해결되지 않습니다.
+   - 시간·위치·신뢰도는 의미가 일치하는지 확인한 뒤 대응시키고, 관측하지 않은 `present/validSec`를 임의로 채우지 마세요.
+   - 실제 발행 JSON과 동일 결과의 백엔드 GET JSON을 한 쌍으로 보내주세요. 원시 CSI나 학습 CSV는 이 연결 샘플을 대체하지 않습니다.
+
+2. **집 전체 부재와 단순 불확실을 구분해주세요.**
+   - 모든 구역을 포함하는 최종 결과인지, `empty`가 어느 범위의 부재인지 확인이 필요합니다.
+   - `room/kitchen/toilet`과 실제 노드 ID 매핑표, 일부 노드 고장·낮은 신뢰도·초기화 중 출력 예시를 주세요.
+   - `unknown`·노드 오프라인을 `present=false`로 바꾸지 마세요.
+   - `present=false, room=null`을 전체 집의 유효한 부재로 보증할 수 있을 때만 그 의미를 명세에 확정해주세요.
+   - AI는 확인 전 `whole_home_presence_verified=false`를 유지합니다. 계약 확인 후 첫 유효한 전체 `empty`에서 즉시 판단하며, 반복 GET은 새 외출 명령을 만들지 않습니다.
+
+3. **행동 생산자의 실제 패킷을 주세요.**
+   - 대상 라벨은 `none/fall/lie_down/get_up`입니다. 각 라벨의 실제 JSON과 `activityConfidence` 의미를 확인해주세요.
+   - `observedAt`이 6초 추론 창의 시작/끝 중 무엇인지, 발행 지연, 유효기간, 위치와 행동의 시각이 같은지 알려주세요.
+   - 같은 이벤트/관측 창의 재전송 식별 방식도 필요합니다. 재전송할 때 측정 시각을 현재 시각으로 갱신하지 마세요.
+   - 정상 추론 이유와 오류 진단을 구분할 계약이 필요합니다. 현재 AI의 `reason`은 오류 진단으로 처리하므로 정상 설명을 무조건 넣으면 제어가 보류될 수 있습니다.
+   - 네 행동 라벨에는 지속 `lying`이나 실제 `still`이 없습니다. 추가 측정이 없으면 취침 600초/화장실 눕기 후 정지 5초를 만족한다고 보고하지 마세요.
+   - `motion_state/fall_detected`는 기존 확장 입력이지 확인된 백엔드 필수 필드가 아닙니다. 새 설명·시각 필드명도 샘플과 합의 후 AI 경계 어댑터에 반영합니다.
+
+**수신 확인 기준:** 정상 위치 이동·동일 관측 재전송·unknown·노드 고장·행동 4종·만료된 행동을
+백엔드 GET까지 전달하고, AI에서 각각 새 관측/중복/무효/이벤트로 구분해야 합니다.
+현재 AI의 정렬 지연 기본 4초 및 위치·행동 결합 기준과 실제 생산 지연이 맞는지도 함께 시험해야 합니다.
+
+### 백엔드 담당에게: R1·R4·R5·R7
+
+1. **센싱 변환·저장·GET 계약을 함께 확정해주세요.**
+   - 기존 `GET /api/v1/sensing/results`를 유지하며 측정 시각, 유효기간, 신뢰도, 구역, 진단 의미를 보존해주세요.
+   - `savedAt`이나 GET 시각으로 `observedAt`을 덮어쓰지 말고, 저장할 수 없는 결과와 미수신을 구분해주세요.
+   - 실제 `/api/v1/ai/device-states` 응답도 공유해주세요. 문서 예시만이 아닌 배포 서버의 필드·버전 확인이 필요합니다.
+
+2. **온도 측정의 유효성 정보가 사라지지 않게 해주세요.**
+   - 현재 인덕션 GET은 `state/level/temperature`와 기기 `updatedAt`을 제공하지만 온도 센서 유효성·독립 측정 시각은 없습니다.
+   - 임베디드와 오류·초기 미측정·오래된 값의 표현을 정하고, 스키마·저장·GET 전체에서 의미가 유지되도록 해주세요.
+   - 새 필드가 필요하다면 이름·타입·누락 시 처리·구버전 호환을 먼저 합의해주세요. AI는 아직 미확정 필드를 구현한 상태가 아닙니다.
+
+3. **공청기 제어 출처를 AI가 확인할 수 있게 해주세요.**
+   - 확인한 `app/ai_service.py:get_device_info()`는 `current_state`에서 기존 `lastControl`을 제거합니다.
+   - AI는 실제 `lastControl.publisher=api`와 `commandId`가 자신의 조리 ON 응답과 일치하는지 확인해야 OFF를 검토할 수 있습니다.
+   - 기존 출처를 GET에 보존하는 방식부터 검토해주세요. `control_state=homevis` 하나로는 AI·임베디드 자동 제어를 구분할 수 없습니다.
+   - 마지막 명령 이후에도 공기질 자동 ON 요구가 살아 있다면 이를 어떻게 구분할지도 임베디드와 협의해주세요. 마지막 commandId만으로 동시 요구의 우선순위가 해결되지는 않습니다.
+
+4. **AI 판단 이후의 최종 실행을 검증해주세요.**
+   - 음성 확인 대기 중 재실 이탈·온도 이상·낙상·외출이 발생했을 때, 승인 시점 재검증/취소를 누가 수행하는지 정해주세요.
+   - AI는 승인 대기 이후 재POST하지 않습니다. 승인 화면만 통과하면 무조건 안전하다고 해석하면 안 됩니다.
+   - 동일 decisionId/voiceId 중복, 만료, 재시작, `sent` 이후 실제 ACK 실패를 시험해주세요.
+   - 낙상은 백엔드의 사건 조회 상태로 종료합니다. 사용자·보호자 응답과 타이머 재시작 복구, 실제 신고 수단을 별도로 확인해주세요.
+   - STT·시작어 처리·확인 UI·TTS는 기존 백엔드/대시보드 경로를 유지하고, 음성 안내 중복 재생 여부를 확인해주세요.
+
+### 임베디드 담당에게: R4·R5·R6
+
+1. **온도 오류가 정상 측정처럼 전달되지 않게 해주세요.**
+   - 검토한 develop `1f0e262`는 최초 측정 전 25℃, 센서 오류 시 마지막 온도를 사용합니다.
+   - 새 기기 heartbeat만으로 AI가 이 숫자를 새 정상 온도로 볼 수 없도록 실제 측정 시각·유효/오류 의미를 전달해야 합니다.
+   - 정상 측정, 부팅 직후, 센서 분리/고장, 오래된 값 반복, 재연결을 각각 시험하고 백엔드 GET에서 구분되는 결과를 주세요.
+   - `cooling`은 정상 가열 종료로 반영했지만 `overheated`나 서로 모순되는 전원·상태는 정상 종료로 인정하지 않습니다.
+
+2. **기기에서 적용된 명령의 출처와 결과를 보존해주세요.**
+   - AI 요청의 `commandId`, 실제 수동 조작, 임베디드 자동 제어를 구별할 수 있어야 합니다.
+   - ACK의 적용/거절/실패와 뒤따르는 실제 상태가 일치하는지 확인해주세요. 명령을 받았다는 사실만으로 성공 처리하지 않습니다.
+
+3. **공기질 기본 제어와 AI 요청의 충돌 규칙을 백엔드와 정해주세요.**
+   - 공기질 측정·PM 임계값·기본 공청기 ON/OFF는 계속 임베디드 역할입니다.
+   - 조리 ON 유지와 외출 OFF 유지의 적용·해제 조건, 사용자 수동 조작, 위험 상태, 재부팅·연결 끊김 시 정책을 합의해주세요.
+   - 귀가만으로 인덕션이 다시 켜지면 안 됩니다. 공청기 유지 해제와 인덕션 재점화는 별도 정책입니다.
+   - 현재 command 계약에는 공유 우선순위/유지/외출 잠금 정보가 없습니다. 새 토픽이나 필드로 임의 구현하지 말고 기존 계약 확장 여부부터 합의해주세요.
+
+**공동 A/B 완료 기준:**
+
+| 시험 | 실제 장치에서 확인할 결과 |
+| --- | --- |
+| A: 인덕션 ON + 공기질 good → AI 공청기 ON | 합의한 조리 유지 조건 동안 임베디드가 다시 OFF하지 않음. 종료·수동 변경·연결 단절 시 합의한 해제 규칙 적용 |
+| B: 전체 외출 확정 + 공기질 bad → 백엔드 전체 OFF | 합의한 외출 유지 조건 동안 임베디드가 다시 ON하지 않음. 정수기 제외, 재시작 후 정책 유지·해제 확인, 귀가만으로 인덕션 ON 없음 |
+
+현재 AI의 A/B 테스트는 반대 상태를 주입해 반복 명령을 막는 테스트입니다.
+위 실제 장치의 유지·우선순위 동작은 아직 검증 완료가 아닙니다.
+
+### 협의 후 AI에서 할 일과 배포 조건
+
+- 팀이 확정한 실제 입력 샘플로 경계 어댑터·계약 회귀 테스트를 보완합니다. 중앙 confidence나 공기질 임계값을 바꾸는 작업은 아닙니다.
+- R4의 의미·데이터 경로·오류 시험이 확인되고 AI가 합의된 유효성을 검사할 수 있는지 검토한 뒤에만 `stove_temperature_validity_verified` 활성화를 검토합니다. 이 플래그 자체가 샘플별 유효성을 검증하지는 않습니다.
+- R2 확인 및 부분 노드 고장/unknown/재전송 시험 후에만 `whole_home_presence_verified` 활성화를 검토합니다.
+- 실제 서버 v0.7 지원, 브로커 인증·ACL·TLS, 동일 client ID 충돌 방지, 모의 음성 AI 중지를 확인합니다.
+- 보드의 Python 3.11+, arm64 패키지, 쓰기 가능한 데이터 경로, 시각 동기화, 자동 재시작, 중복 프로세스 방지를 확인합니다.
+- 실가전 시험은 담당자 감독하에 진행합니다. AI의 Mock/로컬 소켓 검증을 실제 기기 안전 보증으로 대체하지 않습니다.
+
+Windows/Python 3.13.5 자동 검증과 Python 3.11 문법 검사는 수행했으나,
 LG OS/라즈베리파이에서 실행 검증했다는 의미는 아닙니다.

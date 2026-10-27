@@ -20,11 +20,10 @@
 | src/control/realtime_config.py | 시간·confidence·출력·온도·상승률·상태별 점수/액션 설정 |
 | src/control/realtime_models.py | 실시간 입력 검증, 상태 및 결과 직렬화, 기존 RiskDecision 변환 |
 | src/control/decision/realtime.py | 시간 추적과 상태 전이 구현 |
-| test_realtime.py | 순서 있는 JSONL 입력 및 기존 LLM/TTS 연결 예제 |
-| tests/test_realtime_controller.py | 시간 경계, 센서 오류, 긴급 상황, 호환성 검증 |
+| run_homevis.py | 센싱·판단·전송 연속 실행 |
 | README.md / 이 문서 | 실행법과 정책 및 시나리오 명시 |
 
-LLM adapter, message generator, prompts, TTS, AlertService, 기존 test_alert.py는 변경하지 않았다. 새 필드는 기존 프롬프트 직렬화를 통해 LLM에 전달된다.
+LLM adapter, message generator, prompts, TTS, AlertService는 유지한다. 새 필드는 기존 프롬프트 직렬화를 통해 LLM에 전달된다.
 
 ## 1. 전체 동작 흐름
 
@@ -187,15 +186,13 @@ RAPID_TEMPERATURE_C_PER_SECOND=10 이상이면 즉시 DANGER이다. 누락된 �
 ```
 
 ```powershell
-python -m unittest discover -s tests -v
-python test_realtime.py
-python test_realtime.py --input events.jsonl
-python test_realtime.py --tts pyttsx3
+python run_homevis.py --check-config
+python run_homevis.py --mode mock --duration 15
 ```
 
-예제 실행기는 상태가 바뀔 때만 LLM/TTS를 호출한다. 반복 알림 주기 정책은 포함하지 않는다. 기본 LLM은 none, TTS는 dry-run이다. 기존 Gemini 설정을 갖춘 환경에서는 `--llm gemini`를 사용할 수 있다. `output/realtime/decisions.jsonl`에 모든 판단을, `alert_output.json`에 마지막 상태 전이의 알림을 기록한다. WAV는 알림이 생성된 경우에 남는다. 실행할 때 로그/마지막 JSON은 덮어쓴다.
+별도 JSONL 재생용 테스트 파일은 삭제했다. 현재 실행기는 `config/decision_policy.toml`의 판단 기준과 LLM 설정을 사용한다.
 
-JSONL 예시(각 줄이 이벤트 하나):
+삭제 전 JSONL 재생 도구의 입력 형식 기록(현재 실행기 입력 형식이 아님):
 
 ```jsonl
 {"type":"appliance","timestamp":0,"power_on":true,"power_watts":800,"temperature_c":90}

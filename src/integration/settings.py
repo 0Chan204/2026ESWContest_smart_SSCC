@@ -5,6 +5,7 @@ from pathlib import Path
 import tomllib
 
 from .config import IntegrationConfig
+from .decision_policy import config_values, merge_policy
 from src.interaction.config import VoiceConfig
 
 
@@ -74,11 +75,12 @@ def load_settings(path=DEFAULT_CONFIG, *, environ=None, mode=None, base_url=None
     env = os.environ if environ is None else environ
     with Path(path).open("rb") as stream:
         raw = tomllib.load(stream)
-    if set(raw) - {"backend", "mqtt", "runtime", "actions", "voice", "scenarios", "home_automation"}:
+    if set(raw) - {"backend", "mqtt", "runtime", "actions", "voice", "scenarios", "home_automation", "decision_policy"}:
         raise ValueError("unknown configuration section")
+    raw = merge_policy(raw, path)
     backend, mqtt, runtime = (dict(raw.get(key, {})) for key in ("backend", "mqtt", "runtime"))
     from src.control.scenario_config import ScenarioConfig
-    backend["scenario_config"] = ScenarioConfig(**{key.upper(): value for key, value in raw.get("scenarios", {}).items()})
+    backend["scenario_config"] = ScenarioConfig(**config_values(ScenarioConfig, raw.get("scenarios", {})))
     from .home_config import HomeAutomationConfig
     home = dict(raw.get("home_automation", {}))
     for key in ("air_purifier_enabled", "cooking_air_clean_enabled", "away_all_off_enabled", "whole_home_presence_verified"):

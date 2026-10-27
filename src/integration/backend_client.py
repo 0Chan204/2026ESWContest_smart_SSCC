@@ -49,7 +49,7 @@ class UrllibTransport:
         except (URLError, TimeoutError, OSError, HTTPException) as exc:
             # Avoid logging URLs, authentication headers, or credentials from exceptions.
             raise BackendError("backend connection/timeout error", retryable=True) from exc
-        except (ValueError, UnicodeError) as exc:
+        except (ValueError, UnicodeError, RecursionError) as exc:
             raise BackendError("backend returned invalid JSON") from exc
 
 

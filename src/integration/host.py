@@ -53,7 +53,16 @@ def write_status(path, value):
                                          prefix=".status-", suffix=".tmp", delete=False) as stream:
             name = stream.name
             json.dump(value, stream, ensure_ascii=False, allow_nan=False)
-        os.replace(name, path)
+        try:
+            os.replace(name, path)
+        except PermissionError as exc:
+            # Windows readers (including --healthcheck) may hold the destination
+            # without FILE_SHARE_DELETE. Keep the old atomic snapshot and retry
+            # on a later tick instead of stopping the safety/controller loop.
+            if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33}:
+                raise
+            return False
+        return True
     finally:
         if name and os.path.exists(name):
             os.unlink(name)
@@ -68,6 +77,7 @@ class ContinuousHost:
         self._next_status = self._next_prune = 0
         self._now = None
         self._connection_generation = 0
+        self._status_deferred = False
 
     def status(self, now, running=True):
         counts = {row[0]: row[1] for row in self.runtime.outbox.db.execute(
@@ -79,6 +89,7 @@ class ContinuousHost:
                 "fall_state": None if self.runtime.controller.bathroom_decision is None else self.runtime.controller.bathroom_decision.state.value,
                 "outbox": counts, "fall_incident": self.runtime.outbox.fall_incident(),
                 "home_automation": self.runtime.home_automation.health(),
+                "llm": self.runtime.shared_llm.health(),
                 "stove_temperature_validity_verified": self.runtime.config.stove_temperature_validity_verified,
                 "voice": self.runtime.voice.health() if self.runtime.voice is not None else {"enabled": False},
                 "fall_status_configured": bool(self.settings.integration.fall_status_path or self.settings.mqtt.fall_status_topic),
@@ -99,10 +110,14 @@ class ContinuousHost:
         self.runtime.run_once(self._now)
         if now >= self._next_status:
             status = self.status(self._now)
-            write_status(self.status_path, status)
-            print(json.dumps({key: status[key] for key in ("mode", "state", "backend_available", "outbox")},
+            written = write_status(self.status_path, status)
+            if written is False and not self._status_deferred:
+                self.runtime.diagnostic("status_write_deferred")
+            self._status_deferred = written is False
+            print(json.dumps({key: status[key] for key in ("mode", "state", "backend_available", "outbox", "llm")},
                              ensure_ascii=True), flush=True)
-            self._next_status = now + self.settings.status_interval
+            self._next_status = now + (min(.5, self.settings.status_interval)
+                                       if self._status_deferred else self.settings.status_interval)
         if now >= self._next_prune:
             self.runtime.outbox.prune_audit(now - self.settings.audit_retention_days * 86400)
             self._next_prune = now + 3600

@@ -9,6 +9,13 @@ class ContractError(ValueError):
     pass
 
 
+def _copy_contract(value):
+    try:
+        return deepcopy(value)
+    except RecursionError:
+        raise ContractError("payload nesting is too deep") from None
+
+
 def measured_time(value: str) -> float:
     if not isinstance(value, str):
         raise ContractError("time must be an ISO 8601 string")
@@ -22,13 +29,20 @@ def measured_time(value: str) -> float:
 
 
 def iso_time(value: float) -> str:
-    return datetime.fromtimestamp(value, timezone.utc).isoformat()
+    try:
+        return datetime.fromtimestamp(value, timezone.utc).isoformat()
+    except (ValueError, OverflowError, OSError) as exc:
+        raise ContractError("time is outside the supported range") from exc
 
 
 def number(value, name, *, nullable=False, confidence=False):
     if value is None and nullable:
         return value
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
+    try:
+        finite = not isinstance(value, bool) and isinstance(value, (int, float)) and isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite:
         raise ContractError(f"{name} must be finite")
     if confidence and not 0 <= value <= 1:
         raise ContractError(f"{name} must be between 0 and 1")
@@ -38,7 +52,7 @@ def number(value, name, *, nullable=False, confidence=False):
 def device_items(payload: dict) -> list[dict]:
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         raise ContractError("device states require items[]")
-    items = deepcopy(payload["items"])
+    items = _copy_contract(payload["items"])
     ids = set()
     for item in items:
         if not isinstance(item, dict):
@@ -66,7 +80,7 @@ def device_items(payload: dict) -> list[dict]:
 def decision_payload(payload: dict, *, allow_null_confidence=True) -> dict:
     if not isinstance(payload, dict):
         raise ContractError("decision must be an object")
-    data = deepcopy(payload)
+    data = _copy_contract(payload)
     away = data.get("scenario") == "away_all_off"
     for field in ("decisionId", "scenario", "reason", "timestamp") + (() if away else ("room",)):
         if not isinstance(data.get(field), str) or not data[field]:
@@ -114,7 +128,7 @@ def decision_payload(payload: dict, *, allow_null_confidence=True) -> dict:
 def decision_response(status: int, payload: dict, request: dict) -> dict:
     if status not in {200, 202} or not isinstance(payload, dict):
         raise ContractError("unexpected decision response")
-    data = deepcopy(payload)
+    data = _copy_contract(payload)
     if data.get("decisionId") != request["decisionId"]:
         raise ContractError("response decisionId mismatch")
     if type(data.get("duplicate")) is not bool or data["duplicate"] != (status == 200):

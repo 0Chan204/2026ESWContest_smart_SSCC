@@ -17,10 +17,15 @@ python -m pip install -r requirements-runtime.txt
 MQTT TLS/CA는 `config/homevis.toml`의 `mqtt.tls/ca_file`에서 설정합니다.
 
 ```sh
-python -m src.integration
+python run_homevis.py
 ```
 
 기본 실행은 **live·무기한**입니다. `Ctrl+C` 또는 `SIGTERM`으로 종료합니다.
+`run_homevis.py` 하나가 센싱 수신, 기기 상태 조회, 중앙 판단·생활 자동화, outbox 전송,
+낙상 진행 조회, 활성화된 음성 처리, 상태 기록을 모두 기존 통합 실행기로 연결합니다.
+별도 시나리오 파일들을 하나씩 실행할 필요가 없습니다. 설정과 환경변수에서 비활성화한 기능은 실행하지 않습니다.
+파일 실행 시 상대 경로는 프로젝트 폴더 기준입니다. 기존 `python -m src.integration`도 그대로 사용할 수 있습니다.
+백엔드·센싱 생산자·MQTT 브로커를 이 파일에서 대신 시작하지는 않습니다.
 MQTT와 HTTP는 별도 작업 스레드를 사용하고, 컨트롤러·SQLite는 주 실행 스레드에서만 접근합니다.
 MQTT 연결이 끊기면 재연결·재구독하고, HTTP 오류는 다음 주기에 재시도합니다.
 센싱 중단을 정상/외출/회복으로 바꾸지 않으며, 오래된 일반 기기 제어는 만료시킵니다.
@@ -37,6 +42,40 @@ Mock 모드는 MQTT·실가전·LLM API를 호출하지 않습니다. 가짜 센
 `--duration`을 생략하면 Mock도 계속 실행됩니다. Mock WAV는 시험용 소리이며 실제 음성은 아닙니다.
 `--healthcheck`는 프로세스 heartbeat 확인입니다. 센싱/백엔드 연결 상태는 별도로 상태 파일에서 확인합니다.
 동일 데이터 폴더를 사용하는 두 번째 실행기는 파일 잠금으로 거부합니다. 폴더는 실행 계정이 쓸 수 있어야 합니다.
+
+### 2026-10-27 연속 실행 재검증
+
+아래 회귀 결과는 개발용 테스트 파일 삭제 전의 기록입니다. 현재 실행 확인은 `run_homevis.py`를 사용합니다.
+
+- 수정 후 전체 회귀 검사: **841 passed, 11 skipped**(194.84초, Windows/Python 3.13.5). skip은 유료 API 직접 호출 2개와 별도 백엔드 checkout이 필요한 9개다. 실제 유료 API는 호출하지 않았다. `git diff --check`와 Python 구문 검사도 통과했다.
+- 기본 설정의 mock 프로세스를 65초 동안 실행했다. 센싱 62건을 수신했고, 전등 ON·주방 화력 감소·안전 안내 등 요청 5건을 시뮬레이션 백엔드가 접수했다. 정상 종료 시 `running=false`와 SQLite 기록을 확인했다.
+- 기본 `python`(이 환경의 Python 3.12.11)으로 `run_homevis.py --mode mock --mock-scenario fall --duration 12`도 실행했다. `fall_detected`와 `fall_user_announcement` 각 1건이 접수되었으며, 낙상 안내 기록 1건과 정상 종료를 확인했다.
+- 실제 `run_homevis.py` 프로세스를 종료 시간 없이 띄워 로컬 HTTP 테스트 서버에 연결했다. 잘못된 센싱, 백엔드 503 장애, 복구, 반복 empty, 귀가, 두 번째 외출, 강제 종료·재시작을 거쳐도 루프와 중복 방지가 유지되는 것을 자동 테스트로 확인했다. 이 테스트는 실가전을 제어하지 않는다.
+- 시뮬레이션 백엔드가 `away_all_off`에 불필요하게 `room`을 요구하던 오류를 수정했다. 실제 계약대로 `actions=[]`를 받고 시뮬레이션 대상 기기를 선택한다.
+- 과도하게 큰 숫자/TTL과 지나치게 깊은 JSON이 처리 루프를 종료시키지 않도록 입력 오류로 처리한다. 다음 유효한 관측부터 기존 조건으로 복구하며 새로운 확인 대기는 없다.
+- Windows에서 상태 파일을 읽는 동안 atomic 교체가 거부되는 문제를 재현·수정했다. 이 경우 이전 상태 파일을 보존하고 최대 0.5초 뒤 상태 기록만 다시 시도한다. 센싱·판단 루프는 계속되며, 영구적인 디스크/SQLite 쓰기 실패를 성공으로 처리하지 않는다.
+- 현재 작업 환경의 설정으로 백엔드 기기·센싱 API를 읽기 전용 조회했으나 연결되지 않았고 MQTT TCP 포트도 연결되지 않았다. 따라서 실제 입력부터 실가전까지의 현장 연동 성공을 확인한 것은 아니다.
+- 현재 `whole_home_presence_verified=false`, 음성 기능 OFF 설정을 유지한다. 전체 부재 계약이 확인되기 전에는 외출 OFF가 보류된다. 행동 정보가 없으면 위치만으로 낙상·기상·취침을 만들어내지 않는다.
+- Docker/ARM64 보드 실행 및 수일 이상의 장시간 실기기 시험은 이 환경에서 수행하지 못했다.
+
+## 테스트 파일 정리 후 재검증 (2026-10-27)
+
+- 프로젝트 밖 임시 복사본에서 현재 소스와 Git의 기존 회귀 검사를 함께 실행했다. 현재 설정 파일 경로·오류 메시지 비노출·즉시 외출 정책에 맞춰 임시 검사 준비 코드를 조정했다.
+- 결과는 **774 passed, 2 skipped, 13 deselected**다. skip 2건은 실제 유료 EXAONE/GPT 호출이다. 제외한 13건은 제거된 수동 실행 파일·외출 확인 대기 조건을 대상으로 한 옛 검사이며, 현재 요구사항 검사 49건을 별도로 포함했다. 백엔드 소스 모델 대조와 로컬 MQTT/HTTP 소켓 검사도 통과했다.
+- 유효한 첫 `empty`의 즉시 요청, MQTT/백엔드 포맷별 검증, 반복·과거·unknown·오류 입력, 응답 유실 재시도, 재시작 중복 방지, 귀가 후 인덕션 복구 잠금, EXAONE 실패 중 외출 판단을 확인했다. 운영의 `whole_home_presence_verified=false`는 유지했다.
+- Gemini Vertex 설정·모델 전달·제한된 재시도·LLM 복구·상태 조회·설정 경계값에 대한 추가 검사 14건도 통과했다. 외부 유료 API는 호출하지 않았다.
+- `run_homevis.py`를 종료 시간 없이 로컬 HTTP 서버에 연결해 잘못된 센싱·HTTP 503·응답 유실·중복 실행 차단·강제 종료/재시작·귀가/두 번째 외출을 검증했다. 일반 Mock 65초에서는 요청 5건, 낙상 Mock 15초에서는 요청 2건을 접수하고 정상 종료했다.
+- 실행 소스 86개의 Python 3.11 문법, TOML, 선택적 Qwen을 제외한 모듈 로딩, 런타임 SDK 로딩, `--check-config`, `git diff --check`를 확인했다. Qwen 실제 추론은 별도 torch/transformers와 모델이 없어 수행하지 않았다.
+- 현재 설정의 백엔드·MQTT TCP 연결과 백엔드 기기 상태 GET은 실패했다. 실가전·실제 음성 출력·유료 API·Docker/ARM64 실행·수일 연속 운영은 이번 검사로 확인되지 않았다.
+- 신뢰도 하한 0을 보조 함수에 직접 넣었을 때의 결과도 확인했지만, 실제 설정 로더가 0을 거부하므로 운영 경로의 오류가 아니었다. 이번 검증에서 실행 코드 변경은 없으며, 임시 검사 파일·의존성·출력은 정리했다.
+
+### 검증 후 수정
+
+Qwen 어댑터의 torch/transformers import를 초기화 시점으로 옮겼다. 선택하지 않은 Qwen 모듈을 읽을 때는 해당 패키지가 필요하지 않으며, 선택 시 로컬 모델 폴더와 의존성을 확인한다. 선택 의존성 설치는 `python -m pip install -r requirements-qwen.txt`를 사용한다. 기존 생성 설정과 로컬 파일 전용 로딩은 유지한다.
+
+의존성 없는 import, 누락된 모델·패키지 처리, 실패 시 fallback, 모의 모델의 로딩·생성 인자 등 8개 검사와 전체 소스 문법·설정 검사, Mock 3초 기동·정상 종료를 확인했다. 테스트 파일이나 임시 출력은 남기지 않았다. 실제 Qwen 추론은 로컬 모델과 런타임을 준비한 환경에서 별도로 확인해야 한다.
+
+실제 백엔드·MQTT는 설정된 localhost 포트에 실행 중인 서비스가 없으며, 별도 장비 주소도 프로젝트에 지정되지 않았다. 이 연결 문제는 서비스 기동 또는 실제 주소 설정이 필요하다. Docker/ARM64 실기기 검증도 해당 실행 환경이 준비되어야 한다.
 
 ## 확인한 팀 계약
 
@@ -88,10 +127,12 @@ MQTT retained 메시지는 신규 관측으로 쓰지 않으며 다음 실제 �
 `deviceId`로 전달합니다. 등록되지 않은 구역의 전등을 가정하지 않습니다. 같은 구역의 여러 전등도 지원합니다.
 `false`이면 기존 `device_ids.light` 한 대만 사용합니다. 취침 소등을 일반 재실 켜기가 즉시 취소하지 않습니다.
 
-위 시간은 `config/homevis.toml`의 `automation_absence_seconds`, `automation_return_seconds`,
+위 시간은 `config/decision_policy.toml`의 `[automation]` 아래 `automation_absence_seconds`, `automation_return_seconds`,
 `light_on_seconds`, `light_off_seconds`로 변경합니다. 기존 입력 전체를 사용하는 평가로 되돌리려면
 `automation_profile="legacy"`를 선택합니다. 새로운 프로필의 학습 파일은
 `user_weights.location_level_v1.json`, `feedback.location_level_v1.jsonl`로 분리되어 기존 학습값을 덮어쓰지 않습니다.
+통합 정책에서 가중치 또는 가중치 상·하한을 바꾸면 가중치 파일에 `.policy-<식별자>`가 추가됩니다.
+이전 학습값은 보존하며, 같은 구성의 재시작은 해당 구성의 학습값을 재사용합니다.
 이전 프로필 판단에 대한 피드백은 그 프로필로 처리하며 서로 다른 feature 가중치를 섞지 않습니다.
 
 | 내부 출력 | 백엔드 전송 |
@@ -177,14 +218,13 @@ EXAONE 실패 시 기존 문구 fallback을 사용하며 Qwen을 자동 로딩�
 기존 `controller/decision_history.jsonl`은 최초 실행 때 읽어서 이전 판단의 피드백 조회를 유지하며 원본은 보존합니다.
 직접 컨트롤러 호출용 JSONL 저장소와 피드백·가중치 처리 인터페이스는 그대로입니다.
 
-## 검증
+## 실행 확인
 
 ```sh
-python -m pytest -q
-python -m pytest -q tests/test_continuous_runner.py tests/test_runner_network.py
-python -m pytest -q tests/test_location_level_automation.py
+python run_homevis.py --check-config
+python run_homevis.py --mode mock --duration 15
+python run_homevis.py --mode mock --mock-scenario fall --duration 15
 ```
 
-네트워크 테스트는 로컬 시험 MQTT 브로커/HTTP 서버만 사용합니다. paho가 없으면 MQTT 실소켓 테스트만 skip합니다.
-실제 팀 backend checkout이 있으면 `HOMEVIS_BACKEND_CHECKOUT`을 그 경로로 설정해
-요청·응답을 백엔드 Pydantic 모델로 검증할 수 있습니다. 원격 서버나 실가전 동작 시험은 자동 실행하지 않습니다.
+개발용 자동 테스트와 별도 검증 스크립트는 삭제했습니다. Mock에 필요한 시뮬레이션 코드는 실행기의 일부로 유지합니다.
+Mock 기동은 실제 백엔드·MQTT·가전 연결 검증을 대신하지 않습니다.

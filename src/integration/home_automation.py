@@ -8,7 +8,7 @@ from dataclasses import replace
 import json
 from uuid import uuid4
 
-from .schemas import number
+from .sensing import presence_evidence
 from .state_mapper import purifier_state
 
 
@@ -19,13 +19,14 @@ class HomeAutomation:
         self.outbox = runtime.outbox
         self.cooking = self.outbox.get_metadata("cooking_episode")
         self.away = self.outbox.get_metadata("away_episode")
-        # An unconfirmed candidate never accrues unobserved process downtime.
+        # Discard an unsent candidate, including one from the former timed policy.
         if self.away and self.away.get("requested_at") is None:
             self.away = None
             self.outbox.set_metadata("away_episode", None)
         self.presence = None
-        self._presence_at = None
-        self._presence_raw = None
+        cursor = self.outbox.get_metadata("home_presence_cursor") or {}
+        self._presence_at = cursor.get("at")
+        self._presence_raw = cursor.get("raw")
         self._clean_since = self._clean_last = None
         self._last_health = None
 
@@ -54,28 +55,26 @@ class HomeAutomation:
             self.outbox.set_metadata("away_episode", None)
 
     def observe_presence(self, observation):
-        raw = observation.raw.get("backend_result")
+        raw = observation.raw
         now, at = observation.received_at, observation.measured_at
         if not self.config.away_all_off_enabled:
+            return
+        if at > now:
+            self.interrupt_presence()
             return
         if self._presence_at is not None and at <= self._presence_at:
             if at == self._presence_at and raw != self._presence_raw:
                 self.interrupt_presence()
             return
         self._presence_at, self._presence_raw = at, raw
-        if (not isinstance(raw, dict) or at > now or now - at > self.runtime.config.allowed_lateness
-                or raw.get("reason") or raw.get("mockContract") is not None):
+        self.outbox.set_metadata("home_presence_cursor", {"at": at, "raw": raw})
+        evidence = presence_evidence(observation, allowed_lateness=self.runtime.config.allowed_lateness,
+            max_age=self.runtime.controller.realtime_engine.config.UNKNOWN_TIMEOUT,
+            min_confidence=self.config.away_min_confidence)
+        if evidence is None:
             self.interrupt_presence()
             return
-        try:
-            confidence = number(raw.get("confidence"), "presence confidence", confidence=True)
-            duration = raw.get("validSec")
-            if type(duration) is not int or duration <= 0 or now >= at + duration or confidence < self.config.away_min_confidence:
-                raise ValueError("invalid presence evidence")
-        except (ValueError, TypeError):
-            self.interrupt_presence()
-            return
-        if raw.get("present") is True and raw.get("room") in {"room", "kitchen", "toilet"} and observation.valid:
+        if evidence["present"]:
             self.away = self.presence = None
             self.outbox.set_metadata("away_episode", None)
             return  # Returning home NEVER clears the stove ignition lock.
@@ -83,17 +82,10 @@ class HomeAutomation:
             self.interrupt_presence()
             self._health("whole_home_absence_scope_unconfirmed")
             return
-        if raw.get("present") is not False or raw.get("room", "missing") is not None:
-            self.interrupt_presence()
-            return
-        limit = self.runtime.controller.realtime_engine.config.UNKNOWN_TIMEOUT
-        if self.presence is None or at > self.presence["valid_until"] or at - self.presence["at"] >= limit:
-            self.interrupt_presence()
-        self.presence = {"at": at, "valid_until": at + duration, "confidence": confidence, "raw": raw}
+        self.presence = evidence
         if self.away is None:
-            self.away = {"id": uuid4().hex, "started_at": at, "confidence": confidence}
+            self.away = {"id": uuid4().hex, "started_at": at, "confidence": evidence["confidence"]}
         if not self.away_active:
-            self.away["confidence"] = min(self.away["confidence"], confidence)
             self.away["last_at"] = at
         self.outbox.set_metadata("away_episode", self.away)
 
@@ -165,8 +157,7 @@ class HomeAutomation:
         if not self._presence_fresh(now):
             self.interrupt_presence()
         if (self.config.away_all_off_enabled and self.config.whole_home_presence_verified and self.away
-                and self._presence_fresh(now) and (self.away_active or
-                    self.away["last_at"] - self.away["started_at"] >= self.config.away_confirm_seconds)):
+                and self._presence_fresh(now)):
             if not self.away_active:
                 self.away["requested_at"] = now
                 self.outbox.set_metadata("away_episode", self.away)
@@ -176,7 +167,7 @@ class HomeAutomation:
             if self.outbox.get_metadata("stove_reduction") is not None:
                 self.outbox.set_metadata("stove_reduction", None)
             self._queue("away_all_off", self.away["id"], self.away["requested_at"], self.away["confidence"],
-                        {**self.away, "confirm_seconds": self.config.away_confirm_seconds, "last_sensing": self.presence["raw"]})
+                        {**self.away, "last_sensing": self.presence["raw"]})
         if self.away_active:
             away_row = self._row("away_all_off", self.away["id"])
             if away_row and away_row["status"] in {"accepted", "accepted_partial"} and any(

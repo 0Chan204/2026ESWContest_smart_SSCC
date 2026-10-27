@@ -222,18 +222,17 @@ AI의 새 음성 경로는 WAV/STT/TTS/AudioPlayer를 생성하지 않습니다.
 기존 LLM factory/adapters/prompts, 실제 FeedbackService/Manager/WeightManager, DecisionHistory,
 SQLite Outbox, 중앙 판단 엔진을 호출하며 별도 학습 알고리즘이나 가전 실행기를 만들지 않았습니다.
 
-## 테스트
+## 실행 확인과 과거 검증 기록
+
+개발용 테스트 파일은 이후 삭제했습니다. 아래 검증 결과는 삭제 전 기록입니다.
 
 ```powershell
-python -m pip install pytest
-python -m pytest tests/test_voice_interaction.py -q
-python -m pytest -q
-python -m src.integration --mode mock --duration 5
+python run_homevis.py --check-config
+python run_homevis.py --mode mock --duration 15
 ```
 
-실제 API smoke test는 기존 명시적 opt-in 절차에만 남아 있습니다. 위 자동 테스트는 Mock LLM/HTTP와
-연결하지 않는 MQTT client를 사용하며 유료 API나 실가전을 호출하지 않습니다.
-선택적 교차 저장소 schema 검증은 `HOMEVIS_BACKEND_CHECKOUT`이 각 테스트에 고정된 backend commit(v0.6/v0.7)을 포함한 로컬 clone을 가리킬 때 실행됩니다.
+삭제 전 자동 테스트는 Mock LLM/HTTP와 연결하지 않는 MQTT client를 사용했으며 유료 API나 실가전을 호출하지 않았습니다.
+백엔드 소스 모델 대조는 로컬 checkout으로 수행했습니다.
 Python 3.11 대상 문법으로 작성했으며 이번 개발 환경 실제 실행 버전은 Python 3.13입니다.
 
 2026-10-24 Windows / Python 3.13.5 검증 결과:

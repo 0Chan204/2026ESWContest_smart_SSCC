@@ -194,10 +194,11 @@ class InputRouter:
                     raise ContractError("location join buffer full")
                 # Validate now so malformed input invalidates the current sensing cache.
                 from .sensing import location_observation
-                location_observation(payload, message.received_at, self.runtime.config)
+                observation = location_observation(payload, message.received_at, self.runtime.config)
                 behavior = parse_behavior(payload["behavior"], allow_mock_events=self.runtime.config.mock_behavior_contract) if "behavior" in payload else None
                 if behavior is not None and behavior.measured_at > message.received_at:
                     raise ContractError("future behavior measurement")
+                self.runtime.observe_presence(observation)
                 self.pending.append((message, payload, behavior))
             elif self.settings.behavior_topic and message.topic == self.settings.behavior_topic:
                 behavior = parse_behavior(payload, allow_mock_events=self.runtime.config.mock_behavior_contract)
@@ -216,7 +217,7 @@ class InputRouter:
                 self.runtime.receive_backend_fall_status(payload)
             else:
                 raise ContractError("unconfigured input topic")
-        except (ValueError, TypeError, KeyError, UnicodeError) as exc:
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError) as exc:
             if message.topic == self.settings.location_topic:
                 self.accept(SensingFault(message.received_at, "sensing_input_rejected"))
             elif self.settings.behavior_topic and message.topic == self.settings.behavior_topic:

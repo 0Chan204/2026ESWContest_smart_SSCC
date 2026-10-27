@@ -6,8 +6,12 @@ Wi-Fi 센싱의 **최종 재실·행동 추론 결과**와 백엔드의 기기 �
 **실제 가전 제어는 전부 백엔드가 수행합니다.** AI는 `POST /api/v1/ai/decisions`로 판단을 전달하며 기기 MQTT command 토픽에 직접 발행하지 않습니다.
 Wi-Fi 신호 수집·모델 학습, 공기질 임계값 판단, 백엔드·DB 운영은 이 프로젝트의 역할이 아닙니다.
 
-이 문서는 **2026-10-26 현재 작업 트리** 기준입니다. 원격 저장소 반영과 실제 보드 배포는 별도이며,
+이 문서는 **2026-10-27 현재 작업 트리** 기준입니다. 원격 저장소 반영과 실제 보드 배포는 별도이며,
 기능이 구현되어 있다는 것과 실기기 연동이 완료되었다는 것은 구분해야 합니다.
+
+ARM64 Docker 배포 파일과 외부 LLM 장애 대응은 [배포·검증 안내](docs/arm64_deployment.md)를 참고하세요.
+Docker가 있는 환경에서는 배포 안내의 `docker buildx build`와 Compose 명령으로 빌드하고 실행합니다.
+현재 작업 환경에서는 Docker가 없어 이미지 빌드·실제 보드 실행은 아직 확인하지 못했습니다.
 
 ## 1. 먼저 확인할 현재 상태
 
@@ -95,11 +99,14 @@ Mock은 가상 센싱·백엔드를 사용하며 실제 MQTT·가전·유료 LLM
 연결·안전 조건을 확인한 뒤 실행합니다.
 
 ```sh
-python -m src.integration
+python run_homevis.py
 ```
 
 기본은 **live·무기한 실행**, 종료는 `Ctrl+C`입니다. 이 명령은 **AI 프로세스만** 실행합니다.
 백엔드 Docker Compose, MongoDB, Mosquitto, Wi-Fi 추론 프로그램까지 함께 시작하지는 않습니다.
+`run_homevis.py`는 기존 `python -m src.integration`과 같은 통합 실행기를 호출합니다.
+어느 작업 폴더에서 파일을 실행해도 이 프로젝트의 `.env`·설정·저장 폴더를 사용합니다.
+`--duration`을 지정하지 않으면 시간 제한이 없습니다. 콘솔을 닫으면 프로세스도 종료됩니다.
 
 기존 `.env`에 MQTT 센싱 모드가 남아 있다면 `HOMEVIS_SENSING_SOURCE=backend`로 변경하거나 다음처럼 명시합니다.
 
@@ -177,7 +184,7 @@ Pi의 원시 CSI나 `features` 배열을 중앙 판단기에 직접 넣지 않�
 | 아침 물 출수 | 기상·주방 체류·시간대·정수기 online/최신 idle 상태 확인 후 기본 120mL, 하루 최대 1회 |
 | 화장실 낙상 | `toilet`의 명시적 낙상·기존 실제 자세 전이 경로. 눕기 이벤트는 별도 의심 후보로 처리 |
 | 조리 공기청정기 | 인덕션 ON + 최신 유효한 공청기 OFF이면 `cooking_air_clean` ON 요청, 조리 구간당 중복 방지 |
-| 외출 전체 OFF | 검증된 집 전체 부재가 600초 지속하면 `away_all_off`, `actions=[]`. **전체 부재 계약 확인 전 보류** |
+| 외출 전체 OFF | 검증된 집 전체 `empty`를 처음 수신한 처리 주기에 `away_all_off`, `actions=[]`. **전체 부재 계약 확인 전 보류** |
 
 아침 기본 시간대는 06:00~10:00(KST)이며, 충분한 기상 기록이 쌓이면 기존 기상 패턴 창을 사용합니다.
 출수의 주방 체류 기본값은 5초입니다. 세부 조건은 [ScenarioConfig](src/control/scenario_config.py)에 있습니다.
@@ -206,7 +213,8 @@ AI가 타이머를 중복 실행하거나 “괜찮아”라는 음성만으로 
 - 조리 종료는 인덕션 ON → OFF 또는 정상 `cooling` 전이로 확인합니다.
 - 종료 후 good/normal이 30초 유지되어도, 실제 `lastControl.commandId`가 AI의 조리 ON 명령과 일치해야 공청기 OFF를 검토합니다.
 - 수동 ON·임베디드 자동 ON·출처 불명은 임의로 해제하지 않습니다. `control_state=homevis`만으로는 부족합니다.
-- 외출은 유효한 `present=false`, 명시적 `room=null`, 신뢰도 ≥0.8, 양수 `validSec`의 새 관측이 연속으로 이어져야 합니다.
+- 외출은 집 전체 부재 계약이 검증된 경우, 첫 유효한 `empty` 관측을 받은 처리 주기에 즉시 판단합니다. 추가 확인 대기는 없습니다.
+- 백엔드 입력은 `present=false`, 명시적 `room=null`, 신뢰도 ≥0.8, 양수 `validSec`을 검사하며, 직접 Wi-Fi MQTT의 `location=empty`는 해당 포맷의 시각·유효성 조건으로 별도 검사합니다.
 - 외출 OFF 대상은 백엔드가 선택하는 전등·인덕션·환풍기·공청기이며 **정수기는 제외**합니다.
 - 동일 조리·외출 구간의 중복 요청을 막습니다. 외출 후 귀가만으로 인덕션을 다시 켜거나 이전 화력을 복구하지 않습니다.
 
@@ -232,7 +240,7 @@ confidence = 0.30 × 위치 신뢰도
 이 값은 **정책 점수이지 실제 정확도 확률이 아닙니다.** 피드백 학습 후 가중치는 달라질 수 있고, 높은 점수가 안전 차단을 해제하지 않습니다.
 
 기존 `legacy` 프로필과 학습 구조는 유지하며 운영 프로필의 가중치·피드백 파일은 분리합니다.
-신규 공청기 규칙은 기기 관측의 최신성 점수, 외출 규칙은 연속 부재 구간의 최소 신뢰도를 사용합니다.
+신규 공청기 규칙은 기기 관측의 최신성 점수, 외출 규칙은 첫 유효한 전체 부재 관측의 신뢰도를 사용합니다.
 live 규칙 출력에는 관측 근거를 사용하며 아래 부록의 Mock `confidence=null`을 실제 백엔드로 보내지 않습니다.
 
 기존 구조화·자연어 피드백 경로를 유지합니다. “왜 껐어?” 같은 질문 자체는 학습시키지 않고,
@@ -289,7 +297,9 @@ OPENAI_MAX_OUTPUT_TOKENS=2048
 ### Qwen과 오류 처리
 
 Qwen은 `LLM_PROVIDER=qwen`으로 선택합니다. 기본 로컬 모델 경로는 사용자 홈의 `models/Qwen3-8B`이며
-기존 추론 설정을 유지합니다. 필요 시 별도로 `python -m pip install torch transformers accelerate`를 실행하고 로컬 모델을 준비하세요.
+기존 추론 설정을 유지합니다. 사용할 때만 `python -m pip install -r requirements-qwen.txt`를 실행하고,
+`config/decision_policy.toml`의 `[llm].model`에 준비한 로컬 모델 폴더를 지정하세요.
+어댑터 모듈을 불러오는 데에는 torch가 필요하지 않습니다. Qwen 초기화 시 폴더와 선택 의존성을 확인하며 모델을 자동 다운로드하지 않습니다.
 
 API 어댑터는 클라이언트를 재사용하고 timeout·제한적 재시도·인증/설정 오류·비정상 응답을 처리합니다.
 최종 답변만 추출하며 reasoning을 TTS나 피드백 JSON에 섞지 않습니다.
@@ -298,12 +308,8 @@ API 어댑터는 클라이언트를 재사용하고 timeout·제한적 재시도
 기존 위험·낙상 `AlertService`는 텍스트와 WAV를 생성하며, 통합 실행기는 안내 문장을 `announcement`로 전달합니다.
 로컬 WAV를 자동 재생하거나 백엔드에 파일을 업로드하지 않습니다. **음성 명령 응답은 백엔드 TTS 경로**를 사용합니다.
 
-```sh
-python test_realtime.py --llm none --tts dry-run
-```
-
-`dry-run`은 테스트용 WAV를 생성하고 재생하지 않습니다. OS 음성 합성은 `--tts pyttsx3`입니다.
-개별 스크립트의 `--llm`은 환경변수보다 우선하지만, 연속 실행기에는 이 옵션이 없으므로 `LLM_PROVIDER`로 선택합니다.
+연속 실행기는 `config/decision_policy.toml`의
+`[llm]`에서 선택하며, provider/model을 비워 두면 기존 `LLM_PROVIDER`와 provider별 모델 환경변수를 사용합니다.
 
 ## 7. 음성 명령과 사용자 상호작용
 
@@ -323,21 +329,59 @@ python test_realtime.py --llm none --tts dry-run
 
 ## 8. 설정·저장·장애 대응
 
-설정 파일은 [config/homevis.toml](config/homevis.toml), 환경변수 예시는 [.env.example](.env.example)입니다.
+**판단 기준은 [config/decision_policy.toml](config/decision_policy.toml) 한 파일에서 조정합니다.**
+현재 기본값이 들어 있으며, `python -m src.integration` 실행기가 시작할 때 읽어 각 판단 모듈에 전달합니다.
+네트워크 주소·토픽·실행 주기는 [config/homevis.toml](config/homevis.toml), 환경변수 예시는 [.env.example](.env.example)입니다.
 지원되는 항목에 한해 **CLI > OS 환경변수 > .env > TOML** 순으로 적용합니다.
 모든 TOML 키에 환경변수 별칭이 있는 것은 아닙니다.
+
+| decision_policy.toml 항목 | 조정 대상 / 예시 |
+| --- | --- |
+| `[automation]` | 주방 이탈 40초·복귀 5초, 전등 ON 5초·OFF 30초, 화력 감소 단계 |
+| `[confidence.weights.location_level_v1.시나리오]` | 현재 운영 프로필의 항목별 가중치. 시나리오별 합계 1.0 |
+| `[confidence.thresholds]` | 실행 기준 점수. 예: `light_auto_on = 0.72` |
+| `[confidence]` | 중간 판단 점수, 피드백 학습률·적용 기준, 가중치 상·하한 |
+| `[realtime]`, `[sensing]` | 신뢰도·측정 지연·센싱 만료·온도·화력 기준 |
+| `[scenarios]` | 낙상 확인/경고/긴급 시간, 취침 소등, 아침 시간대·출수량 |
+| `[home_automation]` | 공청기 깨끗한 상태 유지 시간, 외출 최소 신뢰도·전체 부재 계약 확인 |
+| `[voice]` | STT·의도 신뢰도, 설명에 사용할 이력 범위 |
+| `[llm]` | `provider`로 LLM 종류, `model`로 API 모델 ID 또는 Qwen 로컬 모델 경로 선택 |
+
+모든 설정값 옆의 `#` 주석에 조정 대상·단위·사용 조건을 적었습니다. LLM은 다음처럼 선택합니다.
+
+```toml
+[llm]
+provider = "exaone" # none / exaone / gpt / qwen / gemini; 빈 문자열이면 LLM_PROVIDER 사용
+model = "LGAI-EXAONE/EXAONE-4.0-32B" # 빈 문자열이면 해당 어댑터의 환경변수/기본값 사용
+```
+
+`[llm]`에 명시한 값은 환경변수보다 우선하며, API 키는 계속 `.env`에서 읽습니다.
+GPT는 `model` 또는 `OPENAI_MODEL`에 사용할 모델 ID가 필요하고, Qwen의 `model`은 로컬 폴더 경로입니다.
+Llama는 아직 미구현이라 정책 파일에서 선택하면 시작 시 거부합니다. 선택한 모델은 live 실행에서
+안내문·음성·자연어 피드백이 공유하며, 호출 실패 시 기존 안내문 대체 및 기기 판단 경로를 유지합니다.
+통합 설정으로 선택한 모델은 mock에서 자동 호출하지 않습니다. `--check-config`는 모델을 호출하지 않고 설정을 표시합니다.
+
+수정 후 `python -m src.integration --check-config`로 확인하고 프로그램을 재시작하면 적용됩니다.
+가중치 합계·지원하지 않는 항목·시간 순서·범위가 잘못되면 시작을 거부합니다.
+정책 파일 경로는 `homevis.toml`의 `decision_policy`에 지정하며, 해당 TOML 파일의 디렉터리를 기준으로 찾습니다.
+두 파일에 같은 판단 항목을 중복 정의하면 오류로 알립니다. 정책 파일을 지정하지 않은 기존 단일 TOML도 지원합니다.
+
+가중치나 가중치 상·하한을 바꾸면 그 구성 전용 `user_weights.*.policy-<식별자>.json`을 사용하므로
+저장된 이전 학습값이 새 설정을 덮지 않습니다. 같은 설정으로 재시작하면 해당 학습값을 이어 쓰며,
+기존 학습 파일과 피드백 이력은 보존합니다. 점수 기준이나 시간만 바꿀 때는 기존 가중치 학습을 이어 씁니다.
+외출 전체 OFF는 계약이 확인된 첫 유효 `empty`에서 즉시 판단하며 확인 대기 시간을 설정하지 않습니다.
 
 | 설정 | 기본값 / 용도 |
 | --- | --- |
 | `[backend].poll_interval` | 2초, 기기 상태 GET |
 | `[runtime].sensing_poll_interval` | 1초, 센싱 GET |
 | `[runtime].tick_interval` | 0.1초, 판단 루프 |
-| `[backend].allowed_lateness` | 4초, 측정 시각 정렬 |
-| `[backend].device_max_age` | 20초, 기기 상태 최신성 기준 |
+| `decision_policy.toml: [sensing].allowed_lateness` | 4초, 측정 시각 정렬 |
+| `decision_policy.toml: [sensing].device_max_age` | 20초, 기기 상태 최신성 기준 |
 | `[backend].stove_temperature_validity_verified` | `false`, live 인덕션 ON·증가·복구 차단 |
-| `[home_automation].whole_home_presence_verified` | `false`, 전체 부재 계약 미확인 시 외출 OFF 차단 |
-| `[home_automation].away_confirm_seconds` | 600초 |
-| `[home_automation].air_purifier_clean_hold_seconds` | 30초 |
+| `decision_policy.toml: [home_automation].whole_home_presence_verified` | `false`, 전체 부재 계약 미확인 시 외출 OFF 차단 |
+| `decision_policy.toml: [home_automation].away_min_confidence` | 0.8, 첫 유효한 전체 부재 관측에서 즉시 판단 |
+| `decision_policy.toml: [home_automation].air_purifier_clean_hold_seconds` | 30초 |
 | `[voice].enabled` | `false`, 선택적 음성 입력 |
 
 온도 확인 플래그는 **팀의 계약·구현 검증을 마쳤다는 운영 설정**이지 센서 유효성을 자동 증명하는 기능이 아닙니다.
@@ -366,55 +410,25 @@ python -m src.integration --healthcheck
 `.env`·`.env.*`·`output/`은 Git에서 제외하고 `.env.example`만 공유합니다.
 음성 원문과 판단 이력에도 개인 정보가 포함될 수 있으므로 공개 업로드하지 마세요.
 
-## 9. 테스트
+## 9. 실행 확인
 
-### Mock·회귀 테스트
-
-```sh
-python -m pip install pytest
-python -m pytest -q
-```
-
-pytest는 unittest 클래스와 함수형 테스트를 모두 실행합니다. `unittest discover`만으로는 전체 회귀 검증이 되지 않습니다.
-기본 테스트는 실제 API 키 없이 실행하며 유료 API 테스트는 명시적으로 활성화하지 않으면 건너뜁니다.
+개발용 `tests/`, 수동 테스트 파일, 별도 데모, 검증 스크립트·CI와 임시 검증 환경은 정리했습니다.
+실행에는 pytest가 필요하지 않습니다. 설정과 기동은 실제 실행 파일로 확인합니다.
 
 ```sh
-python -m pytest -q tests/test_backend_contract.py tests/test_review_regressions.py
-python -m pytest -q tests/test_home_automation.py tests/test_wifi_behavior.py
-python -m pytest -q tests/test_voice_interaction.py tests/test_voice_v07.py
-python -m pytest -q tests/test_exaone_adapter.py tests/test_gpt_adapter.py
-python -m examples.backend_integration_demo --with-mock-behavior
+python run_homevis.py --check-config
+python run_homevis.py --mode mock --duration 15
+python run_homevis.py --mode mock --mock-scenario fall --duration 15
 ```
 
-실제 백엔드 **소스 모델** 대조 테스트는 선택 사항입니다. Pydantic 2와
-테스트에 고정된 커밋들을 포함하는 백엔드 Git checkout을 준비하고 `HOMEVIS_BACKEND_CHECKOUT`에 경로를 지정합니다.
-설정하지 않거나 선택 의존성이 없으면 해당 항목은 skip될 수 있습니다. 실행 중인 보드에 명령을 보내는 테스트는 아닙니다.
-
-2026-10-26 코드 검증 기록: 선택적 백엔드 소스 대조를 포함해 **738 passed, 2 skipped**.
-두 skip은 실제 EXAONE·GPT API 테스트입니다. 실제 보드·가전·LG OS·유료 API 검증 완료를 뜻하지 않습니다.
-
-### 실제 API 연결 테스트 — 명시적으로 실행할 때만 과금 가능
-
-개별 테스트는 `.env`를 자동으로 읽지 않습니다. PowerShell 예시이며 실제 키는 자신의 실행 환경에만 설정하세요.
-
-```powershell
-$env:FRIENDLI_API_KEY = "<본인의 Personal API Key>"
-$env:RUN_EXAONE_API_TEST = "1"
-python -m unittest tests.test_exaone_adapter.EXAONELiveAPITest -v
-Remove-Item Env:RUN_EXAONE_API_TEST
-```
-
-```powershell
-$env:OPENAI_API_KEY = "<본인의 OpenAI API Key>"
-$env:OPENAI_MODEL = "<사용 가능한 모델 ID>"
-$env:RUN_GPT_API_TEST = "1"
-python -m pytest -q tests/test_gpt_adapter.py -k live_gpt_api
-Remove-Item Env:RUN_GPT_API_TEST
-```
-
-Linux/macOS에서도 동일한 변수들을 `export`로 설정해 실행하고, 끝나면 `RUN_*_API_TEST`를 `unset`하세요.
+Mock은 실제 판단 엔진과 가상 센싱·백엔드를 사용하며 실가전이나 유료 API를 호출하지 않습니다.
+실제 운영은 `python run_homevis.py`로 시작하며 종료 시간 없이 계속 실행됩니다.
+상세 문서의 회귀 테스트 결과는 테스트 파일 삭제 전의 검증 기록입니다.
 
 ## 10. 배포 전 확인
+
+담당 팀에 전달할 요청·필요한 샘플·완료 기준은 [팀 전달용 요청사항](docs/home_automation_v07.md#팀-전달용-요청사항)에 정리했습니다.
+다른 팀 저장소는 수정하지 않으며, 미확정 계약에 대한 AI의 안전 차단은 유지합니다.
 
 - [ ] Wi-Fi → 백엔드 토픽·JSON 변환, 측정 시각·유효기간·오프라인·전체 부재 의미를 합의하고 실제 데이터를 확인한다.
 - [ ] `fall/lie_down/get_up/none` 생산자의 실제 JSON·행동 신뢰도·시각을 확인한다. 자세·still은 실제 측정이 있을 때만 연결한다.
@@ -440,7 +454,7 @@ Wi-Fi main `f73c0ff0d72bcdf1e04769270e7fb401103bde90`,
 | `src/interaction/` | 음성 의도·검증·설명·확인 상태·사용자 지시 저장 |
 | `src/llm/` | 공통 LLM 인터페이스, Qwen·EXAONE·GPT 등 |
 | `src/alert_service.py`, `src/voice/` | 기존 위험 안내문·TTS |
-| `config/`, `examples/`, `tests/` | 실행 설정, Mock 예제, 회귀 테스트 |
+| `run_homevis.py`, `config/` | 전체 실행 진입점, 연결 설정, 주석이 있는 판단 기준·LLM 설정 |
 
 - [연속 실행·운영](docs/continuous_runner.md)
 - [백엔드 입력·전송·저장 계약](docs/backend_integration.md)
@@ -451,11 +465,11 @@ Wi-Fi main `f73c0ff0d72bcdf1e04769270e7fb401103bde90`,
 - [Confidence와 피드백](docs/confidence_control.md)
 - [생활·안전 시나리오](docs/scenarios.md)
 
-## 부록. 테스트로 검증하는 Mock 요청·응답
+## 부록. Mock 요청·응답 기록
 
-아래는 `examples.backend_integration_demo --with-mock-behavior`의 고정 시각 데모에서 생성하는 전체 본문입니다.
+아래는 삭제 전 개발용 데모에서 생성했던 요청·응답 기록입니다.
 **실제 백엔드 전송 예시가 아닙니다.** 기존 직접 호출용 Mock의 `confidence=null` 정책과 가상 식별자·날씨를 사용합니다.
-`tests/test_backend_contract.py`가 직렬화 결과와 일치하는지 검사합니다.
+현재 실행 결과를 나타내는 예시는 아닙니다.
 
 <!-- mock-water-request -->
 ```json

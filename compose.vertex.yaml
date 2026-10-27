@@ -1,0 +1,13 @@
+# Optional Vertex ADC file mount. Apply together with compose.yaml only for Gemini.
+services:
+  homevis:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google_adc.json
+    secrets:
+      - source: google_adc
+        target: google_adc.json
+
+secrets:
+  google_adc:
+    # A host path only; the file stays out of the build context/image.
+    file: ${HOMEVIS_GOOGLE_ADC_FILE:?Set the host ADC JSON path in .env}

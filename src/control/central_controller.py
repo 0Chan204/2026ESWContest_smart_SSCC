@@ -46,7 +46,7 @@ class CentralController:
         data_dir = (Path(confidence_data_dir) if confidence_data_dir is not None else
                     Path(__file__).resolve().parents[2] / "output" / "confidence")
         profile_suffix = "" if confidence_config.INPUT_PROFILE == "legacy" else "." + confidence_config.INPUT_PROFILE
-        self.weight_manager = WeightManager(confidence_config, data_dir / f"user_weights{profile_suffix}.json")
+        self.weight_manager = WeightManager(confidence_config, data_dir / f"user_weights{confidence_config.weight_storage_suffix}.json")
         self.decision_history = decision_history if decision_history is not None else DecisionHistoryStorage(data_dir / "decision_history.jsonl")
         self.feedback_storage = FeedbackStorage(data_dir / f"feedback{profile_suffix}.jsonl")
         self.feedback_manager = FeedbackManager(

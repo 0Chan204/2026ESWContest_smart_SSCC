@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from math import isfinite
 from typing import Any, NoReturn
 
 from .base import (
@@ -44,7 +45,7 @@ def _read_float(name: str, default: float, *, allow_zero: bool = False) -> float
         value = float(raw)
     except ValueError as exc:
         raise LLMConfigurationError(f"{name} must be a number") from exc
-    if value < 0 or (value == 0 and not allow_zero):
+    if not isfinite(value) or value < 0 or (value == 0 and not allow_zero):
         boundary = "0 or greater" if allow_zero else "greater than 0"
         raise LLMConfigurationError(f"{name} must be {boundary}")
     return value
@@ -107,10 +108,10 @@ class EXAONEAdapter(BaseLLMAdapter):
         self.temperature = temperature if temperature is not None else _read_float(
             "EXAONE_TEMPERATURE", DEFAULT_EXAONE_TEMPERATURE, allow_zero=True
         )
-        if self.timeout <= 0:
-            raise LLMConfigurationError("EXAONE timeout must be greater than 0")
-        if type(self.max_retries) is not int or self.max_retries < 0:
-            raise LLMConfigurationError("EXAONE max_retries must be a non-negative integer")
+        if type(self.timeout) not in (int, float) or not isfinite(self.timeout) or self.timeout <= 0:
+            raise LLMConfigurationError("EXAONE timeout must be finite and greater than 0")
+        if type(self.max_retries) is not int or not 0 <= self.max_retries <= 5:
+            raise LLMConfigurationError("EXAONE max_retries must be an integer in [0, 5]")
         if type(self.max_tokens) is not int or self.max_tokens < 1:
             raise LLMConfigurationError("EXAONE max_tokens must be a positive integer")
         if not 0 <= self.temperature <= 2:
@@ -132,7 +133,7 @@ class EXAONEAdapter(BaseLLMAdapter):
             except Exception as exc:
                 raise LLMConfigurationError(
                     "Failed to initialize the FriendliAI OpenAI-compatible client."
-                ) from exc
+                ) from None
 
     def generate(self, system_prompt: str, user_prompt: str) -> str:
         try:
@@ -179,19 +180,19 @@ class EXAONEAdapter(BaseLLMAdapter):
         if status_code in {401, 403} or error_name == "AuthenticationError":
             raise LLMAuthenticationError(
                 "FriendliAI authentication failed; check FRIENDLI_API_KEY."
-            ) from exc
-        if error_name == "APITimeoutError":
-            raise LLMRequestTimeoutError("FriendliAI EXAONE request timed out.") from exc
+            ) from None
+        if error_name == "APITimeoutError" or isinstance(exc, TimeoutError):
+            raise LLMRequestTimeoutError("FriendliAI EXAONE request timed out.") from None
         if status_code == 429 or error_name == "RateLimitError":
-            raise LLMServiceError("FriendliAI EXAONE rate limit was reached.") from exc
+            raise LLMServiceError("FriendliAI EXAONE rate limit was reached.") from None
         if status_code in {400, 404, 422}:
             raise LLMConfigurationError(
                 f"FriendliAI rejected the EXAONE request configuration (HTTP {status_code})."
-            ) from exc
+            ) from None
         if error_name == "APIConnectionError" or (
             isinstance(status_code, int) and status_code >= 500
         ):
-            raise LLMServiceError("FriendliAI EXAONE service is temporarily unavailable.") from exc
+            raise LLMServiceError("FriendliAI EXAONE service is temporarily unavailable.") from None
         if isinstance(status_code, int):
-            raise LLMServiceError(f"FriendliAI EXAONE request failed with HTTP {status_code}.") from exc
-        raise LLMServiceError(f"FriendliAI EXAONE request failed ({error_name}).") from exc
+            raise LLMServiceError(f"FriendliAI EXAONE request failed with HTTP {status_code}.") from None
+        raise LLMServiceError(f"FriendliAI EXAONE request failed ({error_name}).") from None

@@ -66,7 +66,7 @@ class NaturalLanguageFeedbackInterpreter:
             except Exception as exc:
                 last_error = exc
         reason = "parse_error" if received_response else "generation_error"
-        error = None if last_error is None else f"{type(last_error).__name__}: {last_error}"
+        error = None if last_error is None else type(last_error).__name__
         return FeedbackInterpretation("unknown", reason, 0.0, error)
 
     def _parse(self, response: str) -> FeedbackInterpretation:

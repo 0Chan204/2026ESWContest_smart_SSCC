@@ -9,3 +9,13 @@ output/*
 .env
 .env.*
 !.env.example
+
+# Runtime credentials and local model artifacts are never deployment inputs.
+.secrets/
+credentials/
+google_adc.json
+application_default_credentials.json
+*.pem
+*.key
+*.safetensors
+*.gguf

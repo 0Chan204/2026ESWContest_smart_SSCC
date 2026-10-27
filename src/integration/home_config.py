@@ -10,10 +10,10 @@ class HomeAutomationConfig:
     air_purifier_off_on_good_or_normal: bool = True
     air_purifier_clean_hold_seconds: float = 30.0
     away_all_off_enabled: bool = False
-    away_confirm_seconds: float = 600.0
     away_min_confidence: float = .8
     # Deployment assertion, NOT a new sensor field. Remains false until the
-    # producer confirms room=null/present=false covers the entire home.
+    # producer confirms backend room=null/present=false or Wi-Fi location=empty
+    # covers the entire home for the deployed input source.
     whole_home_presence_verified: bool = False
 
     def __post_init__(self):

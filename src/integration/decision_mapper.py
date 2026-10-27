@@ -35,10 +35,10 @@ class DecisionMapper:
             raise ValueError("unsupported home rule")
         identity = f"home:{scenario}:{episode_id}:{action or 'all_off'}"
         reason = ("Confirmed stove operation and purifier state" if scenario == "cooking_air_clean"
-                  else "Valid whole-home absence sustained for the configured interval")
+                  else "Valid whole-home empty result from verified sensing")
         source = {"type": "HomeAutomationDecision", "scenario": scenario, "timestamp": timestamp,
                   "episode_id": episode_id, "action": action, "reason": reason, "details": evidence,
-                  "confidence_basis": ("telemetry_freshness_not_probability" if action else "minimum_absence_confidence")}
+                  "confidence_basis": ("telemetry_freshness_not_probability" if action else "observed_absence_confidence")}
         if self.config.rule_confidence_policy == "block":
             return MappedDecision(identity, None, "rule_confidence_policy_blocked", source)
         body = {"decisionId": "dec-" + hashlib.sha256(identity.encode()).hexdigest()[:32],

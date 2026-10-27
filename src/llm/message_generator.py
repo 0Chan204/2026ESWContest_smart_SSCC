@@ -127,7 +127,7 @@ class LLMMessageGenerator:
                 llm_name=self.llm_name,
                 prompt_version=self.prompt_version,
                 fallback_used=True,
-                error=f"{type(exc).__name__}: {exc}",
+                error=type(exc).__name__,
             )
 
     def generate_device_command(self, command: "DeviceCommand") -> MessageGenerationResult:
@@ -165,5 +165,5 @@ class LLMMessageGenerator:
                 llm_name=self.llm_name,
                 prompt_version=self.prompt_version,
                 fallback_used=True,
-                error=f"{type(exc).__name__}: {exc}",
+                error=type(exc).__name__,
             )

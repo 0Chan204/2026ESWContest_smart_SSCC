@@ -24,11 +24,15 @@ def normalize_result(raw, *, allow_mock_events=False):
     validity = raw.get("validSec")
     if validity is not None and (type(validity) is not int or validity < 0):
         raise ContractError("validSec must be a nonnegative integer")
+    if validity is not None:
+        number(validity, "validSec")  # Reject integers that cannot be used in timestamp arithmetic.
     if raw.get("present") is not None and type(raw["present"]) is not bool:
         raise ContractError("present must be boolean or null")
     confidence = number(raw.get("confidence"), "confidence", nullable=True, confidence=True)
     location = raw.get("room") or "unknown"
     if raw.get("present") is False:
+        # Preserve the full backend envelope: HomeAutomation separately requires
+        # room=null and positive validSec before treating this as whole-home empty.
         location = "empty"
     payload = {"time": raw["observedAt"], "location": location,
                "location_confidence": confidence, "backend_result": raw}
@@ -117,7 +121,7 @@ class BackendSensingSource:
                         self.pending.append(Incoming(self.settings.mqtt.location_topic,
                                                      json.dumps(raw).encode(), now))
                         self.received += 1
-                    except (ValueError, TypeError, AttributeError):
+                    except (ValueError, TypeError, AttributeError, RecursionError):
                         self.rejected += 1
                         mismatch = isinstance(raw, dict) and "time" in raw and "observedAt" not in raw
                         self._fault(now, "backend_sensing_contract_mismatch" if mismatch else "backend_sensing_invalid_result")

@@ -68,6 +68,47 @@ def location_observation(payload: dict, received_at: float, config: IntegrationC
     return LocationObservation(deepcopy(payload), timestamp, received_at, valid, diagnostic, sample, valid_until)
 
 
+def presence_evidence(observation, *, allowed_lateness, max_age, min_confidence):
+    """Validate whole-home evidence separately from the central room/activity stream.
+
+    Backend results require present/room and an explicit validSec. Direct Wi-Fi
+    locations have no required TTL, so their lifetime is bounded by the existing
+    sensing timeout (and valid_until when supplied). Neither is a confirmation wait.
+    """
+    payload = observation.raw
+    at, now = observation.measured_at, observation.received_at
+    if (not 0 <= now - at <= allowed_lateness or payload.get("reason")
+            or payload.get("valid") is False):
+        return None
+    confidence = observation.sample.confidence
+    if confidence < min_confidence:
+        return None
+    until = min(observation.valid_until if observation.valid_until is not None else at + max_age, at + max_age)
+    if "backend_result" in payload:
+        raw = payload["backend_result"]
+        if (not isinstance(raw, dict) or raw.get("reason") or "mockContract" in raw
+                or type(raw.get("validSec")) is not int or raw["validSec"] <= 0):
+            return None
+        until = min(until, at + raw["validSec"])
+        if raw.get("present") is False and raw.get("room", "missing") is None:
+            present = False
+        elif raw.get("present") is True and raw.get("room") in {"room", "kitchen", "toilet"}:
+            present = True
+        else:
+            return None
+    elif payload.get("location") == "empty":
+        present = False
+    elif payload.get("location") in {"room", "kitchen", "toilet"}:
+        present = True
+    else:
+        return None
+    if (not at <= now < until or (present and not observation.valid)
+            or (not present and payload.get("location") != "empty")):
+        return None
+    return {"at": at, "valid_until": until, "confidence": confidence,
+            "present": present, "raw": payload}
+
+
 @dataclass(frozen=True)
 class BehaviorObservation:
     """Internal measured behavior stream; this is not a Wi-Fi wire protocol."""

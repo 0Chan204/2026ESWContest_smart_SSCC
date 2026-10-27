@@ -203,7 +203,12 @@ code fence는 허용하지만, key 누락·미지원 label·범위 밖 confidenc
 
 ## 검증
 
+연속 실행기의 가중치·임계값·시간은 `config/decision_policy.toml`에서 수정하고 재시작합니다.
+현재 프로필의 가중치는 `[confidence.weights.location_level_v1]`, 실행 점수는
+`[confidence.thresholds]`, 학습률·가중치 상하한은 `[confidence]`에서 설정합니다.
+가중치 구성이 달라지면 별도 학습 파일을 사용하고, 이전 학습 파일과 피드백 이력은 보존합니다.
+
 ```powershell
-python -m unittest discover -s tests -v
-python tests/manual_all_test.py
+python -m src.integration --check-config
+python run_homevis.py --mode mock --duration 15
 ```

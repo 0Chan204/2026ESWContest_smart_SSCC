@@ -2,10 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from .base import BaseLLMAdapter
+from .base import BaseLLMAdapter, LLMConfigurationError
 
 
 class QwenAdapter(BaseLLMAdapter):
@@ -16,9 +13,24 @@ class QwenAdapter(BaseLLMAdapter):
         model_path: str | None = None,
         max_new_tokens: int = 128,
     ) -> None:
-        self.model_path = model_path or str(
-            Path.home() / "models" / "Qwen3-8B"
-        )
+        local_path = Path(model_path or Path.home() / "models" / "Qwen3-8B").expanduser()
+        if not local_path.is_dir():
+            raise LLMConfigurationError(
+                "Qwen local model directory is missing; set [llm].model in "
+                "config/decision_policy.toml to an existing model directory."
+            )
+        # Importing the adapter must not require the optional local-model stack.
+        # Loading still happens only when this provider is explicitly selected.
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except (ImportError, OSError):
+            raise LLMConfigurationError(
+                "Qwen dependencies are unavailable; install requirements-qwen.txt "
+                "in the Python environment used to run HomeVIS."
+            ) from None
+        self._torch = torch
+        self.model_path = str(local_path)
         self.max_new_tokens = max_new_tokens
 
         print(f"[Qwen] Loading local model: {self.model_path}")
@@ -70,7 +82,7 @@ class QwenAdapter(BaseLLMAdapter):
             return_tensors="pt",
         ).to(self.model.device)
 
-        with torch.no_grad():
+        with self._torch.no_grad():
             generated_ids = self.model.generate(
                 **model_inputs,
                 max_new_tokens=self.max_new_tokens,

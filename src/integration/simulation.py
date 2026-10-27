@@ -32,6 +32,14 @@ class SimulationBackend(MockBackend):
             del self.requests[:-1000]
             if method == "POST" and response.status == 202:
                 payload = json.loads(body)
+                if payload["scenario"] == "away_all_off":
+                    # Match the backend-managed contract: request has actions=[]
+                    # and no room; the simulated backend selects actual targets.
+                    response.body["actions"] = [
+                        {"device": item["device"], "deviceId": item["deviceId"],
+                         "action": "turn_off" if item["device"] == "stove" else "off", "status": "sent"}
+                        for item in self.snapshot["items"]
+                        if item["device"] in {"stove", "light", "air_purifier"} and item["online"] and item["is_on"]]
                 if payload["scenario"] == self.fall_scenario:
                     response.body["fallIncidentId"] = "mock-fall-" + payload["decisionId"]
                     response.body["actions"] = [
@@ -40,10 +48,12 @@ class SimulationBackend(MockBackend):
                     self.incidents[response.body["fallIncidentId"]] = {
                         "incidentId": response.body["fallIncidentId"], "status": "pending", "stage": "user",
                         "detectedAt": payload["timestamp"], "confidence": payload["confidence"]}
-                response.body.update(status="executed", timestamp=payload["timestamp"], room=payload["room"],
+                response.body.update(status="executed", timestamp=payload["timestamp"],
                                      reason=payload["reason"], announcement=payload.get("announcement"), expiresAt=payload.get("expiresAt"))
+                if "room" in payload:
+                    response.body["room"] = payload["room"]
                 self.accepted[payload["decisionId"]] = deepcopy(payload), deepcopy(response.body)
-                actions = response.body["actions"] if payload["scenario"] == self.fall_scenario else payload["actions"]
+                actions = response.body["actions"] if payload["scenario"] in {self.fall_scenario, "away_all_off"} else payload["actions"]
                 for action in actions:
                     item = next(d for d in self.snapshot["items"] if d["device"] == action["device"]
                                 and (not action.get("deviceId") or d["deviceId"] == action["deviceId"]))
@@ -51,6 +61,10 @@ class SimulationBackend(MockBackend):
                         item["is_on"] = True
                     elif action["action"] in {"turn_off", "off"}:
                         item["is_on"] = False
+                        if item["device"] == "stove":
+                            item["current_state"].update(state="off", level=0)
+                        else:
+                            item["current_state"]["power"] = "off"
                     elif action["action"] == "reduce_power":
                         self.previous_level = item["current_state"].get("level", 5)
                         item["current_state"]["level"] = max(1, self.previous_level - 1)

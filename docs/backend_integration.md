@@ -3,6 +3,7 @@
 > 현재 운영 실행기는 [연속 실행 안내](continuous_runner.md)를 따른다. 팀 백엔드 v0.5와 실제
 > `wifi/occupancy/state`를 확인해 MQTT/HTTP 수신·제어·낙상 사건 조회를 연결했다.
 > 아래 내용은 기존 직접 `IntegrationConfig()` 호출의 보수적 기본값과 당시 회귀 기록이다.
+> 개발용 테스트·별도 데모는 이후 삭제했다. 아래 과거 테스트 결과는 삭제 전 기록이며 현재 실행 명령이 아니다.
 > 아래의 “계약 미확정”, 빈 action_routes, status=idle 제외, confidence=null, 낙상 송신 차단,
 > CLI 수신기 미연결 설명은 새 `config/homevis.toml` 기반 운영 실행기에는 적용되지 않는다.
 
@@ -25,35 +26,20 @@ AI가 `GET /api/v1/ai/device-states`를 조회하고, 기존 중앙 판단 출�
 | `runtime.py` | 단일 소유자 순차 판단, 관측 시각 정렬, tick, 비동기 HTTP |
 | `backend_client.py` | 표준 라이브러리 HTTP; 고정 경로, timeout, 인증 헤더 주입 |
 | `mock_backend.py` | 중복 접수·응답 유실 등을 재현하는 메모리 백엔드 |
-| `examples/backend_integration_demo.py` | 위치만 입력하는 기본 데모 및 별도 가상 행동 데모 |
+| `run_homevis.py` | 센싱·판단·전송을 연결하는 연속 실행 진입점 |
 
-`README.md`, `src/`, `tests/`가 있는 저장소 루트에서 실행한다.
-추가 런타임 의존성은 없다. 통합 테스트에는 pytest가 필요하다.
-
-Windows PowerShell:
-
-```powershell
-python -m pytest -q
-python -m examples.backend_integration_demo
-python -m examples.backend_integration_demo --with-mock-behavior
-python -m src.integration --duration 3
-```
-
-Linux 또는 pytest가 설치된 일반 Python 환경:
+`README.md`, `src/`, `run_homevis.py`가 있는 저장소 루트에서 실행한다.
 
 ```sh
-python -m pytest -q
-python -m examples.backend_integration_demo
-python -m examples.backend_integration_demo --with-mock-behavior
-python -m src.integration --duration 3
+python -m pip install -r requirements-runtime.txt
+python run_homevis.py --check-config
+python run_homevis.py --mode mock --duration 15
 ```
 
-Linux 명령은 실행 안내이며 이 작업 환경에서 직접 실행하지 않았다.
-기존 `python -m unittest discover -s tests -v`는 기존 unittest 테스트를 실행한다.
-새 pytest 통합 테스트까지 검증하려면 `python -m pytest -q`를 사용한다.
+운영 실행은 `python run_homevis.py`다. Mock은 실제 판단 엔진에 가상 입력을 공급하며 외부 기기를 제어하지 않는다.
 
-기본 데모는 **위치만** 공급한다. 행동이 없으므로 출수·취침·낙상 기능을 실행하지 않는다.
-`--with-mock-behavior`는 별도 `BehaviorObservation` 가상 측정을 명시적으로 공급한다.
+삭제된 개발용 데모의 검증 기록:
+기본 데모는 **위치만** 공급했으며, `--with-mock-behavior` 옵션은 별도 가상 행동을 공급했다.
 `room`은 모든 실행 모드에서 취침·기상 판단의 표준 공간이다. `idle`은 출수 준비 조건으로 사용하지 않는다.
 데모만 별도 가상 필드 `mock_readiness=ready`를 공급한다. 이 필드는 실제 백엔드 계약이 아니다.
 점수 없는 규칙 결과의 confidence=null은 Mock 전용 예외가 아니라 합의된 기본 전송 정책이다. 5회 상태 조회 후 기존 기상→주방 판단으로 120mL 요청을
@@ -464,12 +450,6 @@ Windows / Anaconda Python에서 실행했다. 테스트 개수는 서로 중복�
 수정 전 전체 기준은 `168 passed`였다. 먼저 실제 `IntegrationRuntime`을 사용하는 핵심 회귀 테스트
 3개를 추가했으며 모두 예상대로 실패했다. 취침은 `user_returned_to_light_room`으로 차단됐고,
 2초 지연에서 조명 및 기상 출수 요청은 생성되지 않았다. 수정 후 이 경로들은 Mock 접수까지 검증한다.
-
-추가 테스트 파일은 다음 명령으로 실행한다.
-
-```powershell
-python -m pytest -q tests/test_runtime_regressions.py
-```
 
 92f7030 수정 당시 실제 실행 결과(Anaconda Python, LLM/GPU 없이):
 

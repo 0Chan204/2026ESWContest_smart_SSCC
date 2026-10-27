@@ -1,0 +1,23 @@
+# Allow only runtime source and public configuration into the build context.
+**
+!Dockerfile
+!requirements-arm64.txt
+!src/
+!src/**/
+!src/**/*.py
+!config/
+!config/homevis.toml
+!config/decision_policy.toml
+# Do not re-include caches, credentials, state, test outputs or local model weights.
+**/__pycache__/
+**/.env*
+**/*.pem
+**/*.key
+**/*.json
+**/*.jsonl
+**/*.sqlite*
+**/*.bin
+**/*.pt
+**/*.pth
+**/*.safetensors
+**/*.gguf

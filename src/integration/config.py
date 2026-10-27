@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 
 from src.control.identifiers import ROOMS, canonical_room
 from src.control.scenario_config import ScenarioConfig
+from src.control.realtime_config import RealtimeConfig
+from src.llm.config import LLMConfig
 from .home_config import HomeAutomationConfig
 
 
@@ -66,6 +68,9 @@ class IntegrationConfig:
     mock_behavior_contract: bool = False
     scenario_config: ScenarioConfig = field(default_factory=ScenarioConfig)
     home_automation: HomeAutomationConfig = field(default_factory=HomeAutomationConfig)
+    realtime_config: RealtimeConfig = field(default_factory=RealtimeConfig)
+    confidence_options: dict | None = None
+    llm_config: LLMConfig = field(default_factory=LLMConfig)
 
     def __post_init__(self):
         if self.mode not in {"mock", "live"}:
@@ -76,6 +81,10 @@ class IntegrationConfig:
             raise ValueError("scenario_config must be ScenarioConfig")
         if not isinstance(self.home_automation, HomeAutomationConfig):
             raise ValueError("home_automation must be HomeAutomationConfig")
+        if not isinstance(self.realtime_config, RealtimeConfig):
+            raise ValueError("realtime_config must be RealtimeConfig")
+        if not isinstance(self.llm_config, LLMConfig):
+            raise ValueError("llm_config must be LLMConfig")
         if self.mode == "live":
             url = urlsplit(self.base_url)
             if url.scheme not in {"http", "https"} or not url.netloc or url.username or url.password:
@@ -88,7 +97,8 @@ class IntegrationConfig:
             if isinstance(value, bool) or not isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in ("allowed_lateness", "behavior_max_skew", "evaluation_audit_interval"):
-            if not isfinite(getattr(self, name)) or getattr(self, name) < 0:
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not isfinite(value) or value < 0:
                 raise ValueError(f"{name} must be nonnegative")
         if type(self.max_attempts) is not int or self.max_attempts < 1:
             raise ValueError("max_attempts must be a positive integer")
@@ -120,6 +130,11 @@ class IntegrationConfig:
         if any(type(k) is not int or isinstance(v, bool) or not isfinite(v) or v < 0
                for k, v in self.level_to_watts.items()):
             raise ValueError("level_to_watts requires a validated nonnegative numeric table")
+        self.make_confidence_config()  # Validate policy even for --check-config.
+
+    def make_confidence_config(self):
+        from .decision_policy import build_confidence_config
+        return build_confidence_config(self)
 
     @property
     def outbox_path(self) -> Path:

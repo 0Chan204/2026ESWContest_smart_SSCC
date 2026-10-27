@@ -9,7 +9,6 @@ import time
 from src.alert_service import AlertService
 from src.control.automation_models import LightContext
 from src.control.central_controller import CentralController
-from src.control.confidence.config import ConfidenceConfig
 from src.control.identifiers import canonical_device, device_target
 from src.control.scenario_models import BathroomFallState, FallBackendSignal
 from src.llm.factory import create_llm
@@ -41,25 +40,33 @@ class IntegrationRuntime:
         self.voice_config = voice_config or VoiceConfig()
         existing_llm = None if controller is None else controller.feedback_interpreter.llm
         selected_llm = voice_llm if voice_llm is not None else existing_llm
-        self.shared_llm = (SharedLLM(
+        llm_config = config.llm_config
+        explicit_llm = bool(llm_config.provider or llm_config.model)
+        def configured_llm():
+            if not explicit_llm:
+                return create_llm()
+            return create_llm(llm_config.provider or None, model_name=llm_config.model or None)
+        # Always defer client creation into the existing workers/generator. An
+        # unavailable SDK/credential must still yield the generator's fallback.
+        mock_voice = config.mode == "mock" and (self.voice_config.enabled or explicit_llm)
+        self.shared_llm = SharedLLM(
             factory=(lambda: selected_llm) if selected_llm is not None else
-                    ((lambda: None) if config.mode == "mock" else create_llm), clock=clock)
-            if self.voice_config.enabled else None)
+                    ((lambda: None) if mock_voice else configured_llm), clock=clock,
+            provider=llm_config.provider or None, failure_retry_seconds=llm_config.failure_retry_seconds)
         def make_alert_service():
             return (fall_alert_service if fall_alert_service is not None else
-                    AlertService(LLMMessageGenerator(self.shared_llm if self.shared_llm is not None else create_llm()), Pyttsx3TTS(),
+                    AlertService(LLMMessageGenerator(self.shared_llm), Pyttsx3TTS(),
                                  config.outbox_path.parent / "fall_alerts"))
         self._alert_worker = AlertWorker(make_alert_service) if config.async_alerts else None
         self.fall_alert_service = None if config.async_alerts else make_alert_service()
         self.outbox = Outbox(config.outbox_path, config.mode)
         self.controller = controller or CentralController(
+            config=config.realtime_config,
             scenario_config=config.scenario_config,
             feedback_llm=self.shared_llm,
             user_id=self.voice_config.user_id if self.voice_config.enabled else "default",
             confidence_data_dir=config.outbox_path.parent / "controller",
-            confidence_config=ConfidenceConfig.for_profile(config.automation_profile,
-                absence_seconds=config.automation_absence_seconds, return_seconds=config.automation_return_seconds,
-                light_on_seconds=config.light_on_seconds, light_off_seconds=config.light_off_seconds),
+            confidence_config=config.make_confidence_config(),
             decision_history=SQLiteDecisionHistory(self.outbox, config.outbox_path.parent / "controller" / "decision_history.jsonl")
                 if config.backend_v05 else None,
             routine_storage=SQLiteRoutineStorage(self.outbox) if config.backend_v05 else None)
@@ -230,6 +237,12 @@ class IntegrationRuntime:
         self.interrupt_behavior(timestamp)
         self.diagnostic("sensing_transport_invalidated", reason=reason)
 
+    def observe_presence(self, observation):
+        # Run on receipt, independently of behavior joining/event-time reordering.
+        # Pre-fault evidence may never rearm an away request, including on retry.
+        if self._sensing_fault_at is None or observation.measured_at > self._sensing_fault_at:
+            self.home_automation.observe_presence(observation)
+
     def ingest_location(self, payload, *, received_at=None, behavior: BehaviorObservation | None = None):
         received_at = self.clock() if received_at is None else received_at
         number(received_at, "received_at")
@@ -247,7 +260,7 @@ class IntegrationRuntime:
             self.diagnostic("pre_fault_location_discarded", measured_at=observation.measured_at)
             return False
         if not pre_fault:
-            self.home_automation.observe_presence(observation)
+            self.observe_presence(observation)
         # Remember contradictions on receipt, before the event-time reorder delay.
         # A later none result must not hide lying/room exit/error while an older
         # wake request is still being qualified from buffered measurements.

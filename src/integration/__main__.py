@@ -45,6 +45,7 @@ def main(argv=None):
     if args.check_config:
         print(f"configuration valid; mode={config.mode}; source={settings.sensing_source}; contract=backend-v0.7; "
               f"voice={'backend-v0.7' if settings.voice.enabled else 'disabled'}; "
+              f"llm={config.llm_config.resolved_provider}; model={config.llm_config.model or 'provider environment/default'}; "
               f"stove_temperature_validity_verified={config.stove_temperature_validity_verified}")
         return 0
     if args.healthcheck:

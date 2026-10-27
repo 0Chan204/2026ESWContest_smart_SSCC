@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import json
 from math import isfinite
 
 
@@ -149,3 +151,15 @@ class ConfidenceConfig:
             threshold = self.SCENARIO_THRESHOLDS[scenario]
             if not isfinite(threshold) or not self.MEDIUM_CONFIDENCE_THRESHOLD <= threshold <= 1:
                 raise ValueError(f"invalid threshold for {scenario}")
+
+    @property
+    def weight_storage_suffix(self):
+        """Keep learned weights for each operator baseline without deleting history."""
+        suffix = "" if self.INPUT_PROFILE == "legacy" else "." + self.INPUT_PROFILE
+        baseline = type(self).for_profile(self.INPUT_PROFILE)
+        def signature(config):
+            return {"weights": config.SCENARIO_WEIGHTS, "min": config.MIN_WEIGHT, "max": config.MAX_WEIGHT}
+        if signature(self) != signature(baseline):
+            encoded = json.dumps(signature(self), sort_keys=True, separators=(",", ":"), allow_nan=False)
+            suffix += ".policy-" + hashlib.sha256(encoded.encode()).hexdigest()[:12]
+        return suffix

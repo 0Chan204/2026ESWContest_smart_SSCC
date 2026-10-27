@@ -14,19 +14,24 @@ def resolve_llm_provider(name: str | None = None) -> str:
     return (raw or "none").strip().lower()
 
 
-def create_llm(name: str | None = None) -> BaseLLMAdapter | None:
+def create_llm(name: str | None = None, *, model_name: str | None = None) -> BaseLLMAdapter | None:
     normalized = resolve_llm_provider(name)
+    if model_name is not None:
+        if not isinstance(model_name, str) or not model_name.strip():
+            raise ValueError("model_name must be a nonempty string")
+        model_name = model_name.strip()
+    model_options = {} if model_name is None else {"model_name": model_name}
 
     if normalized in {"none", "off", "fallback"}:
         return None
 
     if normalized == "gemini":
         from src.llm.adapters.gemini import GeminiAdapter
-        return GeminiAdapter()
+        return GeminiAdapter(**model_options)
 
     if normalized == "qwen":
         from src.llm.adapters.qwen import QwenAdapter
-        return QwenAdapter()
+        return QwenAdapter(**({} if model_name is None else {"model_path": model_name}))
 
     if normalized == "llama":
         from src.llm.adapters.llama import LlamaAdapter
@@ -34,11 +39,11 @@ def create_llm(name: str | None = None) -> BaseLLMAdapter | None:
 
     if normalized == "exaone":
         from src.llm.adapters.exaone import EXAONEAdapter
-        return EXAONEAdapter()
+        return EXAONEAdapter(**model_options)
 
     if normalized == "gpt":
         from src.llm.adapters.gpt import GPTAdapter
-        return GPTAdapter()
+        return GPTAdapter(**model_options)
 
     raise ValueError(
         f"Unknown LLM '{normalized}'. "

@@ -160,7 +160,7 @@ MorningWaterScenario에서 방의 유효한 `get_up` 이벤트(행동 신뢰도 
 
 ## 설정
 
-`config/homevis.toml`의 `[scenarios]`는 기존 ScenarioConfig로 전달됩니다.
+`config/decision_policy.toml`의 `[scenarios]`는 기존 ScenarioConfig로 전달됩니다.
 
 ```toml
 [scenarios]
@@ -220,14 +220,12 @@ Mock 오류는 `locationError` 또는 `mockBehavior.error`로 구분합니다. �
 - `control/morning_water.py`, `central_controller.py`: 기존 기상 확인을 공유하는 방 전등 요청.
 - `integration/runtime.py`, `outbox.py`: 후보/사건 구분, 영속 이벤트 중복 제거, 기존 이력 저장, 송신 전 재검증.
 - `integration/config.py`, `settings.py`, `config/homevis.toml`, `.env.example`: HTTP 기본값·시나리오 설정.
-- `tests/test_wifi_behavior.py`: 독립 confidence/설명, 오류, 미확정 라벨, 후보/확정, 시간/중복/만료/회복/재시작,
-  백엔드 계약과 기상 전등·출수/취침 보호. 기존 테스트도 함께 실행합니다.
+
+개발용 테스트 파일은 이후 삭제했습니다. 아래 수치는 삭제 전 검증 기록이며 현재 기동 확인은 실행 파일을 사용합니다.
 
 ```sh
-python -m pytest -q tests/test_wifi_behavior.py
-python -m pytest -q
-python -m src.integration --env-file .env.example --check-config
-python -m src.integration --env-file .env.example --mode mock --duration 5
+python run_homevis.py --check-config
+python run_homevis.py --mode mock --duration 15
 ```
 
 실제 API·실가전·Wi-Fi 모델 시험은 포함하지 않습니다. 기존 음성 작업의 미커밋 변경은 보존했으며,
