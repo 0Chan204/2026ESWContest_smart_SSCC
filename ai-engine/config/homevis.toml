@@ -1,0 +1,95 @@
+# Run: python -m src.integration
+# Connection defaults and decision criteria live in the referenced file (relative path).
+decision_policy = "decision_policy.toml"
+
+[backend]
+mode = "live"
+data_dir = "output/integration"
+evaluation_audit_interval = 1.0
+temperature_is_celsius = true
+# Current firmware repeats the last temperature when its sensor fails.
+# Do NOT enable live ignition/restore until the team fixes validity propagation.
+stove_temperature_validity_verified = false
+water_readiness_mode = "backend_idle"
+backend_restore = true
+backend_v05 = true
+rule_confidence_policy = "observed"
+# Discover registered lights in room/kitchen/toilet; send only through the backend.
+# Team mapping: room=light-01, toilet=light-00, kitchen=light-02.
+# deviceId and room come from GET /api/v1/ai/device-states, not MQTT subscriptions.
+multi_room_lights = true
+# Verified against HomeVIS-Backend develop 3a23128, docs/AI-INTEGRATION.md v0.5.
+backend_fall_scenario = "fall_detected"
+fall_status_path = "/api/v1/fall-incidents/{incident_id}"
+# Synthetic event labels are NEVER enabled in live mode.
+mock_behavior_contract = false
+
+[mqtt]
+# Broker and input topic settings are in decision_policy.toml.
+queue_size = 1000
+max_payload_bytes = 65536
+join_wait_seconds = 0.25
+
+[runtime]
+tick_interval = 0.1
+status_interval = 5.0
+audit_retention_days = 7
+# GET /api/v1/sensing/results (v0.10 combined presence/activity stored by backend).
+# Subscribe to home/edge/result directly with --sensing-source mqtt.
+sensing_source = "backend"
+sensing_poll_interval = 1.0
+
+[voice]
+# Opt-in backend v0.7 STT input; all voice replies go to announcement, never local TTS.
+enabled = false
+topic = "home/voice/request"
+queue_size = 16
+llm_timeout = 5.0
+http_timeout = 1.5
+send_margin = 2.0
+recovery_interval = 5.0
+status_interval = 2.0
+# Single resident identity, NOT voice authentication. Must match the controller/history owner.
+user_id = "default"
+
+[actions.light_auto_on]
+scenario = "light_auto_on"
+device = "light"
+internal_action = "turn_on"
+action = "on"
+room = "room"
+
+[actions.light_auto_off]
+scenario = "light_auto_off"
+device = "light"
+internal_action = "turn_off"
+action = "off"
+room = "room"
+
+[actions.bedtime_light_off]
+scenario = "bedtime_light_off"
+device = "light"
+internal_action = "turn_off"
+action = "off"
+room = "room"
+
+[actions.morning_light_on]
+# Reuse the existing backend light scenario; only the internal evidence differs.
+scenario = "light_auto_on"
+device = "light"
+internal_action = "turn_on"
+action = "on"
+room = "room"
+
+[actions.kitchen_leave_reduce_power]
+scenario = "stove_absence"
+device = "stove"
+internal_action = "reduce_power"
+action = "set_level"
+room = "kitchen"
+
+[actions.kitchen_return_restore]
+scenario = "stove_absence"
+device = "stove"
+action = "restore_power"
+room = "kitchen"

@@ -1,0 +1,5 @@
+# Optional local Qwen runtime. Install only when selecting [llm].provider = "qwen".
+# Model weights are supplied separately through [llm].model; never auto-downloaded.
+torch
+transformers
+accelerate

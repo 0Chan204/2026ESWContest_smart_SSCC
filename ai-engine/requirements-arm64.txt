@@ -1,0 +1,6 @@
+# API clients only. Qwen code remains available in src, but its local runtime is opt-in.
+openai==2.54.0
+google-genai==1.75.0
+paho-mqtt==2.1.0
+python-dotenv==1.2.4
+pyttsx3==2.99
