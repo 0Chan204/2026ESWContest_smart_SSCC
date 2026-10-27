@@ -187,6 +187,73 @@ def test_confirmation_times_out(client, published, broadcasts):
     assert published == []
 
 
+# ---------------------------------------------------------------------------
+# v0.12: 자동 승인 (VOICE_AUTO_CONFIRM)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def auto_confirm(monkeypatch):
+    monkeypatch.setattr(settings, "VOICE_AUTO_CONFIRM", True)
+
+
+def test_auto_confirm_executes_without_dialog(client, published, broadcasts, auto_confirm):
+    """판정 엔진이 확인을 요청해도 확인 창 없이 바로 실행하고, 판정 엔진에는 평소처럼 확인 대기로 답한다."""
+    voice_id = _send_voice(client)
+    res = _decide(client, voice_id, actions=LIGHT_ON, confirm=True,
+                  answer="요청한 기기 동작은 아직 실행하지 않았습니다. 백엔드 확인 화면에서 승인해 주세요.").json()
+    assert res["status"] == "awaiting_confirmation"  # 판정 엔진과의 약속(계약)은 그대로
+    assert res["requiresConfirmation"] is True
+    assert [(a["deviceId"], a["status"]) for a in res["actions"]] == [(TOILET_LIGHT, "pending")]
+    assert (published[-1]["deviceId"], published[-1]["type"]) == (TOILET_LIGHT, "on")  # 바로 실행
+
+    voice = client.get(f"{PREFIX}/voice/commands/{voice_id}").json()
+    assert voice["status"] == "executed"
+    assert voice["answer"] == "욕실 조명을 켤게요."
+    assert voice["actions"][0]["status"] == "sent"
+    assert voice["confirmedAt"] is not None
+
+    statuses = [e["status"] for e in _voice_events(broadcasts, voice_id)]
+    assert "confirm_required" not in statuses  # 확인 창을 띄우지 않음
+    assert statuses[-1] == "executed"
+
+    decision = client.get(f"{PREFIX}/ai/decisions/dec-voice-1").json()
+    assert decision["status"] == "executed"
+    assert decision["actions"][0]["status"] == "sent"
+    assert decision["announcement"] == "욕실 조명을 켤게요."
+
+
+def test_auto_confirm_keeps_dialog_for_stove_on(client, published, broadcasts, auto_confirm):
+    """인덕션 켜기는 자동 승인 설정이어도 항상 사용자 확인을 받는다."""
+    voice_id = _send_voice(client, "인덕션 켜줘")
+    actions = [{"device": "stove", "action": "turn_on", "level": 3}]
+    res = _decide(client, voice_id, actions=actions, confirm=True, room="kitchen").json()
+    assert res["status"] == "awaiting_confirmation"
+    assert published == []
+    voice = client.get(f"{PREFIX}/voice/commands/{voice_id}").json()
+    assert voice["status"] == "confirm_required"
+    assert _voice_events(broadcasts, voice_id)[-1]["status"] == "confirm_required"
+
+
+def test_auto_confirm_off_by_default(client, published):
+    assert settings.VOICE_AUTO_CONFIRM is False
+    voice_id = _send_voice(client)
+    _decide(client, voice_id, actions=LIGHT_ON, confirm=True)
+    assert client.get(f"{PREFIX}/voice/commands/{voice_id}").json()["status"] == "confirm_required"
+    assert published == []
+
+
+@pytest.mark.parametrize(
+    "confirm_text, done",
+    [
+        ("욕실 조명을 켤까요?", "욕실 조명을 켤게요."),
+        ("주방 정수기에서 물 120ml 받을까요?", "주방 정수기에서 물 120ml 받을게요."),
+        ("욕실 조명 켜기, 주방 환풍기 끄기를 실행할까요?", "욕실 조명 켜기, 주방 환풍기 끄기를 실행할게요."),
+    ],
+)
+def test_done_text(confirm_text, done):
+    assert voice_service.build_done_text(confirm_text) == done
+
+
 def test_ai_timeout_then_late_decision_is_not_executed(client, published, broadcasts):
     voice_id = _send_voice(client)
     voice_service.expire_if_waiting(voice_id)

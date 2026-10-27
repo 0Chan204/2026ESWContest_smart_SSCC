@@ -8,6 +8,7 @@
    - 제어 없이 답변만: answered
    - 제어가 있고 확인이 필요 없음: 바로 실행 후 executed
    - 제어가 있고 requiresConfirmation=true: 실행을 보류하고 confirm_required (확인 문구는 서버가 만듦)
+   - (v0.12) VOICE_AUTO_CONFIRM=true면 확인 창 없이 서버가 바로 승인해 executed (인덕션 켜기·화력 조절은 제외)
 3) 대시보드가 확인 창 결과를 POST /voice/commands/{id}/confirm으로 보냄 -> confirm()
    승인하면 보류한 제어를 실행(executed), 거절하면 cancelled
 4) 시간 초과: VOICE_AI_TIMEOUT_SEC 안에 판단이 없으면 timeout,
@@ -270,31 +271,45 @@ def build_confirm_text(actions: list[AiAction], room: Optional[str]) -> str:
     return f"{joined}{_particle(joined, '을', '를')} 실행할까요?"
 
 
+def build_done_text(confirm_text: str) -> str:
+    """(v0.12) 자동 승인 때 읽어 줄 문장. 확인 문구의 "~까요?"를 "~게요."로 바꿉니다. 예) "방 조명을 켤까요?" -> "방 조명을 켤게요." """
+    text = confirm_text.rstrip()
+    if text.endswith("까요?"):
+        return text[: -len("까요?")] + "게요."
+    return text
+
+
 def claim_for_decision(
     voice_id: str, decision_id: str, answer: Optional[str], actions: list[AiAction],
-    requires_confirmation: bool, room: Optional[str],
+    requires_confirmation: bool, room: Optional[str], auto_confirm: bool = False,
 ) -> Optional[VoiceCommand]:
     """판정 엔진의 판단을 이 음성 명령에 연결합니다.
     아직 판단을 기다리는 중이면 다음 상태로 바꾼 기록을, 이미 끝났으면(timeout·다른 판단) None을 돌려줍니다.
-    없는 voiceId면 UnknownVoiceCommand"""
+    없는 voiceId면 UnknownVoiceCommand
+
+    (v0.12) auto_confirm=True면 확인 창을 띄우지 않습니다 (대시보드 알림·확인 문구 읽기·시간 초과 감시 없음).
+    답변은 "~할게요." 문장으로 바꾸고, 바로 confirm()으로 승인하는 것은 호출한 쪽(ai_service)이 합니다."""
     if state_store.get_voice_command(voice_id) is None:
         raise UnknownVoiceCommand(voice_id)
 
     now = _now()
     changes = {"decisionId": decision_id, "answer": answer, "updatedAt": _iso(now)}
     if actions and requires_confirmation:
+        confirm_text = build_confirm_text(actions, room)
         changes.update(
             status="confirm_required",
             requiresConfirmation=True,
-            confirmText=build_confirm_text(actions, room),
+            confirmText=confirm_text,
             confirmDeadline=_iso(now + timedelta(seconds=settings.VOICE_CONFIRM_TIMEOUT_SEC)),
             pendingActions=list(actions),
         )
+        if auto_confirm:
+            changes["answer"] = build_done_text(confirm_text)
     else:
         # 실행 결과는 finish()에서 채웁니다. 여기서 먼저 상태를 바꿔 timeout과 겹치지 않게 합니다.
         changes.update(status="executed" if actions else "answered")
     claimed = state_store.transition_voice_command(voice_id, WAITING_AI, **changes)
-    if claimed is not None and claimed.status == "confirm_required":
+    if claimed is not None and claimed.status == "confirm_required" and not auto_confirm:
         broadcast(claimed)
         ws_hub.run_coroutine_threadsafe(_confirm_timeout_watchdog(voice_id))
     return claimed

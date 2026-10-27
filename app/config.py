@@ -122,6 +122,9 @@ class Settings:
     # 이 시간(초) 안에 판정 엔진의 판단이 없으면 timeout, 확인 창은 이 시간(초) 안에 답이 없으면 자동 취소
     VOICE_AI_TIMEOUT_SEC: int = int(os.getenv("VOICE_AI_TIMEOUT_SEC", "10"))
     VOICE_CONFIRM_TIMEOUT_SEC: int = int(os.getenv("VOICE_CONFIRM_TIMEOUT_SEC", "30"))
+    # (v0.12) true면 음성 명령의 확인 창을 띄우지 않고 서버가 바로 승인해 실행합니다 (판정 엔진이 확인을 요청해도).
+    # 인덕션 켜기·화력 조절은 안전 때문에 이 설정과 상관없이 항상 사용자 확인을 받습니다.
+    VOICE_AUTO_CONFIRM: bool = os.getenv("VOICE_AUTO_CONFIRM", "false").lower() in ("1", "true", "yes")
     # 음성 문장은 개인정보라 이 기간(일)이 지나면 DB에서 자동 삭제합니다.
     VOICE_COMMAND_TTL_DAYS: int = int(os.getenv("VOICE_COMMAND_TTL_DAYS", "30"))
 

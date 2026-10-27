@@ -44,6 +44,14 @@
 
 대기 시간은 `.env`의 `VOICE_AI_TIMEOUT_SEC`(기본 10), `VOICE_CONFIRM_TIMEOUT_SEC`(기본 30)로 바꿀 수 있습니다.
 
+(v0.12) **자동 승인**: `.env`에 `VOICE_AUTO_CONFIRM=true`를 넣으면 판정 엔진이 `requiresConfirmation: true`로 보내도
+확인 창을 띄우지 않고 서버가 바로 승인해 실행합니다.
+
+- 판정 엔진에는 평소처럼 `awaiting_confirmation`(제어 `pending`)으로 답하고, 곧바로 확인과 같은 흐름으로 실행합니다 (판정 엔진 수정 불필요).
+- 대시보드는 `confirm_required`를 받지 않고 바로 `executed`를 받습니다. 답변(`answer`)은 확인 문구를 바꾼 "~할게요." 문장입니다 (예: "방 조명을 켤게요.").
+- **인덕션 켜기·화력 조절(`turn_on`, `set_level`, `restore_power`)은 안전 때문에 이 설정과 상관없이 항상 확인 창을 띄웁니다.**
+- 기본값은 `false`(지금처럼 확인 창).
+
 ## 2. 대시보드 ↔ 서버
 
 ### 문장 보내기: `POST /api/v1/voice/commands`
