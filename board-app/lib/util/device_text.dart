@@ -69,7 +69,7 @@ DeviceSummary summarize(Device d, [DateTime? now]) {
       return DeviceSummary(
         active: d.on,
         status: status,
-        detail: reason ?? '${pm25Text(d)} · ${d.on ? (d.mode == AirMode.auto ? '자동 운전' : '수동 운전') : '꺼짐'}',
+        detail: reason ?? '${ppmText(d)} · ${d.on ? (d.mode == AirMode.auto ? '자동 운전' : '수동 운전') : '꺼짐'}',
         risk: Risk.normal,
       );
   }
@@ -77,11 +77,14 @@ DeviceSummary summarize(Device d, [DateTime? now]) {
 
 String _ml(double v) => v == v.roundToDouble() ? v.round().toString() : v.toStringAsFixed(1);
 
-/// 초미세먼지 글자 (값이 없으면 '측정값 없음')
-String pm25Text(AirPurifierDevice d) {
-  final v = d.airQuality?.pm25;
-  return v == null ? '측정값 없음' : '초미세먼지 ${v.round()}';
+/// 공기질 ppm 글자 (값이 없으면 '측정값 없음')
+String ppmText(AirPurifierDevice d) {
+  final v = d.airQuality?.ppm;
+  return v == null ? '측정값 없음' : '공기질 ${ppmValue(v)} ppm';
 }
+
+/// ppm 숫자: 10 이상은 정수, 그보다 작으면 소수 한 자리
+String ppmValue(double v) => v >= 10 ? v.round().toString() : v.toStringAsFixed(1);
 
 /// 자동으로 켜진 이유 문장. 자동으로 켜진 게 아니면 null. short = 좁은 칸용
 String? airAutoReason(AirPurifierDevice d, {bool short = false}) {

@@ -46,7 +46,7 @@ void main() {
       final air = dev<AirPurifierDevice>(ds, 'air-01');
       expect(air.mode, AirMode.auto);
       expect(air.airQuality!.level, AirLevel.bad);
-      expect(air.airQuality!.pm25, 41.6);
+      expect(air.airQuality!.ppm, 41.6);
 
       final water = dev<PurifierDevice>(ds, 'water-01');
       expect(water.lastDispense!.ml, 250);
@@ -108,7 +108,7 @@ void main() {
     test('공기청정기: 기기가 스스로 켬 = 공기질 이유, 모드 전환', () {
       var m = t.translate('device.state', 'now', {
         'deviceId': 'air-01',
-        'state': {'power': 'on', 'mode': 'auto', 'airQuality': {'pm25': 80, 'level': 'bad'}, 'lastControl': {'publisher': 'system', 'commandId': 'dev-1'}},
+        'state': {'power': 'on', 'mode': 'auto', 'airQuality': {'ppm': 80, 'level': 'very_bad'}, 'lastControl': {'publisher': 'system', 'commandId': 'dev-1'}},
       });
       var a = (m.single as DeviceMsg).device as AirPurifierDevice;
       expect(a.auto, isTrue);
@@ -116,7 +116,7 @@ void main() {
       m = t.translate('device.state', 'now', {'deviceId': 'air-01', 'state': {'power': 'on', 'mode': 'manual'}});
       a = (m.single as DeviceMsg).device as AirPurifierDevice;
       expect(a.mode, AirMode.manual);
-      expect(a.airQuality!.pm25, 80); // 공기질이 없으면 그대로
+      expect(a.airQuality!.ppm, 80); // 공기질이 없으면 그대로
     });
 
     test('공기청정기: AI 판단으로 켬 (인덕션 켜짐) = 인덕션 이유, 상태가 먼저 와도', () {

@@ -31,6 +31,8 @@ const voiceUnavailable = '지금은 음성 명령을 쓸 수 없어요';
 const voiceMisheard = '잘 듣지 못했어요';
 const voiceNoMic = '마이크를 찾을 수 없어요';
 const voiceNoSpeech = '말씀이 들리지 않았어요';
+const voiceSttError = '잘 알아듣지 못했어요. 다시 말씀해 주세요';
+const voiceInterrupted = '잠시 후 다시 말씀해 주세요';
 const voiceHide = Duration(milliseconds: 3200);
 
 /// 진행 중 단계에서 서버 응답이 끝내 오지 않을 때
@@ -40,6 +42,9 @@ const voiceSafety = Duration(seconds: 20);
 String voiceFailedText(String? reason) => switch (reason) {
       'mic_unavailable' => voiceNoMic,
       'no_speech' => voiceNoSpeech,
+      'stt_error' => voiceSttError,
+      'interrupted' => voiceInterrupted,
+      // publish_failed(판정 엔진에 전달 실패) 와 모르는 이유
       _ => voiceUnavailable,
     };
 
@@ -94,6 +99,9 @@ class VoiceController extends ChangeNotifier {
 
   /// 호출어를 기다리며 마이크가 켜져 있음 (레일에 '호출어 대기' 표시)
   bool standby = false;
+
+  /// 보드 스피커 안내 (서버 값). null = 서버가 알려 주지 않음 → 화면 설정만 쓴다
+  bool? speak;
   bool settingsBusy = false;
   bool _settingsLoading = false;
 
@@ -122,6 +130,7 @@ class VoiceController extends ChangeNotifier {
     settingsSupported = true;
     wakeWord = s.wakeWord;
     standby = s.standby;
+    speak = s.speak ?? speak;
     _notify();
   }
 
@@ -255,6 +264,11 @@ class VoiceController extends ChangeNotifier {
       if (phase == VoicePhase.starting) {
         voiceId = id;
         _listening();
+        // 이미 다른 곳에서 듣던 명령이면 그 명령의 지금 단계(듣는 중 · 알아듣는 중 · 확인 …)로 맞춘다
+        if (r.alreadyListening && id != null) {
+          final rec = await _api.getCommand(id);
+          if (!_disposed && rec != null && voiceId == id && seq == _listenSeq) apply(rec);
+        }
       } else {
         // WS voice.status 가 먼저 와서 이미 바뀌었다
         voiceId ??= id;
@@ -336,6 +350,7 @@ class VoiceController extends ChangeNotifier {
         settingsSupported = true;
         wakeWord = s.wakeWord;
         standby = s.standby;
+        speak = s.speak ?? speak;
       }
     } catch (_) {
       // 연결 문제: 지난 값 그대로
@@ -356,6 +371,7 @@ class VoiceController extends ChangeNotifier {
       final s = await _api.saveSettings(wakeWord: on);
       wakeWord = s.wakeWord;
       standby = s.standby;
+      speak = s.speak ?? speak;
       return true;
     } catch (e) {
       wakeWord = before.$1;
@@ -364,6 +380,30 @@ class VoiceController extends ChangeNotifier {
       return false;
     } finally {
       settingsBusy = false;
+      _notify();
+    }
+  }
+
+  /// 보드 스피커 안내 켜기 · 끄기 (설정 '위험 알림 음성 안내'). 서버에 설정이 없으면 true(화면 설정만 바꾼 것으로 본다)
+  Future<bool> setSpeak(bool on) async {
+    if (_disposed || settingsSupported != true) return true;
+    final before = speak;
+    speak = on;
+    _notify();
+    try {
+      final s = await _api.saveSettings(speak: on);
+      speak = s.speak ?? on;
+      wakeWord = s.wakeWord;
+      standby = s.standby;
+      return true;
+    } catch (e) {
+      speak = before;
+      if (isMissingEndpoint(e)) {
+        settingsSupported = false;
+        return true;
+      }
+      return false;
+    } finally {
       _notify();
     }
   }

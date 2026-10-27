@@ -36,7 +36,7 @@ Map<String, dynamic> snapshotJson({bool stoveOn = false}) => {
         {'device': 'water_purifier', 'deviceId': 'water-01', 'room': 'kitchen', 'online': true, 'is_on': false, 'current_state': {'lastDispensedMl': 250}, 'control_state': 'homevis', 'updatedAt': '2026-10-26T07:10:00Z'},
         {'device': 'fan', 'deviceId': 'fan-01', 'room': 'kitchen', 'online': true, 'is_on': true, 'current_state': {'power': 'on', 'speed': 'high'}, 'control_state': 'homevis'},
         {'device': 'fan', 'deviceId': 'fan-02', 'room': 'toilet', 'online': false, 'is_on': false},
-        {'device': 'air_purifier', 'deviceId': 'air-01', 'room': 'room', 'online': true, 'is_on': true, 'current_state': {'power': 'on', 'mode': 'auto', 'airQuality': {'pm25': 41.6, 'pm10': 60, 'level': 'bad'}}},
+        {'device': 'air_purifier', 'deviceId': 'air-01', 'room': 'room', 'online': true, 'is_on': true, 'current_state': {'power': 'on', 'mode': 'auto', 'airQuality': {'ppm': 41.6, 'level': 'bad'}}},
       ],
     };
 

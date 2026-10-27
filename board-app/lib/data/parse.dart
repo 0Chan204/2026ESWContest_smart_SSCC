@@ -105,12 +105,26 @@ SensingSample? mapSensing(Object? raw) {
   );
 }
 
+/// 공기질: { ppm, level }. level 은 good / normal / bad / very_bad (표기가 조금 달라도 받아 준다)
 AirQuality? mapAirQuality(Object? raw) {
   final v = obj(raw);
   if (v == null) return null;
-  final level = switch (v['level']) { 'good' => AirLevel.good, 'normal' => AirLevel.normal, 'bad' => AirLevel.bad, _ => null };
-  final q = AirQuality(pm25: optNum(v['pm25']), pm10: optNum(v['pm10']), level: level);
-  return (q.pm25 == null && q.pm10 == null && q.level == null) ? null : q;
+  final raw0 = optNum(v['ppm']);
+  final ppm = raw0 != null && raw0 >= 0 ? raw0 : null;
+  final level = airLevel(v['level']);
+  return ppm == null && level == null ? null : AirQuality(ppm: ppm, level: level);
+}
+
+AirLevel? airLevel(Object? raw) {
+  if (raw is! String) return null;
+  final s = raw.trim().toLowerCase().replaceAll(RegExp(r'[\s_-]'), '');
+  return switch (s) {
+    'good' || '좋음' => AirLevel.good,
+    'normal' || 'moderate' || '보통' => AirLevel.normal,
+    'bad' || 'poor' || '나쁨' => AirLevel.bad,
+    'verybad' || 'verypoor' || '매우나쁨' => AirLevel.veryBad,
+    _ => null,
+  };
 }
 
 BurnerState? burnerState(Object? v) => switch (v) {
@@ -345,7 +359,8 @@ String? _token(Object? v) {
 VoiceSettings? mapVoiceSettings(Object? raw) {
   final d = obj(raw);
   if (d == null || d['wakeWord'] is! bool) return null;
-  return VoiceSettings(wakeWord: d['wakeWord'] as bool, standby: d['standby'] == true);
+  final speak = d['speak'];
+  return VoiceSettings(wakeWord: d['wakeWord'] as bool, standby: d['standby'] == true, speak: speak is bool ? speak : null);
 }
 
 const roomName = {RoomId.kitchen: '주방', RoomId.bathroom: '욕실', RoomId.bedroom: '침실', RoomId.home: '집'};

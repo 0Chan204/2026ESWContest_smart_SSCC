@@ -16,7 +16,7 @@ const locationLabel = {
   Location.unknown: '확인 중',
 };
 
-const airLevelLabel = {AirLevel.good: '좋음', AirLevel.normal: '보통', AirLevel.bad: '나쁨'};
+const airLevelLabel = {AirLevel.good: '좋음', AirLevel.normal: '보통', AirLevel.bad: '나쁨', AirLevel.veryBad: '매우 나쁨'};
 
 const burnerLabel = {BurnerState.off: '꺼짐', BurnerState.on: '켜짐', BurnerState.overheated: '과열', BurnerState.cooling: '식는 중'};
 

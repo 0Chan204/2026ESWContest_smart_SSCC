@@ -145,8 +145,7 @@ class DeviceSheet extends StatelessWidget {
           gap,
           ListGroup(title: '공기질', children: [
             ListRow(big: big, title: '등급', value: aq?.level != null ? airLevelLabel[aq!.level] : '–'),
-            ListRow(big: big, title: '초미세먼지 (PM2.5)', value: aq?.pm25 != null ? '${aq!.pm25!.round()} ㎍/㎥' : '–'),
-            ListRow(big: big, title: '미세먼지 (PM10)', value: aq?.pm10 != null ? '${aq!.pm10!.round()} ㎍/㎥' : '–'),
+            ListRow(big: big, title: '공기질', value: aq?.ppm != null ? '${ppmValue(aq!.ppm!)} ppm' : '–'),
             ListRow(
                 big: big,
                 title: '마지막 변경',

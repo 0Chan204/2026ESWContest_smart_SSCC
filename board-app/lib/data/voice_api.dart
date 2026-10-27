@@ -4,13 +4,14 @@
 //   POST /voice/commands                 { text, lang, source } → 202 { voiceId }
 //   POST /voice/commands/{id}/confirm    { approved }  (이미 끝난 명령 409)
 //
-// 보드 마이크용 제안 계약 (백엔드가 녹음 + 음성 인식을 맡는다. 아직 없음 — README "음성 API 계약")
-//   POST /voice/listen                   {} → 202 { voiceId }   (이미 듣는 중 409)
+// 보드 마이크 (BE v0.9 — 백엔드가 녹음 · 음성 인식 · 보드 스피커 안내를 맡는다. README "음성 API 계약")
+//   POST /voice/listen                   {} → 202 { voiceId }   (이미 듣는 중 409, detail.voiceId = 듣고 있는 명령)
 //   POST /voice/listen/cancel            { voiceId }            (오류는 무시)
-//   GET  /voice/settings                 → { wakeWord, standby }
-//   PUT  /voice/settings                 { wakeWord } → { wakeWord, standby }
+//   GET  /voice/commands/{id}            → 음성 명령 1건 (이미 듣는 중일 때 지금 상태를 이어 보여 주려고)
+//   GET  /voice/settings                 → { wakeWord, standby, speak }
+//   PUT  /voice/settings                 보낸 항목만 바꿈 { wakeWord? , speak? } → { wakeWord, standby, speak }
 //   WS   voice.status   status: listening · recognizing · (기존) received … failed, text, source, reason
-//   WS   voice.settings { wakeWord, standby }
+//   WS   voice.settings { wakeWord, standby, speak }
 // 없는 경로(404 · 405)는 "아직 지원 안 함" 으로 보고 조용히 넘어간다 (다시 시도하지 않음).
 
 import '../models/types.dart';
@@ -22,6 +23,7 @@ typedef Requester = Future<Object?> Function(String method, String path, [Object
 abstract final class VoicePaths {
   static const commands = '/voice/commands';
   static String confirm(String voiceId) => '/voice/commands/${Uri.encodeComponent(voiceId)}/confirm';
+  static String command(String voiceId) => '/voice/commands/${Uri.encodeComponent(voiceId)}';
   static const listen = '/voice/listen';
   static const listenCancel = '/voice/listen/cancel';
   static const settings = '/voice/settings';
@@ -42,9 +44,14 @@ abstract class VoiceApi {
   Future<ListenStart> listen();
   Future<void> cancelListen(String voiceId);
 
+  /// 음성 명령 1건의 지금 상태 (없거나 실패하면 null)
+  Future<VoiceRecord?> getCommand(String voiceId);
+
   /// null = 이 백엔드에는 음성 설정이 없다 (404 · 405)
   Future<VoiceSettings?> loadSettings();
-  Future<VoiceSettings> saveSettings({required bool wakeWord});
+
+  /// 보낸 항목만 바꾼다
+  Future<VoiceSettings> saveSettings({bool? wakeWord, bool? speak});
 }
 
 /// 없는 기능으로 볼 응답
@@ -95,6 +102,15 @@ class VoiceService implements VoiceApi {
   }
 
   @override
+  Future<VoiceRecord?> getCommand(String voiceId) async {
+    try {
+      return mapVoice(await _request('GET', VoicePaths.command(voiceId)));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
   Future<VoiceSettings?> loadSettings() async {
     try {
       return mapVoiceSettings(await _request('GET', VoicePaths.settings));
@@ -105,10 +121,11 @@ class VoiceService implements VoiceApi {
   }
 
   @override
-  Future<VoiceSettings> saveSettings({required bool wakeWord}) async {
-    final r = await _request('PUT', VoicePaths.settings, {'wakeWord': wakeWord});
+  Future<VoiceSettings> saveSettings({bool? wakeWord, bool? speak}) async {
+    final body = <String, Object?>{if (wakeWord != null) 'wakeWord': wakeWord, if (speak != null) 'speak': speak};
+    final r = await _request('PUT', VoicePaths.settings, body);
     // 응답 형식이 다르면 보낸 값으로 본다 (대기 표시는 켜진 쪽으로 — 마이크가 켜졌을 수 있음을 숨기지 않는다)
-    return mapVoiceSettings(r) ?? VoiceSettings(wakeWord: wakeWord, standby: wakeWord);
+    return mapVoiceSettings(r) ?? VoiceSettings(wakeWord: wakeWord ?? false, standby: wakeWord ?? false, speak: speak);
   }
 
   static String? _id(Map<String, dynamic>? m) {

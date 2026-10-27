@@ -230,20 +230,19 @@ class LightDevice extends Device {
   LightDevice withOnline(bool online) => copyWith(online: online);
 }
 
-enum AirLevel { good, normal, bad }
+/// 공기질 등급 4단계 (임베디드가 판단해서 보냄)
+enum AirLevel { good, normal, bad, veryBad }
 
 enum AirMode { auto, manual }
 
 enum AirAutoReason { air, induction }
 
+/// 공기청정기 센서 값: 공기질 하나(ppm) + 등급
 class AirQuality {
-  const AirQuality({this.pm25, this.pm10, this.level});
+  const AirQuality({this.ppm, this.level});
 
-  /// 초미세먼지 PM2.5 (㎍/㎥)
-  final double? pm25;
-
-  /// 미세먼지 PM10 (㎍/㎥)
-  final double? pm10;
+  /// 공기질 (ppm)
+  final double? ppm;
   final AirLevel? level;
 }
 
@@ -673,13 +672,16 @@ class VoiceRecord {
 
 /// 보드 음성 설정 (GET · PUT /voice/settings, WS voice.settings — 제안)
 class VoiceSettings {
-  const VoiceSettings({required this.wakeWord, required this.standby});
+  const VoiceSettings({required this.wakeWord, required this.standby, this.speak});
 
   /// 호출어("홈비스")로 부르기
   final bool wakeWord;
 
   /// 지금 호출어를 기다리며 마이크가 켜져 있는지
   final bool standby;
+
+  /// 보드 스피커로 확인 문구 · 답변 · 안내 읽기 (BE v0.9). null = 서버가 알려 주지 않음
+  final bool? speak;
 }
 
 /// 기기 제어 요청 (React DeviceControl)

@@ -118,7 +118,7 @@ class _AirRow extends StatelessWidget {
     final a = air;
     final on = a.online && a.on;
     final level = a.airQuality?.level;
-    final line = (on ? airAutoReason(a, short: true) : null) ?? '${level != null ? '공기 ${airLevelLabel[level]} · ' : ''}${pm25Text(a)}';
+    final line = (on ? airAutoReason(a, short: true) : null) ?? '${level != null ? '공기 ${airLevelLabel[level]} · ' : ''}${ppmText(a)}';
     return Opacity(
       opacity: a.online ? 1 : 0.4,
       child: Container(

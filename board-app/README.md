@@ -25,7 +25,7 @@ LG ATLAS OS 보드(Raspberry Pi 5)에 설치하는 HomeVIS 대시보드입니다
 | 기록 | 날짜별 묶음 · 분류(전체/화재 예방/낙상/생활 자동화) · 공간 · 기간(오늘/7일/30일) · 쪽 넘김 · 상세 · 피드백 · 최근 7일 | 같은 화면, 큰 글씨 · 쪽당 3~4건 |
 | 설정 | 화면(테마 · 화면 모드) · 비상 연락처(키패드 등록 · 변경) · 앱 권한 · 음성 · 정보 | + 글자 크기 100~130% |
 
-시트 · 알림: 기기 상세(전등 밝기 단계 0/20/100, 환풍기 약/중/강, 공기청정기 전원 · 자동/수동 · PM2.5/PM10/등급, 인덕션 · 정수기 정보, 끊긴 기기 다시 연결),
+시트 · 알림: 기기 상세(전등 밝기 단계 0/20/100, 환풍기 약/중/강, 공기청정기 전원 · 자동/수동 · 공기질(ppm)·등급 4단계, 인덕션 · 정수기 정보, 끊긴 기기 다시 연결),
 날씨(비 소식 한 줄 · 시간대별 · 체감/습도/강수), 낙상 경보(서버가 실제로 한 일만: 문자 보냄 / 본인 응답 대기 카운트다운 / 못 보냄),
 안전 조치 안내(피드백), AI 안내 토스트, 기기 제어 실패 토스트, 음성 명령 패널(레일 아래 마이크 버튼).
 
@@ -156,27 +156,41 @@ LG 가 배포한 Docker 개발 컨테이너 안의 `flutter-atlas` CLI 로 진�
 ## 음성 (보드 마이크)
 
 보드에 붙은 마이크의 녹음 · 음성 인식은 **백엔드(보드 음성 서비스)가 맡고**, 화면은 시작 · 취소만 보내고 진행 상황을 보여줍니다.
-아래 중 **보드 마이크 부분은 제안 계약**입니다 (백엔드 v0.8 에는 아직 없음). 경로는 `lib/data/voice_api.dart` 의 `VoicePaths` 한곳에 모았으니 이름이 바뀌면 거기만 고치면 됩니다.
+백엔드 v0.9 (develop) 에 구현된 계약에 맞췄습니다. 경로는 `lib/data/voice_api.dart` 의 `VoicePaths` 한곳에 모았으니 이름이 바뀌면 거기만 고치면 됩니다.
 
 | 방향 | 요청 · 이벤트 | 내용 |
 | --- | --- | --- |
-| 화면 → 서버 | `POST /api/v1/voice/listen` `{}` | 마이크 버튼. `202 { voiceId }`. `409` = 이미 듣는 중 → 패널만 연다 (본문에 `voiceId` 가 있으면 사용) |
+| 화면 → 서버 | `POST /api/v1/voice/listen` `{}` | 마이크 버튼. `202 { voiceId, status: "listening" }`. `409` = 이미 듣는 중 → `detail.voiceId` 의 명령을 이어서 보여줌. `503` = 마이크 꺼짐 |
+| 화면 → 서버 | `GET /api/v1/voice/commands/{voiceId}` | `409` 뒤에 그 명령의 지금 단계를 한 번 읽어 옴 |
 | 화면 → 서버 | `POST /api/v1/voice/listen/cancel` `{ voiceId }` | 듣는 중에 패널을 닫거나 버튼을 다시 누를 때. 오류는 무시 |
-| 서버 → 화면 | WS `voice.status` | `status`: `listening`(듣는 중) → `recognizing`(알아듣는 중, `text` 가 있으면 함께) → 기존 `received` · `thinking` · `confirm_required` · `executed` · `answered` · `cancelled` · `timeout` · `failed`. `source`: `button` · `wakeword`. `failed` 의 `reason`: `mic_unavailable`(마이크를 찾을 수 없어요) · `no_speech`(말씀이 들리지 않았어요), 그 밖은 "지금은 음성 명령을 쓸 수 없어요" |
-| 화면 ↔ 서버 | `GET /api/v1/voice/settings` → `{ wakeWord, standby }` | 앱 시작 · 설정 > 음성을 열 때 읽음 |
-| 화면 → 서버 | `PUT /api/v1/voice/settings` `{ wakeWord }` → `{ wakeWord, standby }` | 호출어("홈비스")로 부르기. 기본 꺼짐 |
-| 서버 → 화면 | WS `voice.settings` `{ wakeWord, standby }` | `standby: true` 면 레일 마이크 버튼에 주황 점 + "호출어 대기" (음성 명령을 꺼 두었어도 표시) |
+| 서버 → 화면 | WS `voice.status` | `status`: `listening`(듣는 중) → `recognizing`(알아듣는 중, `text` 가 있으면 함께) → 기존 `received` · `thinking` · `confirm_required` · `executed` · `answered` · `cancelled` · `timeout` · `failed`. `source`: `button` · `wakeword`. `failed` 의 `reason`: `mic_unavailable`(마이크를 찾을 수 없어요) · `no_speech`(말씀이 들리지 않았어요) · `stt_error`(잘 알아듣지 못했어요) · `interrupted`(잠시 후 다시 말씀해 주세요), `publish_failed` 와 그 밖은 "지금은 음성 명령을 쓸 수 없어요" |
+| 화면 ↔ 서버 | `GET /api/v1/voice/settings` → `{ wakeWord, standby, speak }` | 앱 시작 · 설정 > 음성을 열 때 읽음 |
+| 화면 → 서버 | `PUT /api/v1/voice/settings` `{ wakeWord }` 또는 `{ speak }` → 전체 설정 | 보낸 값만 바뀜. `wakeWord` = 호출어로 부르기(기본 꺼짐), `speak` = 보드 스피커로 읽어 주기 |
+| 서버 → 화면 | WS `voice.settings` `{ wakeWord, standby, speak }` | `standby: true` 면 레일 마이크 버튼에 주황 점 + "호출어 대기" (음성 명령을 꺼 두었어도 표시) |
 | 화면 → 서버 | `POST /api/v1/voice/commands/{voiceId}/confirm` `{ approved }` | (기존) `409` = 다른 화면이 이미 답함 → 오류 없이 확인 창만 닫음 |
 
 - `voice.status` 가 오면(호출어로 시작한 것 포함) 패널이 저절로 열립니다. 언제나 가장 최근 `voiceId` 하나만 보여주고, 사용자가 닫은 명령의 늦은 상태는 무시합니다
 - 서버 소식이 20초 동안 없으면 "잘 듣지 못했어요"로 닫습니다
 - **지금 백엔드(엔드포인트 없음)에서도 그대로 동작**: 마이크 버튼은 `404/405` 면 "지금은 음성 명령을 쓸 수 없어요"를 잠깐 보여주고 닫힙니다(자동 재시도 없음). 음성 설정이 없으면 호출어 스위치를 끄고 "보드 음성 연결 후 사용할 수 있어요" 한 줄만 보입니다
-- 설정 > 음성: **음성 명령 사용**(끄면 마이크 버튼이 사라지고, 서버 호출어도 끕니다) · **호출어로 부르기 (홈비스)** · **위험 알림 음성 안내**(끄면 `Speaker` 로 가지 않음)
+- 설정 > 음성: **음성 명령 사용**(끄면 마이크 버튼이 사라지고, 서버 호출어도 끕니다) · **호출어로 부르기 (홈비스)** · **위험 알림 음성 안내**(서버가 `speak` 를 지원하면 서버 설정을 바꾸고, 실패하면 되돌림. 지원하지 않으면 화면 설정만 바뀜)
 - 다른 장치가 문장을 보낼 때는 기존 `POST /voice/commands` (`VoiceService.send`) 그대로
 
 ## 아직 없는 것
 
-- **보드 마이크 API**: 위 제안 계약을 백엔드가 구현해야 마이크 버튼 · 호출어가 실제로 동작합니다 (화면 쪽은 준비됨)
+- **음성 인식 · 읽어 주기 비용**: 백엔드 v0.9 는 보드에서 OpenAI 음성 인식 · 음성 합성(유료 API)을 씁니다. 키는 보드의 백엔드 `.env` 에만 두고 이 저장소에는 넣지 않습니다. 화면 앱은 키를 받지도 보내지도 않습니다
 - **음성 안내(TTS)** 미정: 글자로만 보여줍니다. `store/speaker.dart` 의 `Speaker` 를 구현해 `main.dart` 에서 넘기면 안내 · 낙상 경보 · 음성 답변이 읽힙니다 (설정의 "위험 알림 음성 안내"가 켜져 있을 때만)
 - 안전 정책 수정은 웹 대시보드에서 합니다
 - 인덕션은 안전을 위해 화면에서 제어하지 않습니다 (조회 전용, 웹과 같음)
+
+### 공기청정기 공기질 형식
+
+임베디드가 공기질 값 하나와 등급을 보냅니다. 화면은 이 두 값만 씁니다.
+
+```json
+"airQuality": { "ppm": 412, "level": "bad" }
+```
+
+- `ppm`: 공기질 (ppm). 10 이상은 정수, 그보다 작으면 소수 한 자리로 표시
+- `level`: `good`(좋음) · `normal`(보통) · `bad`(나쁨) · `very_bad`(매우 나쁨)
+- 예전 `pm25` · `pm10` 값은 더 이상 표시하지 않습니다.
+

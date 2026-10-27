@@ -70,10 +70,15 @@ void main() {
 
   group('공기질', () {
     test('값이 하나라도 있으면', () {
-      final q = mapAirQuality({'pm25': 12, 'level': 'good'})!;
-      expect(q.pm25, 12);
-      expect(q.pm10, isNull);
+      final q = mapAirQuality({'ppm': 12, 'level': 'good'})!;
+      expect(q.ppm, 12);
       expect(q.level, AirLevel.good);
+      expect(mapAirQuality({'level': 'very_bad'})!.level, AirLevel.veryBad);
+      expect(mapAirQuality({'level': 'VERY BAD'})!.level, AirLevel.veryBad);
+      expect(mapAirQuality({'level': '매우 나쁨'})!.level, AirLevel.veryBad);
+      expect(mapAirQuality({'ppm': 3.25})!.ppm, 3.25);
+      expect(mapAirQuality({'ppm': -1}), isNull); // 음수는 버린다
+      expect(mapAirQuality({'pm25': 40, 'pm10': 60}), isNull); // 예전 필드는 쓰지 않는다
     });
     test('모르는 등급 · 빈 값', () {
       expect(mapAirQuality({'level': 'terrible'}), isNull);

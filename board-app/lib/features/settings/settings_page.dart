@@ -279,6 +279,23 @@ void _setVoiceCommands(BuildContext context, bool on) {
   if (!on && voice.micActive) voice.close();
 }
 
+/// '위험 알림 음성 안내' — 화면 설정과 함께 보드 스피커 안내(서버 speak)도 바꾼다. 서버에 못 바꾸면 되돌린다
+Future<void> _setReadAloud(BuildContext context, bool on) async {
+  final prefs = context.read<Preferences>();
+  final toaster = context.read<Toaster>();
+  final before = prefs.readAloud;
+  prefs.setReadAloud(on);
+  final ok = await context.read<VoiceController>().setSpeak(on);
+  if (!ok) {
+    prefs.setReadAloud(before);
+    toaster.show('음성 안내 설정을 바꾸지 못했어요.', error: true);
+  }
+}
+
+/// 화면에 보일 '음성 안내' 상태 — 서버가 알려 주면 그 값(보드 스피커), 아니면 화면 설정
+bool _readAloudShown(Preferences prefs, VoiceController voice) =>
+    voice.settingsSupported == true && voice.speak != null ? voice.speak! : prefs.readAloud;
+
 /// 앱 권한 — 첫 실행 동의 창에서 받은 권한을 하나씩 바꾼다 (React PermissionsSection)
 class _PermissionsSection extends StatelessWidget {
   const _PermissionsSection();
@@ -306,7 +323,12 @@ class _PermissionsSection extends StatelessWidget {
                   label: '마이크',
                   onChanged: (v) => _setVoiceCommands(context, v),
                 ),
-              PermissionKey.tts => HvToggle(checked: prefs.readAloud, large: elderly, label: '음성 안내', onChanged: prefs.setReadAloud),
+              PermissionKey.tts => HvToggle(
+                  checked: _readAloudShown(prefs, context.watch<VoiceController>()),
+                  large: elderly,
+                  label: '음성 안내',
+                  onChanged: (v) => _setReadAloud(context, v),
+                ),
               PermissionKey.contacts => hasGuardian
                   ? HvButton(
                       label: '등록됨',
@@ -402,12 +424,17 @@ class _VoiceSectionState extends State<_VoiceSection> {
         const SizedBox(height: 24),
         ListGroup(
           title: '위험 알림',
-          footer: '위험 알림이 뜨면 내용을 소리 내어 읽어 드려요.',
+          footer: '위험 알림과 음성 답변을 보드 스피커로 읽어 드려요.',
           children: [
             ListRow(
               big: elderly,
               title: '위험 알림 음성 안내',
-              trailing: HvToggle(checked: prefs.readAloud, large: elderly, label: '위험 알림 음성 안내', onChanged: prefs.setReadAloud),
+              trailing: HvToggle(
+                checked: _readAloudShown(prefs, voice),
+                large: elderly,
+                label: '위험 알림 음성 안내',
+                onChanged: (v) => _setReadAloud(context, v),
+              ),
             ),
           ],
         ),

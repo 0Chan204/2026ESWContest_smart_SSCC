@@ -39,6 +39,13 @@ class FakeConfirmer implements VoiceApi {
     throw const ApiError('찾을 수 없어요.', 404); // 오류는 무시돼야 한다
   }
 
+  /// GET /voice/commands/{id} 응답 (없으면 null)
+  final commands = <String, VoiceRecord>{};
+  final savedSpeak = <bool>[];
+
+  @override
+  Future<VoiceRecord?> getCommand(String voiceId) async => commands[voiceId];
+
   @override
   Future<VoiceSettings?> loadSettings() async {
     if (settingsMissing) return null;
@@ -46,10 +53,12 @@ class FakeConfirmer implements VoiceApi {
   }
 
   @override
-  Future<VoiceSettings> saveSettings({required bool wakeWord}) async {
-    saved.add(wakeWord);
+  Future<VoiceSettings> saveSettings({bool? wakeWord, bool? speak}) async {
+    if (wakeWord != null) saved.add(wakeWord);
+    if (speak != null) savedSpeak.add(speak);
     if (settingsMissing) throw const ApiError('찾을 수 없어요.', 404);
-    return settings = VoiceSettings(wakeWord: wakeWord, standby: wakeWord);
+    final w = wakeWord ?? settings?.wakeWord ?? false;
+    return settings = VoiceSettings(wakeWord: w, standby: w, speak: speak ?? settings?.speak);
   }
 }
 
@@ -296,6 +305,50 @@ void main() {
       expect(v.wakeWord, isTrue);
       expect(v.standby, isTrue);
       expect(confirmer.saved, [true]);
+    });
+  });
+
+  group('v0.9 보드 마이크 맞춤', () {
+    test('실패 이유별 문구', () {
+      expect(voiceFailedText('stt_error'), voiceSttError);
+      expect(voiceFailedText('interrupted'), voiceInterrupted);
+      expect(voiceFailedText('publish_failed'), voiceUnavailable);
+      expect(voiceFailedText('mic_unavailable'), voiceNoMic);
+      expect(voiceFailedText('no_speech'), voiceNoSpeech);
+      expect(voiceFailedText('모르는이유'), voiceUnavailable);
+    });
+
+    test('이미 듣는 중(409)이면 그 명령의 지금 단계로 이어서 보여 준다', () async {
+      final api = FakeConfirmer()..listenResult = () => const ListenStart(voiceId: 'v-9', alreadyListening: true);
+      api.commands['v-9'] = const VoiceRecord(voiceId: 'v-9', status: VoiceStatus.recognizing, text: '주방 불 켜줘');
+      final v = VoiceController.detached(speaker: FakeSpeaker(), api: api);
+      await v.startListening();
+      expect(v.voiceId, 'v-9');
+      expect(v.phase, VoicePhase.recognizing);
+      expect(v.heard, '주방 불 켜줘');
+      expect(api.cancels, isEmpty); // 다른 곳에서 시작한 듣기는 취소하지 않는다
+      v.dispose();
+    });
+
+    test('speak 설정: 서버 값 읽기 · 바꾸기 · 없는 서버는 화면 설정만', () async {
+      final api = FakeConfirmer()
+        ..settingsMissing = false
+        ..settings = const VoiceSettings(wakeWord: false, standby: false, speak: true);
+      final v = VoiceController.detached(speaker: FakeSpeaker(), api: api);
+      await v.loadSettings();
+      expect(v.speak, isTrue);
+      expect(await v.setSpeak(false), isTrue);
+      expect(api.savedSpeak, [false]);
+      expect(v.speak, isFalse);
+      expect(api.saved, isEmpty); // 호출어는 건드리지 않는다
+      v.dispose();
+
+      final none = FakeConfirmer(); // 설정 API 없음
+      final v2 = VoiceController.detached(speaker: FakeSpeaker(), api: none);
+      await v2.loadSettings();
+      expect(await v2.setSpeak(false), isTrue);
+      expect(none.savedSpeak, isEmpty);
+      v2.dispose();
     });
   });
 }
