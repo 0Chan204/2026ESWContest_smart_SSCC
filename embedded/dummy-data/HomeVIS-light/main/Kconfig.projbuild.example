@@ -1,0 +1,82 @@
+# Copy this file to Kconfig.projbuild in the same directory before building.
+# Configure Wi-Fi and MQTT credentials locally with idf.py menuconfig.
+# Keep credentials out of this example file.
+
+menu "HomeVIS light dummy configuration"
+
+    choice LIGHT_LOCATION
+        prompt "Light location (also selects device ID and MQTT topics)"
+        default LIGHT_LOCATION_ROOM
+
+        config LIGHT_LOCATION_ROOM
+            bool "Room: light-01 (home/room/light/light-01)"
+
+        config LIGHT_LOCATION_TOILET
+            bool "Toilet: light-00 (home/toilet/light/light-00)"
+    endchoice
+
+    config LIGHT_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+
+    config LIGHT_WIFI_PASSWORD
+        string "Wi-Fi password (empty for an open network)"
+        default ""
+
+    config LIGHT_MQTT_HOST
+        string "MQTT broker hostname or IPv4 address (without mqtt://)"
+        default "192.168.0.2"
+
+    config LIGHT_MQTT_PORT
+        int "MQTT TCP port"
+        range 1 65535
+        default 1883
+
+    config LIGHT_MQTT_USERNAME
+        string "MQTT username (empty for anonymous access)"
+        default ""
+
+    config LIGHT_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config LIGHT_NTP_SERVER
+        string "NTP server (timestamps are emitted in Korea time, +09:00)"
+        default "pool.ntp.org"
+
+    config LIGHT_INITIAL_POWER_ON
+        bool "Start with the dummy light on"
+        default n
+
+    choice LIGHT_LED_TYPE
+        prompt "On-board LED type"
+        default LIGHT_LED_WS2812
+
+        config LIGHT_LED_WS2812
+            bool "Addressable RGB LED (WS2812, ESP32-S3 DevKitC)"
+
+        config LIGHT_LED_GPIO_OUTPUT
+            bool "Single-color GPIO LED"
+    endchoice
+
+    config LIGHT_LED_GPIO
+        int "On-board LED GPIO (DevKitC v1.0: 48, v1.1: 38)"
+        range 0 48
+        default 48
+        help
+            Check the board's schematic. ESP32-S3-DevKitC-1 v1.0 uses
+            GPIO48 and v1.1 uses GPIO38 for the addressable RGB LED.
+            Other S3 boards can use a different GPIO or LED type.
+
+    config LIGHT_LED_BRIGHTNESS
+        int "RGB LED white brightness (1-255)"
+        depends on LIGHT_LED_WS2812
+        range 1 255
+        default 16
+
+    config LIGHT_LED_ACTIVE_LOW
+        bool "GPIO LED turns on at a low level"
+        depends on LIGHT_LED_GPIO_OUTPUT
+        default n
+
+endmenu

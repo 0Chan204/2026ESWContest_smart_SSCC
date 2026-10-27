@@ -1,0 +1,46 @@
+# Copy this file to Kconfig.projbuild in the same directory before building.
+# Configure Wi-Fi and MQTT credentials locally with idf.py menuconfig.
+# Keep credentials out of this example file.
+
+menu "HomeVIS induction dummy configuration"
+
+    config INDUCTION_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+
+    config INDUCTION_WIFI_PASSWORD
+        string "Wi-Fi password (empty for an open network)"
+        default ""
+
+    config INDUCTION_MQTT_HOST
+        string "MQTT broker hostname or IPv4 address (without mqtt://)"
+        default "192.168.0.2"
+
+    config INDUCTION_MQTT_PORT
+        int "MQTT TCP port"
+        range 1 65535
+        default 1883
+
+    config INDUCTION_MQTT_USERNAME
+        string "MQTT username (empty for anonymous access)"
+        default ""
+
+    config INDUCTION_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config INDUCTION_NTP_SERVER
+        string "NTP server (timestamps use Korea time, +09:00)"
+        default "pool.ntp.org"
+
+    config INDUCTION_DEFAULT_LEVEL
+        int "Heating level for console 2/on / turn_on without level"
+        range 1 9
+        default 3
+        help
+            One simulated burner (burner-1), initially off at 25 C.
+            No GPIO is driven. Console: 1=off, 2=on (100-120 C),
+            3=overheated (150-180 C). Temperature changes every 3 seconds.
+            State is sent every 3 seconds and on control or mode changes.
+
+endmenu

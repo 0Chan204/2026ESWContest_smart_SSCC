@@ -1,0 +1,89 @@
+# Repository-specific exclusions
+.agents/
+.codex/
+.devcontainer/
+.vscode/
+tests/
+Kconfig.projbuild
+.clangd
+
+# Build directories and compiled artifacts
+build/
+dist/
+*.d
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.ilk
+*.exp
+*.gch
+*.pch
+*.lib
+*.a
+*.la
+*.lo
+*.dll
+*.so
+*.so.*
+*.dylib
+*.exe
+*.out
+*.app
+*.dSYM/
+*.su
+*.idb
+*.pdb
+*.dwo
+
+# ESP-IDF generated configuration and downloaded dependencies
+sdkconfig
+sdkconfig.old
+flasher_args.json
+**/components/.idf/
+managed_components/
+.espressif/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+compile_commands.json
+
+# Python caches and virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+venv/
+.venv/
+env/
+
+# Editor caches and user settings
+.ccls-cache/
+*.user
+*.workspace
+*.suo
+*.sln.docstates
+
+# Temporary files and logs
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+*.log
+
+# Operating system metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+.directory
+Thumbs.db
+ehthumbs.db
+Desktop.ini

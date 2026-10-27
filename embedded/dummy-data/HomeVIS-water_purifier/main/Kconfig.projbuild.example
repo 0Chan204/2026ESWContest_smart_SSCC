@@ -1,0 +1,48 @@
+# Copy this file to Kconfig.projbuild in the same directory before building.
+# Configure Wi-Fi and MQTT credentials locally with idf.py menuconfig.
+# Keep credentials out of this example file.
+
+menu "HomeVIS water purifier dummy configuration"
+
+    config WATER_WIFI_SSID
+        string "Wi-Fi SSID"
+        default ""
+
+    config WATER_WIFI_PASSWORD
+        string "Wi-Fi password (empty for an open network)"
+        default ""
+
+    config WATER_MQTT_HOST
+        string "MQTT broker hostname or IPv4 address (without mqtt://)"
+        default "192.168.0.2"
+
+    config WATER_MQTT_PORT
+        int "MQTT TCP port"
+        range 1 65535
+        default 1883
+
+    config WATER_MQTT_USERNAME
+        string "MQTT username (empty for anonymous access)"
+        default ""
+
+    config WATER_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config WATER_NTP_SERVER
+        string "NTP server (timestamps use Korea time, +09:00)"
+        default "pool.ntp.org"
+
+    config WATER_CONSOLE_AMOUNT_ML
+        int "Default dispense amount for console on (mL)"
+        range 1 5000
+        default 250
+
+    config WATER_FLOW_ML_SEC
+        int "Simulated dispensing speed (mL per second)"
+        range 1 1000
+        default 50
+        help
+            No pump or GPIO is driven. At 50 mL/s, 250 mL completes in 5 s.
+
+endmenu
