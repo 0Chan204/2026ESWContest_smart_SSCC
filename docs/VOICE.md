@@ -1,4 +1,4 @@
-# 음성 명령 연동 명세 (v0.7)
+# 음성 명령 연동 명세 (v0.9)
 
 대시보드가 브라우저 음성 인식으로 만든 **전체 문장**을 서버가 받아 저장하고, AI 판정 엔진에 MQTT로 전달합니다.
 판정 엔진은 판단(답변·제어)을 HTTP로 돌려주고, 서버는 실행 결과와 진행 상황을 WebSocket으로 대시보드에 알립니다.
@@ -14,6 +14,9 @@
 
 화면 이동 명령("주방", "기록 보여줘", "설정", "우리 집")은 대시보드가 직접 처리하고 서버로 보내지 않습니다.
 
+(v0.9) 보드(라즈베리파이)에는 브라우저 음성 인식이 없어서, **보드 마이크 버튼**으로 서버가 직접 녹음·음성 인식을 하고
+①을 대신합니다. 이후 ②~⑥은 같습니다. → [5장](#5-보드-마이크-v09)
+
 ## 시작어 "홈비스" (v0.7)
 
 - 대시보드가 "홈비스"를 감지하면 그 문장을 보냅니다. 서버는 문장 앞의 시작어를 떼어 내고 `wakeWord: true`로 판정 엔진에 전달합니다.
@@ -28,6 +31,8 @@
 
 | status | 의미 | 대시보드 표시 |
 | --- | --- | --- |
+| `listening` | (v0.9) 보드 마이크로 듣는 중 | 듣고 있어요 |
+| `recognizing` | (v0.9) 음성 인식 중. 인식되면 `text`를 담아 한 번 더 옴 | 알아듣는 중… + 들린 문장 |
 | `received` | 서버가 받음 (POST 응답) | 알아들었어요 |
 | `thinking` | 판정 엔진에 전달, 판단 대기 | 확인하고 있어요 |
 | `confirm_required` | 제어 전에 사용자 확인 필요 | 확인 창 (`confirmText`) |
@@ -35,7 +40,7 @@
 | `answered` | 제어 없이 답변만 (거절 포함) | 결과 + `answer` 읽기 |
 | `cancelled` | 사용자가 취소했거나 확인 시간(30초) 초과 | 잘 듣지 못했어요 |
 | `timeout` | 판정 엔진 응답 없음 (10초) | 잘 듣지 못했어요 |
-| `failed` | 판정 엔진에 전달 실패 | 지금은 음성 명령을 쓸 수 없어요 |
+| `failed` | 실패. `reason`: `mic_unavailable`(마이크 없음) · `no_speech`(말소리 없음) · `stt_error`(인식 실패) · `publish_failed`(판정 엔진에 전달 실패) · `interrupted`(듣는 중 서버 재시작) | 이유별 문구 |
 
 대기 시간은 `.env`의 `VOICE_AI_TIMEOUT_SEC`(기본 10), `VOICE_CONFIRM_TIMEOUT_SEC`(기본 30)로 바꿀 수 있습니다.
 
@@ -144,3 +149,68 @@ curl -s localhost:8000/api/v1/voice/commands | python3 -m json.tool
 ```
 
 가짜 판정 엔진은 키워드 규칙으로 조명·환풍기는 확인 후 실행, 인덕션·물은 거절 안내, 그 외는 켜진 기기 수를 답합니다.
+
+## 5. 보드 마이크 (v0.9)
+
+보드 Flutter 앱(프론트 board-app v7)의 마이크 버튼용입니다. 녹음 · 음성 인식(STT) · 음성 안내(TTS)는 서버가 합니다.
+
+```
+① 보드 화면 ── POST /api/v1/voice/listen ──▶ 서버 (listening)
+② 서버: 보드 USB 마이크 녹음 (pulseaudio parecord) → recognizing
+③ 서버 ── OpenAI STT ──▶ 문장 + 신뢰도 → recognizing(text) → 기존 흐름 (received → thinking → 판정 엔진 …)
+④ 서버: 확인 문구 · 답변 · 일반 안내를 OpenAI TTS로 보드 스피커에서 재생 (설정 speak)
+```
+
+### 듣기 시작 · 취소
+
+| 요청 | 응답 |
+| --- | --- |
+| `POST /api/v1/voice/listen` `{}` | `202 { voiceId, status: "listening", receivedAt }`. 이미 듣는 중이면 `409`, `detail.voiceId`에 듣고 있는 명령. 서버에서 마이크를 끈 경우 `503` |
+| `POST /api/v1/voice/listen/cancel` `{ voiceId }` | 듣는 중 · 인식 중이면 `cancelled`. 이미 판정 엔진에 넘어갔으면 `409`, 없는 id면 `404` |
+
+- 한 번에 하나만 듣습니다. `source`는 `button`입니다 (호출어 상시 듣기는 다음 단계에서 `wakeword`).
+- 버튼 뒤 `VOICE_LISTEN_START_SEC`(5초) 안에 말소리가 없으면 `failed(no_speech)`.
+  말이 끝나고 `VOICE_LISTEN_SILENCE_SEC`(1초) 조용하면, 또는 `VOICE_LISTEN_MAX_SEC`(8초)가 지나면 녹음을 끝냅니다.
+- 시작어("홈비스")는 기존처럼 떼어 내고 `wakeWord: true`로 판정 엔진에 전달합니다. 시작어만 있으면 `no_speech`.
+- 대시보드는 20초 동안 소식이 없으면 닫으므로, 녹음 + 인식 + 판단이 그 안에 끝나도록 위 시간을 정했습니다.
+
+### 인식 신뢰도 (`confidence`)
+
+판정 엔진은 `confidence`가 0.6 미만이면 제어하지 않으므로 서버가 채워서 보냅니다.
+gpt-4o 계열 STT는 토큰 로그확률(`logprobs`) 평균, whisper는 구간별 `avg_logprob`·`no_speech_prob`로 계산하고,
+둘 다 없으면 `VOICE_STT_FALLBACK_CONFIDENCE`(0.8)를 씁니다.
+
+### 음성 설정: `GET` / `PUT /api/v1/voice/settings`
+
+```json
+{ "wakeWord": false, "standby": false, "speak": true }
+```
+
+| 필드 | 뜻 |
+| --- | --- |
+| `wakeWord` | 호출어(홈비스)로 부르기. 저장만 하고, 상시 듣기는 다음 단계에서 붙습니다 |
+| `standby` | 지금 호출어를 기다리는 중. 상시 듣기가 붙기 전까지 항상 `false` |
+| `speak` | 확인 문구 · 답변 · 일반 안내를 보드 스피커로 읽기 (기본 켜짐). 대시보드 "위험 알림 음성 안내"와 연결 |
+
+`PUT`은 보낸 항목만 바꾸고, 바뀐 설정을 WebSocket `voice.settings`로 모든 화면에 알립니다. 서버를 다시 켜도 유지됩니다.
+
+### 보드 스피커 안내
+
+- 읽는 것: `confirm_required`의 `confirmText`, `answered` · `executed`의 `answer`(음성 명령마다 한 번씩),
+  `ai.announcement` 중 음성 명령이 아닌 안내
+- 한 번에 하나씩 순서대로 읽고, 밀린 안내가 많으면 새 안내는 건너뜁니다. 실패해도 제어 · 판단에는 영향이 없습니다.
+
+### 보드 설정
+
+- `docker-compose.board.yml`: 백엔드 컨테이너에 `/run/pulse/native`(보드 pulseaudio)를 연결하고 `PULSE_SERVER`를 지정합니다.
+- 보드 `.env`: `OPENAI_API_KEY`, `VOICE_MIC_DEVICE`(보드에서 `pactl list short sources`로 확인). 그 밖의 값은 `.env.example` 참고
+- 인터넷이 없으면 인식은 `failed(stt_error)`, 안내는 건너뜁니다.
+
+### 테스트 (보드)
+
+```bash
+curl -s -X POST http://<보드 IP>:8000/api/v1/voice/listen -H 'Content-Type: application/json' -d '{}'
+# 바로 마이크에 "홈비스 주방 불 켜줘" → 몇 초 뒤
+curl -s "http://<보드 IP>:8000/api/v1/voice/commands?limit=1"
+```
+

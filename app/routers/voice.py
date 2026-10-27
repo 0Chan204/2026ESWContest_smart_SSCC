@@ -5,6 +5,9 @@
 - GET  /voice/commands                  음성 명령 기록 (최신순, status로 거르기)
 - GET  /voice/commands/{voiceId}        1건 조회
 - POST /voice/commands/{voiceId}/confirm  확인 창 결과 (실행 / 취소)
+- (v0.9) POST /voice/listen             보드 마이크로 듣기 시작 (녹음 + 음성 인식은 서버가 함)
+- (v0.9) POST /voice/listen/cancel      듣기 취소
+- (v0.9) GET/PUT /voice/settings        호출어 · 음성 안내(speak) 설정
 
 진행 상황은 WebSocket /api/v1/stream 의 voice.status 이벤트로 알립니다.
 """
@@ -13,13 +16,17 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app import state_store, voice_service
+from app import state_store, voice_listen_service, voice_service, ws_hub
 from app.schemas import (
     VoiceCommand,
     VoiceCommandAccepted,
     VoiceCommandIn,
     VoiceCommandListResponse,
     VoiceConfirmRequest,
+    VoiceListenAccepted,
+    VoiceListenCancelRequest,
+    VoiceSettings,
+    VoiceSettingsUpdate,
     VoiceStatus,
 )
 
@@ -83,3 +90,64 @@ def confirm_voice_command(voice_id: str, request: VoiceConfirmRequest) -> VoiceC
         raise HTTPException(status_code=404, detail="해당 voiceId를 찾을 수 없습니다.") from exc
     except voice_service.VoiceCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+# ---------------------------------------------------------------------------
+# v0.9: 보드 마이크 (docs/VOICE.md 5장)
+# ---------------------------------------------------------------------------
+
+@router.post("/listen", response_model=VoiceListenAccepted, status_code=status.HTTP_202_ACCEPTED, tags=[TAG], summary="보드 마이크로 듣기 시작 (마이크 버튼)")
+def start_listening() -> VoiceListenAccepted:
+    """
+    보드에 연결된 마이크로 녹음하고, 서버가 음성 인식(STT)까지 한 뒤 기존 음성 명령 흐름으로 넘깁니다.
+
+    - 진행 상황은 WebSocket voice.status: listening(듣는 중) -> recognizing(알아듣는 중, 인식되면 text 포함)
+      -> received -> thinking -> (confirm_required) -> executed / answered ...
+    - 실패하면 failed + reason: mic_unavailable(마이크 없음) · no_speech(말소리 없음) · stt_error(인식 실패, 인터넷 등)
+    - 한 번에 하나만 듣습니다. 이미 듣는 중이면 409이고 detail.voiceId로 그 명령을 알려줍니다.
+    - 서버에서 마이크를 끈 경우(VOICE_LISTEN_ENABLED=false) 503입니다.
+    """
+    try:
+        command = voice_listen_service.start_listen(source="button")
+    except voice_listen_service.AlreadyListening as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "ALREADY_LISTENING", "voiceId": exc.voice_id, "message": "이미 듣는 중입니다."},
+        ) from exc
+    except voice_listen_service.ListenDisabled as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "LISTEN_DISABLED", "message": "이 서버에서는 보드 마이크를 사용하지 않습니다."},
+        ) from exc
+    return VoiceListenAccepted(voiceId=command.voiceId, receivedAt=command.receivedAt)
+
+
+@router.post("/listen/cancel", response_model=VoiceCommand, tags=[TAG], summary="듣기 취소")
+def cancel_listening(request: VoiceListenCancelRequest) -> VoiceCommand:
+    """듣는 중(listening) · 알아듣는 중(recognizing)인 명령을 취소합니다(cancelled). 이미 넘어간 명령이면 409."""
+    try:
+        return voice_listen_service.cancel_listen(request.voiceId)
+    except voice_service.UnknownVoiceCommand as exc:
+        raise HTTPException(status_code=404, detail="해당 voiceId를 찾을 수 없습니다.") from exc
+    except voice_service.VoiceCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+def _current_settings() -> VoiceSettings:
+    # 호출어 상시 듣기(standby)는 다음 단계에서 붙습니다. 그전까지는 켜 두어도 기다리지 않습니다.
+    return state_store.get_voice_settings().model_copy(update={"standby": False})
+
+
+@router.get("/settings", response_model=VoiceSettings, tags=[TAG], summary="보드 음성 설정 조회")
+def read_voice_settings() -> VoiceSettings:
+    """wakeWord: 호출어(홈비스)로 부르기 · standby: 지금 호출어를 기다리는 중 · speak: 답변·위험 안내를 보드 스피커로 읽기"""
+    return _current_settings()
+
+
+@router.put("/settings", response_model=VoiceSettings, tags=[TAG], summary="보드 음성 설정 변경")
+def update_voice_settings(request: VoiceSettingsUpdate) -> VoiceSettings:
+    """보낸 항목만 바꿉니다. 바뀐 설정은 WebSocket voice.settings로 모든 화면에 알립니다."""
+    state_store.update_voice_settings(wakeWord=request.wakeWord, speak=request.speak)
+    current = _current_settings()
+    ws_hub.broadcast_threadsafe("voice.settings", current.model_dump())
+    return current

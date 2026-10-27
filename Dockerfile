@@ -11,6 +11,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /srv/homevis
 
 # 패키지 설치를 코드 복사보다 먼저 해서, 코드만 바뀌었을 때는 이 단계를 캐시로 건너뜁니다.
+# v0.9: 보드 마이크 녹음(parecord) · 스피커 재생(paplay)용 pulseaudio 클라이언트
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pulseaudio-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 

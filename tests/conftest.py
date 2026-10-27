@@ -9,7 +9,7 @@ CI 환경(GitHub Actions)에는 MQTT 브로커(Mosquitto)가 없으므로, 서�
 import pytest
 from fastapi.testclient import TestClient
 
-from app import db, edge_service, mqtt_client, state_store
+from app import db, edge_service, mqtt_client, state_store, voice_listen_service
 from app.config import settings
 
 
@@ -56,9 +56,13 @@ def reset_state(monkeypatch):
     monkeypatch.setattr(settings, "WEATHER_ENABLED", False, raising=False)
     # 합친 엣지 메시지도 테스트에서 직접 호출할 때만 보냅니다
     monkeypatch.setattr(settings, "EDGE_COMBINED_ENABLED", False, raising=False)
+    # v0.9: 테스트에서는 실제 OpenAI·보드 스피커를 쓰지 않습니다 (필요한 테스트에서만 가짜로 켬)
+    monkeypatch.setattr(settings, "VOICE_TTS_ENABLED", False, raising=False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "", raising=False)
     db.use_database(None)
     state_store.reset_memory()
     edge_service.reset()
+    voice_listen_service.reset()
     yield
     db.flush()
     db.use_database(None)
