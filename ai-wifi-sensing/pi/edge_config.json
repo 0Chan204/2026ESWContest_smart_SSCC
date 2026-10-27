@@ -1,0 +1,54 @@
+{
+  "cfg_hash": "67a75326",
+  "processing_config": {
+    "fs": 25.0,
+    "short_window_sec": 2.0,
+    "long_window_sec": 10.0,
+    "step_sec": 1.0,
+    "max_gap_sec": 0.5,
+    "hampel_k": 3,
+    "hampel_sigmas": 3.0,
+    "savgol_window": 7,
+    "savgol_polyorder": 3,
+    "normalize_agc": true,
+    "breath_band": [
+      0.1,
+      0.6
+    ],
+    "motion_band": [
+      0.6,
+      3.0
+    ]
+  },
+  "feature_names": [
+    "sc_std_mean",
+    "sc_std_max",
+    "sc_std_p90",
+    "sc_iqr_mean",
+    "sc_iqr_max",
+    "sc_iqr_p90",
+    "sc_ac1_mean",
+    "sc_ac1_p10",
+    "sc_crest_mean",
+    "pc1_std",
+    "pc2_std",
+    "pc3_std",
+    "pc1_var_ratio",
+    "rssi_std",
+    "rssi_iqr",
+    "long_sc_std_mean",
+    "long_pc1_logvar",
+    "breath_band_ratio",
+    "motion_band_ratio"
+  ],
+  "location_codes": [
+    "r2",
+    "r3",
+    "r4"
+  ],
+  "target_macs": {
+    "r2": null,
+    "r3": null,
+    "r4": null
+  }
+}
