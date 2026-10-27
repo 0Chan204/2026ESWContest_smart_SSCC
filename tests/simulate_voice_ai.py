@@ -6,7 +6,7 @@ POST /api/v1/ai/decisions(voiceId 포함)로 돌려줍니다. 실제 판정 엔�
 "대시보드 -> 서버 -> 판정 엔진 -> 서버 -> 대시보드" 전체 흐름을 확인하는 용도입니다.
 
 단순 규칙 (실제 모델 아님):
-- "조명/불" + "켜/꺼"  -> 전등 on/off (욕실이면 light-00, 그 외 light-01), 확인 필요
+- "조명/불" + "켜/꺼"  -> 전등 on/off (욕실이면 light-00, 주방·부엌이면 light-02, 그 외 light-01), 확인 필요
 - "환풍기" + "켜/꺼/강/중/약" -> 환풍기 on/off/set_speed (욕실이면 fan-02, 그 외 fan-01), 확인 필요
 - "인덕션" + "꺼" -> 인덕션 끄기 (바로 실행) / "인덕션" + "켜" -> 인덕션 3단 켜기 (확인 없이 보내도 서버가 확인 창을 띄움)
 - "공기청정기/공기" + "켜/꺼" -> 공기청정기 on/off, 확인 필요
@@ -61,12 +61,19 @@ def decide(text: str, api: str) -> dict:
     if "물" in text:
         return {"room": "kitchen", "announcement": "정수기에서 직접 받아 주세요.", "actions": []}
     if "조명" in text or "불" in text:
-        light = "light-00" if room == "toilet" else "light-01"
+        # 욕실/화장실 -> light-00, 주방/부엌 -> light-02, 그 외(방) -> light-01
+        if room == "toilet":
+            light, light_room = "light-00", "toilet"
+        elif "주방" in text or "부엌" in text:
+            light, light_room = "light-02", "kitchen"
+        else:
+            light, light_room = "light-01", "room"
         action = "off" if turn_off else "on"
         verb = "끌게요" if turn_off else "켤게요"
+        room_label_of = {"toilet": "욕실", "kitchen": "주방", "room": "방"}
         return {
-            "room": "toilet" if light == "light-00" else "room",
-            "announcement": f"{'욕실' if light == 'light-00' else '방'} 조명을 {verb}.",
+            "room": light_room,
+            "announcement": f"{room_label_of[light_room]} 조명을 {verb}.",
             "requiresConfirmation": True,
             "actions": [{"device": "light", "deviceId": light, "action": action}],
         }

@@ -353,8 +353,8 @@ def test_fall_turns_off_burner_and_can_be_resolved(client, published):
     incident_id = accepted.json()["incidentId"]
     token = _token_of(accepted.json()["confirmUrl"])
 
-    # 재실 정책과 달리 단계 없이 즉시 전원 차단 + 전등 깜빡임
-    assert _types_sent(published) == [(DEVICE, "turn_off"), ("light-01", "blink")]
+    # 재실 정책과 달리 단계 없이 즉시 전원 차단 + 전등 깜빡임 (부엌 낙상이면 부엌 전등 light-02, v0.8)
+    assert _types_sent(published) == [(DEVICE, "turn_off"), ("light-02", "blink")]
     assert published[-1]["durationSec"] == settings.LIGHT_BLINK_SEC
     assert accepted.json()["lightBlinkSent"] is True
     assert client.get(f"{PREFIX}/fall-incidents/{incident_id}").json()["status"] == "pending"

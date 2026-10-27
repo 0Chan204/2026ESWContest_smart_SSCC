@@ -4,7 +4,7 @@
 실행 방법:
     python tests/simulate_home_devices.py
 
-app/device_registry.py의 가전 목록(기본: light-01, light-00, water-01, fan-01, fan-02, air-01)을 그대로 사용합니다.
+app/device_registry.py의 가전 목록(기본: light-01, light-00, light-02, water-01, fan-01, fan-02, air-01)을 그대로 사용합니다.
 - 각 기기는 5초마다, 그리고 상태가 바뀔 때마다 state 토픽으로 상태를 보냅니다.
 - command 토픽으로 명령을 받으면 적용하고 ack 토픽으로 결과를 보냅니다.
   전등: on(100%) / off / blink(durationSec 동안 깜빡인 뒤 원래 상태로)

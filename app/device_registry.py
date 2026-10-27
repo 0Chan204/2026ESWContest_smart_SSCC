@@ -40,10 +40,11 @@ TOPIC_SEGMENT = {
 }
 _SEGMENT_TO_TYPE = {segment: device_type for device_type, segment in TOPIC_SEGMENT.items()}
 
-# 시연용 기본 구성 (v0.5: 화장실 전등 light-00, 부엌·화장실 환풍기 / v0.7: 방 공기청정기 추가)
+# 시연용 기본 구성 (v0.5: 화장실 전등 light-00, 부엌·화장실 환풍기 / v0.7: 방 공기청정기 / v0.8: 주방 전등 light-02 추가)
 DEFAULT_HOME_DEVICES = [
     {"deviceId": "light-01", "type": LIGHT, "room": "room"},
     {"deviceId": "light-00", "type": LIGHT, "room": "toilet"},
+    {"deviceId": "light-02", "type": LIGHT, "room": "kitchen"},
     {"deviceId": "water-01", "type": WATER_PURIFIER, "room": "kitchen"},
     {"deviceId": "fan-01", "type": FAN, "room": "kitchen"},
     {"deviceId": "fan-02", "type": FAN, "room": "toilet"},
