@@ -20,7 +20,7 @@ from app.routers import ai, dashboard, device, home_devices, sensing, stream, vo
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-API_VERSION = "0.9.0"
+API_VERSION = "0.10.0"
 
 # 태그 순서/설명: Swagger UI에서 이 순서 그대로 큰 섹션 헤더로 표시됩니다.
 # 각 엔드포인트의 태그는 app/routers/*.py 의 데코레이터(tags=[...])에서 지정합니다.

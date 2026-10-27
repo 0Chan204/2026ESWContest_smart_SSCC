@@ -11,9 +11,11 @@
     python tests/simulate_edge_nodes.py --room kitchen      # 사람이 있는 구역 (기본 kitchen)
 
 동작:
-- 노드 r1(방) / r2(부엌) / r3(화장실) 3개를 흉내 냅니다.
+- 노드 r3(방) / r2(부엌) / r4(화장실) 3개를 흉내 냅니다. (v0.10 지우님 문서 기준 번호)
+- 재실 특성 19개(features)와 행동 특성 31개(behavior.features)를 함께 보냅니다. (v0.10)
 - 토픽: home/{구역}/edge/{노드ID}/features, 1초마다 보냅니다.
 - --room으로 정한 구역은 특징값이 높게(사람이 있는 것처럼), 나머지는 낮게 나옵니다.
+- --activity로 그 구역의 행동 특성 값을 바꿉니다 (standing 높게 / lying 낮게, 가짜 판단 시뮬레이터용).
   (값 자체는 의미 없는 가짜 숫자입니다)
 - Ctrl+C로 끄면 각 노드가 status: "stopped" 메시지를 한 번 보내고 끝납니다.
 """
@@ -25,9 +27,13 @@ import time
 
 import paho.mqtt.client as mqtt
 
-NODES = {"r1": "room", "r2": "kitchen", "r3": "toilet"}
+NODES = {"r3": "room", "r2": "kitchen", "r4": "toilet"}
 FEATURE_COUNT = 19
+BEHAVIOR_FEATURE_COUNT = 31
 CFG = "sim00001"
+BEHAVIOR_CFG = "simbeh01"
+# 가짜 판단 시뮬레이터(simulate_fusion.py)가 행동 특성 평균으로 구분하는 값
+ACTIVITY_CENTER = {"standing": 1.0, "sitting": 0.0, "lying": -1.0}
 
 
 def topic(room: str, node: str) -> str:
@@ -41,9 +47,13 @@ def new_client(client_id: str) -> mqtt.Client:
         return mqtt.Client(client_id=client_id)  # paho-mqtt 1.x
 
 
-def make_message(node: str, occupied: bool, status: str = "ok") -> dict:
+def make_message(node: str, occupied: bool, status: str = "ok", activity: str = "standing") -> dict:
     center = -1.5 if occupied else -4.3
-    features = [round(center + random.uniform(-1.2, 1.2), 2) for _ in range(FEATURE_COUNT)]
+    features = [round(center + random.uniform(-1.2, 1.2), 2) for _ in range(FEATURE_COUNT)] if status == "ok" else None
+    behavior_center = ACTIVITY_CENTER.get(activity, 0.0) if occupied else -3.0
+    behavior_features = (
+        [round(behavior_center + random.uniform(-0.3, 0.3), 3) for _ in range(BEHAVIOR_FEATURE_COUNT)] if status == "ok" else None
+    )
     return {
         "v": 1,
         "node": node,
@@ -56,6 +66,12 @@ def make_message(node: str, occupied: bool, status: str = "ok") -> dict:
             "proc_ms": round(random.uniform(30.0, 130.0), 1),
         },
         "cfg": CFG,
+        "behavior": {
+            "status": status,
+            "features": behavior_features,
+            "rate_hz": round(random.uniform(14.0, 15.0), 1),
+            "cfg": BEHAVIOR_CFG,
+        },
     }
 
 
@@ -64,6 +80,7 @@ def main() -> None:
     parser.add_argument("--host", default="localhost", help="MQTT 브로커 주소 (기본 localhost)")
     parser.add_argument("--port", type=int, default=1883)
     parser.add_argument("--room", default="kitchen", choices=sorted(set(NODES.values())), help="사람이 있는 구역")
+    parser.add_argument("--activity", default="standing", choices=sorted(ACTIVITY_CENTER), help="그 구역 사람의 행동 (가짜)")
     args = parser.parse_args()
 
     client = new_client("edge-nodes-sim")
@@ -75,7 +92,7 @@ def main() -> None:
     try:
         while True:
             for node, room in NODES.items():
-                message = make_message(node, occupied=(room == args.room))
+                message = make_message(node, occupied=(room == args.room), activity=args.activity)
                 client.publish(topic(room, node), json.dumps(message), qos=1)
             tick += 1
             if tick % 10 == 0:

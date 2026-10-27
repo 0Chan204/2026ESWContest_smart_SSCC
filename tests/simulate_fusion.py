@@ -7,8 +7,9 @@
 
 단순 규칙 (실제 모델 아님):
 - 구역마다 특징값(features)의 평균을 구해, 가장 높은 구역이 THRESHOLD 이상이면 그 구역에 있다고 봄
-- 노드 status가 "ok"가 아닌 구역은 제외
-- 행동(activity)은 판단하지 않음 (null)
+- 노드 status가 "ok"가 아닌 구역은 제외. ok인 노드가 하나도 없으면 present=null + presenceReason(노드 상태)
+- (v0.10) 행동: 그 구역 노드의 행동 특성(behavior.features) 평균으로 standing / sitting / lying
+  행동 쪽 상태가 ok가 아니거나 사람이 없으면 activity="unknown" + activityReason
 
 사용 방법 (맥, 저장소 폴더에서):
     source venv/bin/activate
@@ -36,29 +37,54 @@ def new_client(client_id: str) -> mqtt.Client:
         return mqtt.Client(client_id=client_id)  # paho-mqtt 1.x
 
 
+def _activity(node: dict) -> tuple[str, float | None, str | None]:
+    """(행동, 정확도, 판단 불가 이유)"""
+    behavior = node.get("behavior") or {}
+    features = behavior.get("features") or []
+    if behavior.get("status") != "ok" or not features:
+        return "unknown", None, behavior.get("status") or "no_behavior"
+    mean = sum(features) / len(features)
+    if mean >= 0.5:
+        return "standing", 0.8, None
+    if mean >= -0.5:
+        return "sitting", 0.7, None
+    return "lying", 0.75, None
+
+
 def decide(combined: dict) -> dict:
-    best_room, best_score = None, None
+    best_room, best_score, best_node = None, None, None
+    statuses = []
     for room, entry in combined.get("locations", {}).items():
         node = (entry or {}).get("node") or {}
+        statuses.append(node.get("status") or "no_csi")
         features = node.get("features") or []
         if node.get("status") != "ok" or not features:
             continue
         score = sum(features) / len(features)
         if best_score is None or score > best_score:
-            best_room, best_score = room, score
+            best_room, best_score, best_node = room, score, node
 
-    present = best_score is not None and best_score >= THRESHOLD
-    return {
+    result = {
         "resultId": f"sim-{uuid.uuid4().hex[:12]}",
         "observedAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-        "room": best_room if present else None,
-        "present": present,
-        "confidence": None,
-        "activity": None,
         "modelVersion": "fusion-sim",
         "validSec": 5,
         "combinedSeq": combined.get("seq"),
     }
+    if best_score is None:
+        # 판단할 노드가 없음: 재실 · 행동 모두 unknown
+        reason = next((s for s in statuses if s != "ok"), "no_csi")
+        return {**result, "room": None, "present": None, "confidence": None, "presenceReason": reason,
+                "activity": "unknown", "activityConfidence": None, "activityReason": reason}
+
+    present = best_score >= THRESHOLD
+    if present:
+        activity, activity_conf, activity_reason = _activity(best_node)
+    else:
+        activity, activity_conf, activity_reason = "unknown", None, "not_present"
+    return {**result, "room": best_room if present else None, "present": present, "confidence": 0.9,
+            "presenceReason": None, "activity": activity, "activityConfidence": activity_conf,
+            "activityReason": activity_reason}
 
 
 def main() -> None:
@@ -80,8 +106,8 @@ def main() -> None:
             return
         result = decide(combined)
         c.publish(RESULT_TOPIC, json.dumps(result, ensure_ascii=False), qos=1)
-        where = result["room"] or "없음"
-        print(f"[가짜 최종 판단] seq={combined.get('seq')} 위치={where}")
+        where = result["room"] or ("판단 불가" if result["present"] is None else "없음")
+        print(f"[가짜 최종 판단] seq={combined.get('seq')} 위치={where} 행동={result['activity']}")
 
     client.on_connect = on_connect
     client.on_message = on_message

@@ -37,7 +37,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
   `powerSaving`: 절전(`power_saving`)으로 낮춘 전등이면 `true`
 - `control_state`: 마지막으로 상태를 바꾼 주체. `user`(사용자), `homevis`(HomeVIS 자동 제어), 기록 없으면 `null`
 
-### 최종 재실 판단 결과 조회: `GET /api/v1/sensing/results/latest`, `GET /api/v1/sensing/results` (v0.4)
+### 최종 재실 판단 결과 조회: `GET /api/v1/sensing/results/latest`, `GET /api/v1/sensing/results` (v0.4, v0.10: 재실 + 행동추론)
 
 재실 판단 담당이 MQTT(`home/edge/result`)로 보낸 최종 결과를 서버가 저장해 두고, 판정 엔진은 HTTP로 꺼내 씁니다.
 서버는 값을 판단하지 않고 저장된 그대로 돌려줍니다. 결과가 오래됐는지는 `observedAt`, `validSec`으로 판정 엔진이 판단합니다.
@@ -46,18 +46,28 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
 
 ```json
 {
-  "resultId": "res-20261017-000123",
-  "observedAt": "2026-10-17T12:00:02+00:00",
-  "savedAt": "2026-10-17T12:00:02.150+00:00",
+  "resultId": "res-20261027-000123",
+  "observedAt": "2026-10-27T21:00:02+09:00",
+  "savedAt": "2026-10-27T12:00:02.150+00:00",
   "room": "kitchen",
   "present": true,
   "confidence": 0.91,
+  "presenceReason": null,
   "activity": "standing",
   "activityConfidence": 0.80,
-  "modelVersion": "fusion-0.1",
+  "activityReason": null,
+  "modelVersion": "fusion-0.2",
   "validSec": 5
 }
 ```
+
+| 구분 | 필드 | 판단 불가일 때 |
+| --- | --- | --- |
+| 재실 | `room`, `present`, `confidence` | `present: null`, `room: null`, `presenceReason`에 이유 |
+| 행동 (v0.10) | `activity`, `activityConfidence` | `activity: "unknown"`, `activityReason`에 이유 |
+
+- 재실과 행동은 따로 판단됩니다. 재실은 `true`인데 행동만 `unknown`일 수 있습니다.
+- 행동 이름 · 이유 값 목록은 재실 판단 담당(지우님) 모델이 정합니다 (`docs/EDGE-MQTT.md` 6장).
 
 `GET /api/v1/sensing/results?since=2026-10-17T11:40:00%2B00:00&until=...&limit=500`
 
@@ -66,7 +76,7 @@ Swagger(`/docs`)의 **AI 중앙 제어**, **가전 제어**, **음성 명령** �
 - 서버 메모리의 최근 5000건(1초마다면 약 1시간 20분) 안에서 찾습니다.
 - 주소에 넣을 때 `+`는 `%2B`로 바꾸거나, `Z`(UTC)로 끝나는 시각을 쓰세요.
 
-결과 형식과 MQTT 규칙은 `docs/EDGE-MQTT.md` 7장 참고.
+결과 형식과 MQTT 규칙은 `docs/EDGE-MQTT.md` 6장 참고.
 
 ### 판단 결과 전송: `POST /api/v1/ai/decisions`
 

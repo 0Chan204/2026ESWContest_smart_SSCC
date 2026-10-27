@@ -747,11 +747,14 @@ class SensingResultIn(BaseModel):
 
     resultId: Optional[str] = Field(default=None, min_length=1, max_length=100, description="없으면 서버가 만듦. 같은 id는 한 번만 저장")
     observedAt: str = Field(..., description="판단 기준 시각 (ISO 8601, 시간대 포함)")
-    room: Optional[str] = Field(default=None, description="최종 위치 (room / kitchen / toilet). 아무도 없으면 null")
-    present: Optional[bool] = None
-    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    activity: Optional[str] = None
-    activityConfidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # v0.10: 재실 + 행동추론. 재실 판단 불가면 present=null + presenceReason, 행동 판단 불가면 activity="unknown" + activityReason
+    room: Optional[str] = Field(default=None, description="최종 위치 (room / kitchen / toilet). 아무도 없거나 판단 불가면 null")
+    present: Optional[bool] = Field(default=None, description="사람이 있는지. 판단할 수 없으면 null (presenceReason에 이유)")
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="재실 정확도 0~1")
+    presenceReason: Optional[str] = Field(default=None, max_length=100, description="(v0.10) 재실 판단 불가 이유 (예: warming_up, gap, no_csi, config_mismatch, low_confidence)")
+    activity: Optional[str] = Field(default=None, max_length=50, description="행동 결과 (예: standing, lying). 판단할 수 없으면 \"unknown\"")
+    activityConfidence: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="행동 정확도 0~1")
+    activityReason: Optional[str] = Field(default=None, max_length=100, description="(v0.10) 행동 판단 불가 이유 (activity가 unknown일 때)")
     modelVersion: Optional[str] = None
     validSec: Optional[int] = Field(default=None, ge=0, description="결과를 유효하게 볼 시간(초). 판단은 받는 쪽에서 함")
 
