@@ -1,0 +1,53 @@
+{
+  "processing_config": {
+    "fs": 20.0,
+    "window_sec": 6.0,
+    "step_sec": 1.0,
+    "max_gap_sec": 1.0,
+    "hampel_k": 3,
+    "hampel_sigmas": 5.0,
+    "normalize_agc": true,
+    "edge_sec": 1.5,
+    "margin_sec": 1.0,
+    "bands": [
+      0.3,
+      1.5,
+      4.0,
+      7.0
+    ]
+  },
+  "cfg_hash": "f6ef98a2",
+  "feature_names": [
+    "e_peak",
+    "e_mean",
+    "e_p90",
+    "e_median",
+    "e_peak_ratio",
+    "e_peak_edge",
+    "seg_sorted_0",
+    "seg_sorted_1",
+    "seg_sorted_2",
+    "seg_sorted_3",
+    "seg_sorted_4",
+    "seg_sorted_5",
+    "e_pre",
+    "e_post",
+    "e_post_pre",
+    "shift_mag",
+    "shift_g0",
+    "shift_g1",
+    "shift_g2",
+    "shift_g3",
+    "pc1_logstd",
+    "pc1_ratio",
+    "pc2_logstd",
+    "imp_max",
+    "imp_ratio",
+    "imp_kurt",
+    "band_low",
+    "band_mid",
+    "band_high",
+    "rssi_std",
+    "rssi_range"
+  ]
+}
