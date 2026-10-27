@@ -5,6 +5,8 @@ import '../models/types.dart';
 import 'format.dart';
 import 'labels.dart';
 
+export 'phone.dart' show formatPhone, maskPhone;
+
 const fanSpeedLabel = {1: '약', 2: '중', 3: '강'};
 
 class DeviceSummary {
@@ -255,18 +257,4 @@ int rssiBars(double? rssi) {
   if (rssi >= -67) return 3;
   if (rssi >= -75) return 2;
   return 1;
-}
-
-// ── 전화번호 (화면 표시용 마스킹: 공용 화면) ───────────────────────────────
-String formatPhone(String digits) {
-  if (digits.length == 11) return '${digits.substring(0, 3)}-${digits.substring(3, 7)}-${digits.substring(7)}';
-  if (digits.length == 10) return '${digits.substring(0, 3)}-${digits.substring(3, 6)}-${digits.substring(6)}';
-  return digits;
-}
-
-String maskPhone(String digits) {
-  final f = formatPhone(digits);
-  final parts = f.split('-');
-  if (parts.length == 3) return '${parts[0]}-${'*' * parts[1].length}-${parts[2]}';
-  return f.replaceAllMapped(RegExp(r'\d(?=\d{4})'), (_) => '*');
 }

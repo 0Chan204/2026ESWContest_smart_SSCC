@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,7 +10,10 @@ import '../../ui/widgets.dart';
 import '../../util/format.dart';
 import 'voice_controller.dart';
 
-/// 음성 명령 패널 (React VoicePanel 자리 — 레일 옆 왼쪽 아래). 마이크 버튼이 없어 음성 상태가 오면 저절로 뜬다.
+/// 듣는 중에 보여줄 예시 (React EXAMPLE_COMMANDS)
+const voiceExamples = ['욕실 조명 켜줘', '환풍기 세게', '오늘 날씨 어때'];
+
+/// 음성 명령 패널 (React VoicePanel 자리 — 레일의 마이크 버튼 옆 왼쪽 아래). 음성 상태가 오면 저절로 뜬다.
 class VoicePanelLayer extends StatelessWidget {
   const VoicePanelLayer({super.key});
 
@@ -38,14 +43,17 @@ class VoicePanel extends StatelessWidget {
     final text = switch (v.phase) {
       VoicePhase.completed => v.reply,
       VoicePhase.error => v.errorText,
-      VoicePhase.processing => v.progress,
+      VoicePhase.processing || VoicePhase.starting || VoicePhase.listening || VoicePhase.recognizing => v.progress,
       VoicePhase.confirm || VoicePhase.idle => '',
     };
+    final listening = v.phase == VoicePhase.listening;
     final micColor = v.phase == VoicePhase.error
         ? c.danger
         : v.phase == VoicePhase.completed
             ? c.ok
-            : c.ink3;
+            : v.phase == VoicePhase.recognizing || v.phase == VoicePhase.starting
+                ? c.brandInk
+                : c.ink3;
     return Semantics(
       label: '음성 명령',
       liveRegion: true,
@@ -60,7 +68,10 @@ class VoicePanel extends StatelessWidget {
               padding: const EdgeInsets.only(left: 20, right: 6, top: 6),
               child: Row(
                 children: [
-                  Expanded(child: Text('음성 명령', style: ts(13, weight: w600, color: c.ink3))),
+                  Expanded(
+                    child: Text(v.source == 'wakeword' ? '음성 명령 · 호출어' : '음성 명령',
+                        style: ts(13, weight: w600, color: c.ink3), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
                   Pressable(
                     onTap: v.close,
                     semanticLabel: '닫기',
@@ -88,7 +99,10 @@ class VoicePanel extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Icon(Ic.mic, size: 32, color: micColor),
+                      if (listening)
+                        const LevelBars(size: 40)
+                      else
+                        SizedBox(width: 40, height: 40, child: Center(child: Icon(Ic.mic, size: 32, color: micColor))),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
@@ -99,13 +113,31 @@ class VoicePanel extends StatelessWidget {
                               Text('“${v.heard}”', style: ts(big ? 20 : 17, weight: w600, color: c.ink, height: 1.35)),
                             if (text.isNotEmpty)
                               Text(text,
-                                  style: ts(big ? 18 : 15, color: v.phase == VoicePhase.completed ? c.ink : c.ink2, height: 1.45)),
+                                  style: listening && v.heard.isEmpty
+                                      ? ts(big ? 22 : 19, weight: w600, color: c.ink, height: 1.35)
+                                      : ts(big ? 18 : 15, color: v.phase == VoicePhase.completed ? c.ink : c.ink2, height: 1.45)),
                           ],
                         ),
                       ),
                     ],
                   ),
                   if (v.phase == VoicePhase.confirm && v.confirmText != null) _Confirm(voice: v, big: big),
+                  if (listening)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final e in voiceExamples)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(color: c.fill, borderRadius: BorderRadius.circular(999)),
+                              child: Text(e, style: ts(big ? 15 : 13, color: c.ink2)),
+                            ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -166,6 +198,53 @@ class _Confirm extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 듣는 중 표시: 높이가 오르내리는 막대 네 개 (React .wave)
+class LevelBars extends StatefulWidget {
+  const LevelBars({super.key, required this.size});
+  final double size;
+  @override
+  State<LevelBars> createState() => _LevelBarsState();
+}
+
+class _LevelBarsState extends State<LevelBars> with SingleTickerProviderStateMixin {
+  late final AnimationController _a = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat();
+
+  @override
+  void dispose() {
+    _a.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.hv;
+    final s = widget.size;
+    return Semantics(
+      label: '듣는 중',
+      child: SizedBox(
+        width: s,
+        height: s,
+        child: AnimatedBuilder(
+          animation: _a,
+          builder: (context, _) => Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < 4; i++)
+                Container(
+                  width: 4,
+                  margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                  // 막대마다 조금씩 늦게 (0.35 ~ 1.0 높이)
+                  height: s * 0.7 * (0.35 + 0.65 * (0.5 + 0.5 * math.sin(2 * math.pi * (_a.value - i * 0.18)))),
+                  decoration: BoxDecoration(color: c.brand, borderRadius: BorderRadius.circular(2)),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }

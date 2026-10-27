@@ -11,3 +11,14 @@ class SilentSpeaker implements Speaker {
   @override
   void speak(String? text) {}
 }
+
+/// 설정의 '위험 알림 음성 안내' 가 꺼져 있으면 읽지 않는다 (모든 안내가 이 한 곳을 지난다)
+class GatedSpeaker implements Speaker {
+  const GatedSpeaker(this.inner, this.enabled);
+  final Speaker inner;
+  final bool Function() enabled;
+  @override
+  void speak(String? text) {
+    if (enabled()) inner.speak(text);
+  }
+}

@@ -14,6 +14,7 @@ import '../../ui/widgets.dart';
 import '../../util/device_text.dart';
 import '../../util/labels.dart';
 import '../devices/device_widgets.dart';
+import '../settings/contact_sheet.dart';
 import 'home_map.dart';
 import 'location_sheet.dart';
 
@@ -138,7 +139,8 @@ class _StatusCard extends StatelessWidget {
                 value: guardian?.name ?? '등록 필요',
                 risk: guardian != null ? Risk.normal : Risk.warning,
                 neutral: guardian != null,
-                onTap: () => nav.go(AppTab.settings, section: 'contacts'),
+                // 등록 전이면 바로 등록 시트, 등록돼 있으면 설정 > 비상 연락처
+                onTap: () => guardian == null ? openContactSheet(context, ContactKind.guardian) : nav.go(AppTab.settings, section: 'contacts'),
               ),
             ],
           ),
@@ -395,7 +397,8 @@ class _HomeElderly extends StatelessWidget {
                           state: guardian?.name ?? '등록해 주세요',
                           on: guardian != null,
                           tone: guardian != null ? null : TileTone.warn,
-                          onPress: () => nav.go(AppTab.settings, section: 'contacts'),
+                          onPress: () =>
+                              guardian == null ? openContactSheet(context, ContactKind.guardian) : nav.go(AppTab.settings, section: 'contacts'),
                         ),
                       ),
                     ],

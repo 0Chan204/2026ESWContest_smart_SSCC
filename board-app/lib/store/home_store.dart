@@ -147,6 +147,14 @@ class HomeStore extends ChangeNotifier {
     }
   }
 
+  /// 연락처 등록 · 변경 (PUT /guardian · /user). 성공하면 화면 상태를 바꾸고 확인 문자를 보냈는지 돌려준다.
+  /// 실패하면 ApiError 를 그대로 던진다 (시트에 짧게 보여주고 시트는 그대로)
+  Future<bool> saveContact(ContactKind kind, Contact contact) async {
+    final (saved, sent) = await source.saveContact(kind, contact);
+    _set(_state.copyWith(contacts: _state.contacts.withContact(kind, saved)));
+    return sent;
+  }
+
   void dismissNotice() => _set(_state.copyWith(notice: () => null));
 
   void setFallAlert(bool open) => _set(_state.copyWith(fallAlertOpen: open));

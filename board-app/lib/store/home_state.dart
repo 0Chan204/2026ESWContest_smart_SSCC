@@ -244,6 +244,7 @@ HomeState reduceMessage(HomeState state, StreamMessage m) {
       final next = [...state.sensing, sample];
       return state.copyWith(sensing: next.length > sensingKeep ? next.sublist(next.length - sensingKeep) : next);
     case VoiceMsg():
+    case VoiceSettingsMsg():
     case CommandFailedMsg():
       // 음성 패널 · 토스트가 직접 받는다 (화면 상태에는 두지 않음)
       return state;

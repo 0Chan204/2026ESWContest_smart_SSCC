@@ -31,6 +31,8 @@ Map<String, dynamic> snapshotJson({bool stoveOn = false}) => {
         {'device': 'stove', 'deviceId': 'induction-01', 'room': 'kitchen', 'online': true, 'is_on': stoveOn},
         {'device': 'light', 'deviceId': 'light-01', 'room': 'room', 'online': true, 'is_on': true, 'current_state': {'power': 'on', 'brightness': 100}, 'control_state': 'user'},
         {'device': 'light', 'deviceId': 'light-00', 'room': 'toilet', 'online': true, 'is_on': false},
+        // 백엔드 v0.8: 주방 전등
+        {'device': 'light', 'deviceId': 'light-02', 'room': 'kitchen', 'online': true, 'is_on': false, 'current_state': {'power': 'off'}},
         {'device': 'water_purifier', 'deviceId': 'water-01', 'room': 'kitchen', 'online': true, 'is_on': false, 'current_state': {'lastDispensedMl': 250}, 'control_state': 'homevis', 'updatedAt': '2026-10-26T07:10:00Z'},
         {'device': 'fan', 'deviceId': 'fan-01', 'room': 'kitchen', 'online': true, 'is_on': true, 'current_state': {'power': 'on', 'speed': 'high'}, 'control_state': 'homevis'},
         {'device': 'fan', 'deviceId': 'fan-02', 'room': 'toilet', 'online': false, 'is_on': false},

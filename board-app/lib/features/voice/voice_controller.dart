@@ -1,13 +1,18 @@
-// 음성 명령 진행 상황 (React useVoice 의 백엔드 경로만). 보드에는 아직 음성 인식(STT)이 없어
-// 화면이 명령을 보내지 않는다 — 다른 입력 장치가 POST /voice/commands 로 보낸 명령의
-// WS voice.status 를 받아 패널에 보여주고, 확인이 필요하면 여기서 실행/취소를 보낸다.
+// 음성 명령 진행 상황 + 보드 마이크 (React useVoice 의 백엔드 경로).
+// 녹음 · 음성 인식은 백엔드(보드 음성 서비스)가 한다 — 화면은 시작/취소만 보내고 WS voice.status 를 보여준다.
+// 경로 · 형식은 data/voice_api.dart (보드 마이크 부분은 제안 계약, README 참고).
 //
+//   마이크 버튼      → POST /voice/listen → 202 { voiceId } (409 = 이미 듣는 중 → 패널만)
+//                     없는 기능(404 · 405) · 실패 → "지금은 음성 명령을 쓸 수 없어요" 잠깐
+//   listening        → "듣고 있어요" + 움직이는 막대
+//   recognizing      → "알아듣는 중…" + 들린 글자(text)
 //   received · thinking   → 진행 글자
-//   confirm_required      → confirmText + confirmDeadline 까지 남은 시간 → POST /voice/commands/{id}/confirm
+//   confirm_required → confirmText + 남은 시간 → POST /voice/commands/{id}/confirm (409 = 다른 화면이 이미 답함 → 조용히 닫기)
 //   executed · answered   → answer
 //   cancelled · timeout   → "잘 듣지 못했어요"
-//   failed                → "지금은 음성 명령을 쓸 수 없어요"
-// 끝나면 잠시 뒤 저절로 닫힌다. 언제나 가장 최근 voiceId 하나만 보여준다.
+//   failed           → reason 에 따라 (마이크 없음 · 말소리 없음) 아니면 "지금은 음성 명령을 쓸 수 없어요"
+// 듣는 중에 패널을 닫으면 POST /voice/listen/cancel (오류 무시). 끝나면 잠시 뒤 저절로 닫힌다.
+// 호출어(source: wakeword)로 시작한 명령도 voice.status 가 오면 패널이 저절로 열린다.
 
 import 'dart:async';
 import 'dart:math' as math;
@@ -20,41 +25,38 @@ import '../../models/types.dart';
 import '../../store/home_store.dart';
 import '../../store/speaker.dart';
 
-enum VoicePhase { idle, processing, confirm, completed, error }
+enum VoicePhase { idle, starting, listening, recognizing, processing, confirm, completed, error }
 
 const voiceUnavailable = '지금은 음성 명령을 쓸 수 없어요';
 const voiceMisheard = '잘 듣지 못했어요';
+const voiceNoMic = '마이크를 찾을 수 없어요';
+const voiceNoSpeech = '말씀이 들리지 않았어요';
 const voiceHide = Duration(milliseconds: 3200);
 
 /// 진행 중 단계에서 서버 응답이 끝내 오지 않을 때
 const voiceSafety = Duration(seconds: 20);
 
-/// 음성 명령 확인 · 취소 창구 (테스트에서 바꿔 끼운다)
-abstract class VoiceConfirmer {
-  Future<void> confirm(String voiceId, bool approved);
-}
-
-class _SourceConfirmer implements VoiceConfirmer {
-  _SourceConfirmer(this.service);
-  final VoiceService service;
-  @override
-  Future<void> confirm(String voiceId, bool approved) => service.confirm(voiceId, approved);
-}
+/// failed 의 reason → 화면 문장
+String voiceFailedText(String? reason) => switch (reason) {
+      'mic_unavailable' => voiceNoMic,
+      'no_speech' => voiceNoSpeech,
+      _ => voiceUnavailable,
+    };
 
 class VoiceController extends ChangeNotifier {
-  VoiceController({required HomeStore store, required Speaker speaker, VoiceConfirmer? confirmer})
+  VoiceController({required HomeStore store, required Speaker speaker, VoiceApi? api})
       : _speaker = speaker,
-        _confirmer = confirmer ?? _SourceConfirmer(store.source.voice) {
+        _api = api ?? store.source.voice {
     _unsubscribe = store.subscribeStream(_onMessage);
   }
 
   /// 스토어 없이 (테스트)
-  VoiceController.detached({required Speaker speaker, required VoiceConfirmer confirmer})
+  VoiceController.detached({required Speaker speaker, required VoiceApi api})
       : _speaker = speaker,
-        _confirmer = confirmer;
+        _api = api;
 
   final Speaker _speaker;
-  final VoiceConfirmer _confirmer;
+  final VoiceApi _api;
   void Function()? _unsubscribe;
   final List<Timer> _timers = [];
   bool _disposed = false;
@@ -65,6 +67,9 @@ class VoiceController extends ChangeNotifier {
   /// 지금 보여주는 음성 명령
   String? voiceId;
 
+  /// 사용자가 닫은 명령 (늦게 온 상태가 패널을 다시 열지 않게, 최근 것만)
+  final List<String> _closed = [];
+
   /// 인식한 문장 (서버가 시작어를 뗀 것)
   String heard = '';
   String progress = '';
@@ -72,7 +77,27 @@ class VoiceController extends ChangeNotifier {
   String errorText = voiceMisheard;
   String? confirmText;
   String? confirmDeadline;
+
+  /// 이 명령을 시작한 곳 (button · wakeword …)
+  String? source;
   bool _confirming = false;
+
+  // 마이크 버튼 → 듣기 시작 요청
+  bool _starting = false;
+  bool _cancelWhenStarted = false;
+  int _listenSeq = 0;
+
+  // ── 보드 음성 설정 (GET · PUT /voice/settings, WS voice.settings) ─────────
+  /// null = 아직 모름, false = 이 백엔드에는 없음, true = 있음
+  bool? settingsSupported;
+  bool wakeWord = false;
+
+  /// 호출어를 기다리며 마이크가 켜져 있음 (레일에 '호출어 대기' 표시)
+  bool standby = false;
+  bool settingsBusy = false;
+  bool _settingsLoading = false;
+
+  bool get micActive => open && (phase == VoicePhase.starting || phase == VoicePhase.listening || phase == VoicePhase.recognizing);
 
   void _later(Duration d, void Function() fn) => _timers.add(Timer(d, fn));
 
@@ -89,30 +114,49 @@ class VoiceController extends ChangeNotifier {
 
   void _onMessage(StreamMessage m) {
     if (m is VoiceMsg) apply(m.record);
+    if (m is VoiceSettingsMsg) _applySettings(m.settings);
+  }
+
+  void _applySettings(VoiceSettings s) {
+    if (_disposed) return;
+    settingsSupported = true;
+    wakeWord = s.wakeWord;
+    standby = s.standby;
+    _notify();
+  }
+
+  void _reset(String? id) {
+    _clearTimers();
+    voiceId = id;
+    heard = '';
+    reply = '';
+    progress = '';
+    source = null;
+    confirmText = null;
+    confirmDeadline = null;
+    _confirming = false;
   }
 
   /// voice.status 하나 반영
   void apply(VoiceRecord rec) {
-    if (_disposed) return;
-    // 사용자가 닫은 명령의 늦은 상태는 무시한다
-    if (rec.voiceId == voiceId && !open) return;
+    if (_disposed || _closed.contains(rec.voiceId)) return;
     if (rec.voiceId != voiceId) {
       // 새 명령이 오면 그 명령으로 바꿔 보여준다 (앞 명령의 확인 창은 서버가 마감 뒤 취소)
-      _clearTimers();
-      voiceId = rec.voiceId;
-      heard = '';
-      reply = '';
-      confirmText = null;
-      confirmDeadline = null;
-      _confirming = false;
+      _reset(rec.voiceId);
       open = true;
     }
+    open = true;
+    if (rec.source != null) source = rec.source;
     if (rec.text != null) heard = rec.text!;
     switch (rec.status) {
+      case VoiceStatus.listening:
+        _listening();
+      case VoiceStatus.recognizing:
+        _step(VoicePhase.recognizing, '알아듣는 중…');
       case VoiceStatus.received:
-        _processing('알아들었어요');
+        _step(VoicePhase.processing, '알아들었어요');
       case VoiceStatus.thinking:
-        _processing('확인하고 있어요');
+        _step(VoicePhase.processing, '확인하고 있어요');
       case VoiceStatus.confirmRequired:
         _clearTimers();
         _confirming = true;
@@ -124,7 +168,10 @@ class VoiceController extends ChangeNotifier {
         final wait = left == null ? const Duration(seconds: 35) : Duration(milliseconds: math.max(0, left.inMilliseconds) + 5000);
         final id = voiceId;
         _later(wait, () {
-          if (voiceId == id && phase == VoicePhase.confirm) _fail(voiceMisheard);
+          if (voiceId == id && phase == VoicePhase.confirm) {
+            _fail(voiceMisheard);
+            _notify();
+          }
         });
       case VoiceStatus.executed:
         _finish(rec.answer ?? '실행했어요.');
@@ -134,18 +181,21 @@ class VoiceController extends ChangeNotifier {
       case VoiceStatus.timeout:
         _fail(voiceMisheard);
       case VoiceStatus.failed:
-        _fail(voiceUnavailable);
+        _fail(voiceFailedText(rec.reason));
     }
     _notify();
   }
 
-  void _processing(String text) {
-    phase = VoicePhase.processing;
+  void _listening() => _step(VoicePhase.listening, '듣고 있어요');
+
+  /// 진행 중 단계. 서버 소식이 끝내 없으면 닫는다
+  void _step(VoicePhase p, String text) {
+    phase = p;
     progress = text;
     _clearTimers();
     final id = voiceId;
     _later(voiceSafety, () {
-      if (voiceId == id && phase == VoicePhase.processing) {
+      if (voiceId == id && phase == p) {
         _fail(voiceMisheard);
         _notify();
       }
@@ -172,15 +222,69 @@ class VoiceController extends ChangeNotifier {
     _later(voiceHide, close);
   }
 
+  // ── 마이크 버튼 ──────────────────────────────────────────────────────────
+  /// 듣는 중이면 멈추고, 아니면 듣기 시작
+  Future<void> toggleListen() async {
+    if (micActive) {
+      close();
+      return;
+    }
+    await startListening();
+  }
+
+  /// POST /voice/listen. 실패 · 없는 기능이면 잠깐 "쓸 수 없어요" (다시 시도하지 않는다)
+  Future<void> startListening() async {
+    if (_disposed || _starting) return;
+    final seq = ++_listenSeq;
+    _reset(null);
+    _starting = true;
+    _cancelWhenStarted = false;
+    open = true;
+    phase = VoicePhase.starting;
+    progress = '마이크를 켜고 있어요';
+    _notify();
+    try {
+      final r = await _api.listen();
+      if (_disposed) return;
+      final id = r.voiceId;
+      if (_cancelWhenStarted || seq != _listenSeq) {
+        // 응답 전에 닫았다 → 이 화면이 시작한 것만 취소
+        if (id != null && !r.alreadyListening) _cancelQuietly(id);
+        return;
+      }
+      if (phase == VoicePhase.starting) {
+        voiceId = id;
+        _listening();
+      } else {
+        // WS voice.status 가 먼저 와서 이미 바뀌었다
+        voiceId ??= id;
+      }
+    } catch (_) {
+      if (_disposed || _cancelWhenStarted || seq != _listenSeq) return;
+      if (phase == VoicePhase.starting) _fail(voiceUnavailable);
+    } finally {
+      if (seq == _listenSeq) _starting = false;
+      _notify();
+    }
+  }
+
+  void _cancelQuietly(String id) {
+    _api.cancelListen(id).catchError((Object _) {/* 무시: 서버가 시간이 지나면 끝낸다 */});
+  }
+
   /// 실행 (확인 창)
   void approve() {
     final id = voiceId;
     if (id == null || !_confirming) return;
     _confirming = false;
     confirmText = null;
-    _processing('실행하고 있어요');
-    _confirmer.confirm(id, true).catchError((Object _) {
-      if (voiceId == id) {
+    _step(VoicePhase.processing, '실행하고 있어요');
+    _api.confirm(id, true).catchError((Object e) {
+      if (voiceId != id) return;
+      if (e is ApiError && e.status == 409) {
+        // 다른 화면이 이미 답했다 → 오류 없이 닫는다
+        close();
+      } else {
         _fail(voiceUnavailable);
         _notify();
       }
@@ -191,12 +295,18 @@ class VoiceController extends ChangeNotifier {
   /// 취소 (확인 창) = 닫기
   void cancel() => close();
 
-  /// 닫기. 확인 창이 떠 있는 채로 닫으면 실행하지 않도록 취소를 보낸다
+  /// 닫기. 확인 창이면 취소를, 듣는 중이면 듣기 취소를 보낸다
   void close() {
     _clearTimers();
     final id = voiceId;
     if (id != null && _confirming) {
-      _confirmer.confirm(id, false).catchError((Object _) {/* 서버가 마감 뒤 자동 취소 */});
+      _api.confirm(id, false).catchError((Object _) {/* 서버가 마감 뒤 자동 취소 · 409 = 이미 답함 */});
+    }
+    if (_starting) _cancelWhenStarted = true;
+    if (id != null && (phase == VoicePhase.listening || phase == VoicePhase.recognizing)) _cancelQuietly(id);
+    if (id != null) {
+      _closed.add(id);
+      if (_closed.length > 20) _closed.removeAt(0);
     }
     _confirming = false;
     open = false;
@@ -204,10 +314,58 @@ class VoiceController extends ChangeNotifier {
     heard = '';
     reply = '';
     progress = '';
+    source = null;
     confirmText = null;
     confirmDeadline = null;
-    // voiceId 는 남겨 둔다 — 닫은 명령의 늦은 상태가 패널을 다시 열지 않게
     _notify();
+  }
+
+  // ── 음성 설정 ────────────────────────────────────────────────────────────
+  /// 앱 시작 · 설정 화면을 열 때. 없는 기능이면 settingsSupported = false (다시 묻지 않는 건 화면 쪽 몫)
+  Future<void> loadSettings() async {
+    if (_disposed || _settingsLoading) return;
+    _settingsLoading = true;
+    try {
+      final s = await _api.loadSettings();
+      if (_disposed) return;
+      if (s == null) {
+        settingsSupported = false;
+        wakeWord = false;
+        standby = false;
+      } else {
+        settingsSupported = true;
+        wakeWord = s.wakeWord;
+        standby = s.standby;
+      }
+    } catch (_) {
+      // 연결 문제: 지난 값 그대로
+    } finally {
+      _settingsLoading = false;
+      _notify();
+    }
+  }
+
+  /// 호출어 켜기 · 끄기. 실패하면 되돌리고 false
+  Future<bool> setWakeWord(bool on) async {
+    if (_disposed || settingsSupported != true || settingsBusy) return false;
+    final before = (wakeWord, standby);
+    wakeWord = on;
+    settingsBusy = true;
+    _notify();
+    try {
+      final s = await _api.saveSettings(wakeWord: on);
+      wakeWord = s.wakeWord;
+      standby = s.standby;
+      return true;
+    } catch (e) {
+      wakeWord = before.$1;
+      standby = before.$2;
+      if (isMissingEndpoint(e)) settingsSupported = false;
+      return false;
+    } finally {
+      settingsBusy = false;
+      _notify();
+    }
   }
 
   @override

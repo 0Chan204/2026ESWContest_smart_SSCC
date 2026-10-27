@@ -534,7 +534,14 @@ class Contacts {
   const Contacts({this.user, this.guardian});
   final Contact? user;
   final Contact? guardian;
+
+  Contact? of(ContactKind kind) => kind == ContactKind.guardian ? guardian : user;
+  Contacts withContact(ContactKind kind, Contact c) =>
+      kind == ContactKind.guardian ? Contacts(user: user, guardian: c) : Contacts(user: c, guardian: guardian);
 }
+
+/// 연락처 종류: 보호자 (PUT /guardian) · 본인 (PUT /user)
+enum ContactKind { guardian, user }
 
 class KitchenPolicy {
   const KitchenPolicy({
@@ -609,8 +616,13 @@ class Weather {
   final String text;
 }
 
-// ── 음성 명령 (docs/VOICE.md) ─────────────────────────────────────────────
+// ── 음성 명령 (docs/VOICE.md + 보드 마이크 제안 계약, README 참고) ───────────────
 enum VoiceStatus {
+  /// 보드 마이크가 듣는 중 (제안)
+  listening('listening'),
+
+  /// 들은 소리를 글자로 바꾸는 중 (제안, text 가 있으면 함께)
+  recognizing('recognizing'),
   received('received'),
   thinking('thinking'),
   confirmRequired('confirm_required'),
@@ -633,15 +645,41 @@ enum VoiceStatus {
 
 /// voice.status 의 data 중 화면에 필요한 것만
 class VoiceRecord {
-  const VoiceRecord({required this.voiceId, required this.status, this.text, this.answer, this.confirmText, this.confirmDeadline});
+  const VoiceRecord({
+    required this.voiceId,
+    required this.status,
+    this.text,
+    this.answer,
+    this.confirmText,
+    this.confirmDeadline,
+    this.source,
+    this.reason,
+  });
   final String voiceId;
   final VoiceStatus status;
+
+  /// 시작한 곳: button (마이크 버튼) · wakeword (호출어) … (제안)
+  final String? source;
+
+  /// failed 의 이유: mic_unavailable · no_speech … (제안)
+  final String? reason;
 
   /// 인식한 문장 (서버가 시작어를 뗀 것)
   final String? text;
   final String? answer;
   final String? confirmText;
   final String? confirmDeadline;
+}
+
+/// 보드 음성 설정 (GET · PUT /voice/settings, WS voice.settings — 제안)
+class VoiceSettings {
+  const VoiceSettings({required this.wakeWord, required this.standby});
+
+  /// 호출어("홈비스")로 부르기
+  final bool wakeWord;
+
+  /// 지금 호출어를 기다리며 마이크가 켜져 있는지
+  final bool standby;
 }
 
 /// 기기 제어 요청 (React DeviceControl)

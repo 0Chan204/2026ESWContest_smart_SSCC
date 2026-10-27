@@ -215,6 +215,9 @@ class BackendTranslator {
       case 'voice.status':
         final r = mapVoice(data);
         return r == null ? const [] : [VoiceMsg(r)];
+      case 'voice.settings':
+        final v = mapVoiceSettings(data);
+        return v == null ? const [] : [VoiceSettingsMsg(v)];
       case 'command.result':
         final status = str(data['status']);
         final result = str(data['result']);

@@ -35,7 +35,7 @@ void main() {
   test('스냅샷 반영', () {
     final s = loaded();
     expect(s.ready, isTrue);
-    expect(s.devices.length, 7);
+    expect(s.devices.length, 8); // v0.8: 주방 전등 light-02 포함
     expect(s.induction!.burner.level, 5);
     expect(s.session!.sessionId, 'sess-1');
     expect(s.kitchenPhase, KitchenPhase.normal);

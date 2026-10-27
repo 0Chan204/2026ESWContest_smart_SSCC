@@ -9,7 +9,8 @@
 //   loadSensingNodes GET  /sensing/combined
 //   loadWeather      GET  /weather
 //   submitFeedback   POST /safety-events/{id}/feedback
-//   voice            POST /voice/commands · /voice/commands/{voiceId}/confirm
+//   saveContact      PUT  /guardian · /user  { name, phone }  (서버가 SMS 키를 가지고 있으면 확인 문자 발송)
+//   voice            voice_api.dart (POST /voice/commands · confirm + 보드 마이크 제안 계약)
 
 import 'dart:async';
 import 'dart:convert';
@@ -22,6 +23,9 @@ import '../models/types.dart';
 import 'parse.dart';
 import 'stream_message.dart';
 import 'translator.dart';
+import 'voice_api.dart';
+
+export 'voice_api.dart';
 
 const _devicePoll = Duration(seconds: 15);
 const _requestTimeout = Duration(seconds: 10);
@@ -32,9 +36,12 @@ const nodeStaleSec = 10;
 
 /// 화면에 그대로 보여줘도 되는 오류 문장 (서버 응답 본문은 노출하지 않는다)
 class ApiError implements Exception {
-  const ApiError(this.message, [this.status = 0]);
+  const ApiError(this.message, [this.status = 0, this.body]);
   final String message;
   final int status;
+
+  /// 오류 응답 본문 (JSON 이면). 화면에 그대로 보여주지 않는다
+  final Object? body;
   @override
   String toString() => message;
 }
@@ -73,13 +80,19 @@ class HomeSource {
       final req = method == 'GET'
           ? _client.get(uri, headers: headers)
           : method == 'PUT'
-              ? _client.put(uri, headers: headers, body: jsonEncode(body))
-              : _client.post(uri, headers: headers, body: jsonEncode(body));
+              ? _client.put(uri, headers: headers, body: jsonEncode(body ?? const {}))
+              : _client.post(uri, headers: headers, body: jsonEncode(body ?? const {}));
       res = await req.timeout(_requestTimeout);
     } catch (_) {
       throw const ApiError('서버에 연결하지 못했어요. 백엔드가 실행 중인지 확인해 주세요.');
     }
-    if (res.statusCode < 200 || res.statusCode >= 300) throw ApiError(apiErrorMessage(res.statusCode), res.statusCode);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      Object? body;
+      try {
+        if (res.bodyBytes.length < 16 * 1024) body = jsonDecode(utf8.decode(res.bodyBytes));
+      } catch (_) {}
+      throw ApiError(apiErrorMessage(res.statusCode), res.statusCode, body);
+    }
     if (res.statusCode == 204 || res.bodyBytes.isEmpty) return null;
     try {
       return jsonDecode(utf8.decode(res.bodyBytes));
@@ -89,6 +102,9 @@ class HomeSource {
   }
 
   Future<Object?> _get(String path) => _request('GET', path);
+
+  /// 다른 창구(voice_api.dart)가 같은 HTTP 규칙(시간 제한 · 오류 문장)을 쓰도록
+  Future<Object?> request(String method, String path, [Object? body]) => _request(method, path, body);
 
   /// 404 면 null (아직 등록 · 수신된 값이 없는 경우)
   Future<Object?> _getOrNull(String path) async {
@@ -306,33 +322,15 @@ class HomeSource {
     return Feedback(verdict: verdict, submittedAt: str(obj(r)?['submittedAt'], nowIso()));
   }
 
-  late final VoiceService voice = VoiceService(this);
-}
-
-/// 백엔드 음성 명령 창구. 보드에는 아직 음성 인식(STT)이 없어 화면에서 send 를 쓰지 않는다.
-/// 음성 인식이 정해지면 인식한 전체 문장을 send 로 보내면 된다 (진행 상황은 WS voice.status).
-class VoiceService {
-  VoiceService(this._source);
-  final HomeSource _source;
-
-  Future<String> send(String text, {double? confidence, String? recognizedAt}) async {
-    final t = text.trim();
-    final body = <String, Object?>{
-      'text': t.length > 500 ? t.substring(0, 500) : t,
-      'lang': 'ko-KR',
-      'source': 'voice',
-      if (recognizedAt != null) 'recognizedAt': recognizedAt,
-      if (confidence != null && confidence >= 0 && confidence <= 1) 'confidence': confidence,
-    };
-    final r = obj(await _source._request('POST', '/voice/commands', body));
-    final id = r?['voiceId'];
-    if (id is! String || id.isEmpty) throw const ApiError('음성 명령 응답 형식이 올바르지 않아요.');
-    return id;
+  /// 연락처 등록 · 변경. 확인 문자를 보냈으면 true (서버에 SMS 키가 없으면 false).
+  /// 서버가 정리한 값(숫자만 남긴 번호)을 돌려받으면 그것을 쓴다
+  Future<(Contact, bool)> saveContact(ContactKind kind, Contact contact) async {
+    final key = kind == ContactKind.guardian ? 'guardian' : 'user';
+    final r = obj(await _request('PUT', '/$key', {'name': contact.name, 'phone': contact.phone}));
+    return (mapContact(r?[key]) ?? contact, r?['verificationSent'] == true);
   }
 
-  Future<void> confirm(String voiceId, bool approved) async {
-    await _source._request('POST', '/voice/commands/${Uri.encodeComponent(voiceId)}/confirm', {'approved': approved});
-  }
+  late final VoiceService voice = VoiceService(request);
 }
 
 /// GET /sensing/combined → 공간별 노드 상태 (서버는 노드 메시지를 해석하지 않으므로 여기서 본다)

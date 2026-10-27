@@ -1,7 +1,7 @@
 name: homevis_gui
 description: "HomeVIS dashboard"
 publish_to: 'none'
-version: 5.0.0+1
+version: 7.0.0+1
 
 # 보드(LG ATLAS OS)의 Flutter 엔진이 3.27.4 로 고정돼 있어 같은 버전만 쓴다.
 environment:

@@ -31,7 +31,7 @@ void main() {
 
   test('처음 불러오기: 기기 · 기록(최신이 앞) · 지난 세션 · 연락처(404 = 없음) · 위치', () async {
     final s = await source.loadSnapshot();
-    expect(s.devices.length, 7);
+    expect(s.devices.length, 8); // v0.8: 주방 전등 light-02 포함
     expect(s.events.map((e) => e.eventId), ['e-new', 'e-fall', 'e-old']);
     expect(s.sessions.map((x) => x.sessionId), containsAll(['sess-1', 'sess-0']));
     expect(s.contacts.user, isNull);

@@ -18,7 +18,7 @@ void main() {
   group('기기 목록 (GET /snapshot devices)', () {
     test('다섯 종류를 화면 기기로', () {
       final ds = t.devices;
-      expect(ds.length, 7);
+      expect(ds.length, 8);
       final ind = dev<InductionDevice>(ds, 'induction-01');
       expect(ind.name, '인덕션');
       expect(ind.burner.level, 5);
@@ -32,6 +32,11 @@ void main() {
       expect(bedLight.brightnessSteps, [0, 20, 100]);
       // 상태를 받지 못한 전등은 is_on 만 본다
       expect(dev<LightDevice>(ds, 'light-00').on, isFalse);
+      // v0.8 주방 전등: 공간 이름으로 붙인다
+      final kitchenLight = dev<LightDevice>(ds, 'light-02');
+      expect(kitchenLight.room, RoomId.kitchen);
+      expect(kitchenLight.name, '주방 조명');
+      expect(kitchenLight.on, isFalse);
 
       final fan = dev<FanDevice>(ds, 'fan-01');
       expect(fan.speed, 3);
@@ -177,6 +182,24 @@ void main() {
       final m = t.translate('voice.status', 'now', {'voiceId': 'v1', 'status': 'thinking'});
       expect((m.single as VoiceMsg).record.status, VoiceStatus.thinking);
       expect(t.translate('mystery.event', 'now', {'a': 1}), isEmpty);
+    });
+
+    test('보드 마이크 제안 계약: listening · recognizing · source · reason · voice.settings', () {
+      final l = (t.translate('voice.status', 'now', {'voiceId': 'm1', 'status': 'listening', 'source': 'wakeword'}).single as VoiceMsg).record;
+      expect(l.status, VoiceStatus.listening);
+      expect(l.source, 'wakeword');
+      final r = (t.translate('voice.status', 'now', {'voiceId': 'm1', 'status': 'recognizing', 'text': '  주방 불 '}).single as VoiceMsg).record;
+      expect(r.status, VoiceStatus.recognizing);
+      expect(r.text, '주방 불');
+      final f = (t.translate('voice.status', 'now', {'voiceId': 'm1', 'status': 'failed', 'reason': 'no_speech'}).single as VoiceMsg).record;
+      expect(f.reason, 'no_speech');
+      // 이상한 source · reason 은 버린다
+      final odd = (t.translate('voice.status', 'now', {'voiceId': 'm1', 'status': 'failed', 'reason': '<b>x</b>', 'source': 42}).single as VoiceMsg).record;
+      expect(odd.reason, isNull);
+      expect(odd.source, isNull);
+      final s = (t.translate('voice.settings', 'now', {'wakeWord': true, 'standby': true}).single as VoiceSettingsMsg).settings;
+      expect(s.wakeWord && s.standby, isTrue);
+      expect(t.translate('voice.settings', 'now', {'wakeWord': 'yes'}), isEmpty);
     });
 
     test('기기 온라인 변경만 알림 (GET /devices)', () {

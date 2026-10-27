@@ -71,6 +71,12 @@ class VoiceMsg extends StreamMessage {
   final VoiceRecord record;
 }
 
+/// 보드 음성 설정 변경 (WS voice.settings — 제안)
+class VoiceSettingsMsg extends StreamMessage {
+  const VoiceSettingsMsg(this.settings);
+  final VoiceSettings settings;
+}
+
 /// command.result 중 실패(rejected · failed)
 class CommandFailedMsg extends StreamMessage {
   const CommandFailedMsg({required this.deviceId, required this.commandId, required this.status, this.deviceName});

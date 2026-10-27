@@ -10,7 +10,12 @@ import '../../store/preferences.dart';
 import '../../theme/theme.dart';
 import '../../ui/icons.dart';
 import '../../ui/widgets.dart';
+import '../../store/toaster.dart';
 import '../../util/device_text.dart';
+import '../onboarding/consent_dialog.dart';
+import '../onboarding/permissions.dart';
+import '../voice/voice_controller.dart';
+import 'contact_sheet.dart';
 
 class _Section {
   const _Section(this.id, this.label, this.icon, this.color);
@@ -20,10 +25,13 @@ class _Section {
   final SymColor color;
 }
 
-/// 보드 설정은 메모리에만 둔다 (읽기 전용 파일 시스템). 연락처 · 안전 정책 입력은 웹 대시보드에서 한다 (보드는 키보드가 없다).
+/// 보드 설정은 $HOME/.config/homevis_gui/prefs.json 에 저장한다 (웹 빌드는 메모리).
+/// 연락처는 키패드로 등록하고(서버 저장), 안전 정책 수정은 웹 대시보드에서 한다.
 const _sections = [
   _Section('display', '화면', Ic.sunMoon, SymColor.blue),
   _Section('contacts', '비상 연락처', Ic.phone, SymColor.green),
+  _Section('permissions', '앱 권한', Ic.shieldCheck, SymColor.indigo),
+  _Section('voice', '음성', Ic.mic, SymColor.red),
   _Section('about', '정보', Ic.info, SymColor.gray),
 ];
 
@@ -76,6 +84,8 @@ class SettingsPage extends StatelessWidget {
                     physics: const ClampingScrollPhysics(),
                     child: switch (section) {
                       'contacts' => const _ContactsSection(),
+                      'permissions' => const _PermissionsSection(),
+                      'voice' => const _VoiceSection(),
                       'about' => const _AboutSection(),
                       _ => const _DisplaySection(),
                     },
@@ -188,7 +198,7 @@ class _DisplaySection extends StatelessWidget {
         const SizedBox(height: 24),
         _Choice<AppMode>(
           title: '화면 모드',
-          footer: '어르신 모드는 꼭 필요한 정보만 크게 보여줘요. 보드를 다시 켜면 처음 설정으로 돌아가요.',
+          footer: '어르신 모드는 꼭 필요한 정보만 크게 보여줘요.',
           value: prefs.mode,
           onChanged: prefs.setMode,
           options: const [(AppMode.normal, '일반'), (AppMode.elderly, '어르신')],
@@ -202,29 +212,203 @@ class _DisplaySection extends StatelessWidget {
   }
 }
 
-/// 비상 연락처 — 보기만 한다 (등록 · 수정은 웹 대시보드). 공용 화면이라 번호 가운데를 가린다.
+/// 비상 연락처 — 보호자 · 본인. 등록 · 변경은 키패드 시트 (공용 화면이라 번호 가운데를 가린다)
 class _ContactsSection extends StatelessWidget {
   const _ContactsSection();
 
   @override
   Widget build(BuildContext context) {
-    final elderly = context.elderly;
     final contacts = context.select<HomeStore, Contacts>((s) => s.state.contacts);
-    final g = contacts.guardian;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _ContactGroup(
+          kind: ContactKind.guardian,
+          contact: contacts.guardian,
+          title: '보호자',
+          footer: '낙상이 감지되면 이 번호로 확인 링크가 담긴 문자를 보내요. 지금은 1명만 등록할 수 있어요.',
+        ),
+        const SizedBox(height: 24),
+        _ContactGroup(
+          kind: ContactKind.user,
+          contact: contacts.user,
+          title: '본인',
+          footer: '문자에 누구 댁인지 표시하는 데 쓰여요. 저장하면 확인 문자가 갈 수 있어요. 번호는 서버에만 저장하고 화면에는 가운데를 가려서 보여 드려요.',
+        ),
+      ],
+    );
+  }
+}
+
+class _ContactGroup extends StatelessWidget {
+  const _ContactGroup({required this.kind, required this.contact, required this.title, required this.footer});
+  final ContactKind kind;
+  final Contact? contact;
+  final String title;
+  final String footer;
+
+  @override
+  Widget build(BuildContext context) {
+    final elderly = context.elderly;
+    final c = contact;
+    return ListGroup(
+      title: title,
+      footer: footer,
+      children: [
+        ListRow(
+          big: elderly,
+          title: c?.name ?? '등록 안 됨',
+          value: c != null ? maskPhone(c.phone) : null,
+          trailing: HvButton(
+            label: c == null ? '등록' : '변경',
+            variant: c == null ? BtnVariant.primary : BtnVariant.secondary,
+            size: elderly ? BtnSize.lg : BtnSize.md,
+            onPressed: () => openContactSheet(context, kind),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 음성 명령을 끄면 서버의 호출어 대기도 끈다 (마이크가 켜진 채 남지 않게)
+void _setVoiceCommands(BuildContext context, bool on) {
+  context.read<Preferences>().setVoiceCommands(on);
+  final voice = context.read<VoiceController>();
+  if (!on && voice.wakeWord) voice.setWakeWord(false);
+  if (!on && voice.micActive) voice.close();
+}
+
+/// 앱 권한 — 첫 실행 동의 창에서 받은 권한을 하나씩 바꾼다 (React PermissionsSection)
+class _PermissionsSection extends StatelessWidget {
+  const _PermissionsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.hv;
+    final elderly = context.elderly;
+    final prefs = context.watch<Preferences>();
+    final hasGuardian = context.select<HomeStore, bool>((s) => s.state.contacts.guardian != null);
+    Widget note(String t) => Text(t, style: ts(elderly ? 16 : 14, color: c.ink3));
+    return ListGroup(
+      title: '앱 권한',
+      footer: '첫 실행 때 받은 동의를 여기서 바꿀 수 있어요.',
+      children: [
+        for (final p in permissions)
+          PermissionRow(
+            info: p,
+            big: elderly,
+            trailing: switch (p.key) {
+              PermissionKey.presence => note('항상 사용'),
+              PermissionKey.mic => HvToggle(
+                  checked: prefs.voiceCommands,
+                  large: elderly,
+                  label: '마이크',
+                  onChanged: (v) => _setVoiceCommands(context, v),
+                ),
+              PermissionKey.tts => HvToggle(checked: prefs.readAloud, large: elderly, label: '음성 안내', onChanged: prefs.setReadAloud),
+              PermissionKey.contacts => hasGuardian
+                  ? HvButton(
+                      label: '등록됨',
+                      variant: BtnVariant.quiet,
+                      size: elderly ? BtnSize.lg : BtnSize.md,
+                      onPressed: () => context.read<NavState>().setSection('contacts'),
+                    )
+                  : HvButton(
+                      label: '등록',
+                      variant: BtnVariant.ghost,
+                      size: elderly ? BtnSize.lg : BtnSize.md,
+                      onPressed: () => openContactSheet(context, ContactKind.guardian),
+                    ),
+            },
+          ),
+      ],
+    );
+  }
+}
+
+/// 음성 — 음성 명령(마이크 버튼) · 호출어(보드 음성 서비스 설정) · 위험 알림 음성 안내
+class _VoiceSection extends StatefulWidget {
+  const _VoiceSection();
+  @override
+  State<_VoiceSection> createState() => _VoiceSectionState();
+}
+
+class _VoiceSectionState extends State<_VoiceSection> {
+  @override
+  void initState() {
+    super.initState();
+    // 열 때마다 서버의 지금 값을 다시 읽는다 (없는 기능이면 조용히 '지원 안 함')
+    context.read<VoiceController>().loadSettings();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final elderly = context.elderly;
+    final prefs = context.watch<Preferences>();
+    final voice = context.watch<VoiceController>();
+    final supported = voice.settingsSupported;
+    final wakeEnabled = prefs.voiceCommands && supported == true && !voice.settingsBusy;
+    String? wakeSub;
+    if (supported == false) {
+      wakeSub = '보드 음성 연결 후 사용할 수 있어요';
+    } else if (!prefs.voiceCommands) {
+      wakeSub = '음성 명령을 먼저 켜 주세요';
+    } else if (voice.standby) {
+      wakeSub = '지금 호출어를 기다리고 있어요';
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListGroup(
-          title: '보호자',
-          footer: '낙상이 감지되면 이 번호로 확인 링크가 담긴 문자를 보내요.',
-          children: [ListRow(big: elderly, title: g?.name ?? '등록 안 됨', value: g != null ? maskPhone(g.phone) : null)],
+          title: '음성 명령',
+          footer: '왼쪽 아래 마이크 버튼으로 조명 · 환풍기 · 공기청정기를 말로 조작해요. 음성 인식 방식에 따라 음성이 외부 서버로 전송될 수 있어요.',
+          children: [
+            ListRow(
+              big: elderly,
+              title: '음성 명령 사용',
+              trailing: HvToggle(
+                checked: prefs.voiceCommands,
+                large: elderly,
+                label: '음성 명령 사용',
+                onChanged: (v) => _setVoiceCommands(context, v),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 24),
         ListGroup(
-          title: '본인',
-          footer: '연락처 등록 · 수정은 휴대폰이나 PC 의 HomeVIS 웹 화면에서 할 수 있어요.',
+          title: '호출어',
+          footer: supported == false ? null : '켜 두면 “홈비스”라고 부를 때까지 보드 마이크가 계속 켜져 있어요. 처음에는 꺼져 있어요.',
           children: [
-            ListRow(big: elderly, title: contacts.user?.name ?? '등록 안 됨', value: contacts.user != null ? maskPhone(contacts.user!.phone) : null),
+            ListRow(
+              big: elderly,
+              title: '호출어로 부르기 (홈비스)',
+              subtitle: wakeSub,
+              trailing: HvToggle(
+                checked: voice.wakeWord && prefs.voiceCommands && supported == true,
+                disabled: !wakeEnabled,
+                large: elderly,
+                label: '호출어로 부르기',
+                onChanged: (v) async {
+                  final toaster = context.read<Toaster>();
+                  final ok = await voice.setWakeWord(v);
+                  if (!ok) toaster.show('호출어 설정을 바꾸지 못했어요.', error: true);
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        ListGroup(
+          title: '위험 알림',
+          footer: '위험 알림이 뜨면 내용을 소리 내어 읽어 드려요.',
+          children: [
+            ListRow(
+              big: elderly,
+              title: '위험 알림 음성 안내',
+              trailing: HvToggle(checked: prefs.readAloud, large: elderly, label: '위험 알림 음성 안내', onChanged: prefs.setReadAloud),
+            ),
           ],
         ),
       ],
@@ -249,7 +433,8 @@ class _AboutSection extends StatelessWidget {
             ListRow(big: elderly, title: '데이터', value: connected ? '백엔드 연결됨' : '실시간 연결 끊김 · 다시 연결 중'),
             ListRow(big: elderly, title: '서버', valueWidget: _Mono(apiOrigin())),
             ListRow(big: elderly, title: '인덕션 원격 제어', value: '제공 안 함'),
-            ListRow(big: elderly, title: '음성 명령', value: '진행 상황 표시'),
+            ListRow(big: elderly, title: '음성 명령', value: '보드 마이크 · 진행 상황 표시'),
+            if (context.read<Preferences>().storageLocation != null) ListRow(big: elderly, title: '설정 저장', value: '이 보드에 저장됨'),
             ListRow(big: elderly, title: '외부 요청', value: '없음'),
           ],
         ),

@@ -135,7 +135,7 @@ void main() {
     await tapText(tester, '어르신');
     expect(find.text('글자 크기'), findsOneWidget);
     await tapText(tester, '정보');
-    expect(find.text('HomeVIS 5.0 · board'), findsOneWidget);
+    expect(find.text('HomeVIS 7.0 · board'), findsOneWidget);
     await tapText(tester, '홈');
     await unmount(tester);
   });

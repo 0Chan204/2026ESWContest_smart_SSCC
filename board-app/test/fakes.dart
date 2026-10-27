@@ -37,10 +37,27 @@ class FakeSink implements WebSocketSink {
 
 /// 백엔드 흉내 (경로별 JSON). posts 에 보낸 요청이 쌓인다
 class FakeBackend {
-  FakeBackend({this.stoveOn = true, this.failSnapshot = false});
+  FakeBackend({this.stoveOn = true, this.failSnapshot = false, this.guardian = const {'name': '김보호', 'phone': '01012345678'}});
   bool stoveOn;
   bool failSnapshot;
+
+  /// GET /guardian (null = 404)
+  Map<String, String>? guardian;
+  Map<String, String>? user;
+
+  /// PUT /guardian · /user 응답: 상태 코드 · 확인 문자 발송 여부
+  int putStatus = 200;
+  bool verificationSent = false;
+
+  /// 보드 마이크 (제안 계약). 기본은 지금 백엔드처럼 없음(404)
+  bool voiceListen = false;
+
+  /// POST /voice/commands/{id}/confirm 응답 코드 (409 = 다른 화면이 이미 답함)
+  int confirmStatus = 200;
+  Map<String, Object?>? voiceSettings;
+
   final posts = <(String, Object?)>[];
+  final puts = <(String, Object?)>[];
   final channels = <FakeChannel>[];
   int _cmd = 0;
 
@@ -54,9 +71,34 @@ class FakeBackend {
     final path = req.url.path.replaceFirst('/api/v1', '');
     http.Response json(Object? body, [int status = 200]) =>
         http.Response.bytes(utf8.encode(jsonEncode(body)), status, headers: {'content-type': 'application/json; charset=utf-8'});
+    if (req.method == 'PUT') {
+      final body = req.body.isEmpty ? null : jsonDecode(req.body) as Map<String, dynamic>;
+      puts.add((path, body));
+      if (path == '/voice/settings') {
+        if (voiceSettings == null) return json({'detail': 'Not Found'}, 404);
+        voiceSettings = {'wakeWord': body?['wakeWord'] == true, 'standby': body?['wakeWord'] == true};
+        return json(voiceSettings);
+      }
+      if (path == '/guardian' || path == '/user') {
+        if (putStatus != 200) return json({'detail': 'error'}, putStatus);
+        final saved = {'name': '${body?['name']}', 'phone': '${body?['phone']}'.replaceAll(RegExp(r'\D'), '')};
+        if (path == '/guardian') {
+          guardian = saved;
+        } else {
+          user = saved;
+        }
+        return json({path.substring(1): saved, 'verificationSent': verificationSent, 'message': 'ok'});
+      }
+      return json({'detail': 'Method Not Allowed'}, 405);
+    }
     if (req.method == 'POST') {
       final body = req.body.isEmpty ? null : jsonDecode(req.body);
       posts.add((path, body));
+      if (path == '/voice/listen') return voiceListen ? json({'voiceId': 'listen-1'}, 202) : json({'detail': 'Not Found'}, 404);
+      if (path.startsWith('/voice/commands/') && path.endsWith('/confirm') && confirmStatus != 200) {
+        return json({'detail': 'already answered'}, confirmStatus);
+      }
+      if (path == '/voice/listen/cancel') return voiceListen ? json({'ok': true}) : json({'detail': 'Not Found'}, 404);
       if (path.endsWith('/commands') && path.startsWith('/devices/')) {
         return json({'commandId': 'cmd-${++_cmd}', 'deviceId': 'x', 'status': 'pending', 'issuedAt': 'now'}, 202);
       }
@@ -77,9 +119,11 @@ class FakeBackend {
           ],
         });
       case '/user':
-        return json({'detail': 'not found'}, 404);
+        return user == null ? json({'detail': 'not found'}, 404) : json(user);
       case '/guardian':
-        return json({'name': '김보호', 'phone': '01012345678'});
+        return guardian == null ? json({'detail': 'not found'}, 404) : json(guardian);
+      case '/voice/settings':
+        return voiceSettings == null ? json({'detail': 'Not Found'}, 404) : json(voiceSettings);
       case '/policies/kitchen-absence':
         return json({'overheatEnterC': 150, 'reduceAfterSec': 180, 'offAfterSec': 600});
       case '/policies/fall-safety':

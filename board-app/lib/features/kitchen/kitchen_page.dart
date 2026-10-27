@@ -51,6 +51,7 @@ class _KitchenNormalState extends State<_KitchenNormal> {
     final recent = state.events.where((e) => e.room == RoomId.kitchen && e.type != SafetyEventType.cookingStarted).take(8).toList();
     final tileH = short ? 120.0 : 136.0;
     final tiles = <Widget>[_PresenceTile(p: state.kitchenPresence, location: state.location), for (final d in others) DeviceTile(device: d)];
+    final slots = tiles.length.clamp(3, 4);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -74,7 +75,8 @@ class _KitchenNormalState extends State<_KitchenNormal> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            for (var i = 0; i < 3; i++) ...[
+                            // 재실 + 주방 기기(정수기 · 환풍기 · 조명 …). 3칸을 기본으로, 많으면 4칸까지
+                            for (var i = 0; i < slots; i++) ...[
                               if (i > 0) const SizedBox(width: 12),
                               Expanded(child: i < tiles.length ? tiles[i] : const SizedBox.shrink()),
                             ],
@@ -320,6 +322,7 @@ class _KitchenElderly extends StatelessWidget {
     final b = induction?.burner;
     final hot = b?.deviceState == BurnerState.overheated;
     final here = state.kitchenPresence.present;
+    final lights = state.devices.whereType<LightDevice>().where((d) => d.room == RoomId.kitchen).take(2).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -354,6 +357,11 @@ class _KitchenElderly extends StatelessWidget {
                     state: here ? '사람이 있어요' : '아무도 없어요 · ${formatDuration(state.kitchenPresence.absentSec)}',
                   ),
                 ),
+                // 주방 조명 (백엔드 v0.8 light-02 등 — 공간이 주방인 전등이면 모두). 누르면 켜고 끈다
+                for (final l in lights) ...[
+                  const SizedBox(width: 16),
+                  Expanded(child: DeviceTile(device: l, big: true)),
+                ],
               ],
             ),
           ),

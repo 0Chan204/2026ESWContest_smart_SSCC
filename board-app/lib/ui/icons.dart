@@ -42,6 +42,8 @@ abstract final class Ic {
   static const IconData more = LucideIcons.moreHorizontal;
   static const IconData calendar = LucideIcons.calendar;
   static const IconData layout = LucideIcons.layoutGrid;
+  static const IconData volume = LucideIcons.volume2;
+  static const IconData delete = LucideIcons.delete;
 
   // 기기
   static const IconData induction = LucideIcons.soup;

@@ -329,7 +329,23 @@ VoiceRecord? mapVoice(Object? raw) {
     answer: clip(d['answer'], 500),
     confirmText: clip(d['confirmText'], 200),
     confirmDeadline: optStr(d['confirmDeadline']),
+    source: _token(d['source']),
+    reason: _token(d['reason']),
   );
+}
+
+/// 짧은 영문 식별자만 (button · wakeword · no_speech …). 그 밖의 값은 버린다
+String? _token(Object? v) {
+  final s = optStr(v);
+  if (s == null || !RegExp(r'^[a-z][a-z0-9_]{0,31}$').hasMatch(s)) return null;
+  return s;
+}
+
+/// GET /voice/settings · WS voice.settings → 음성 설정. wakeWord 가 없으면 null
+VoiceSettings? mapVoiceSettings(Object? raw) {
+  final d = obj(raw);
+  if (d == null || d['wakeWord'] is! bool) return null;
+  return VoiceSettings(wakeWord: d['wakeWord'] as bool, standby: d['standby'] == true);
 }
 
 const roomName = {RoomId.kitchen: '주방', RoomId.bathroom: '욕실', RoomId.bedroom: '침실', RoomId.home: '집'};

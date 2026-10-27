@@ -6,9 +6,12 @@ import '../features/history/history_page.dart';
 import '../features/home/home_page.dart';
 import '../features/kitchen/kitchen_page.dart';
 import '../features/settings/settings_page.dart';
+import '../features/voice/voice_controller.dart';
 import '../models/types.dart';
 import '../store/home_store.dart';
+import '../store/preferences.dart';
 import '../theme/theme.dart';
+import '../theme/tokens.dart';
 import '../ui/icons.dart';
 import '../ui/widgets.dart';
 import 'app.dart';
@@ -79,7 +82,7 @@ class _ConnectError extends StatelessWidget {
   }
 }
 
-/// 왼쪽 메뉴. iPad 탭 막대처럼 선택된 항목만 파란 글자 + 흰 바탕.
+/// 왼쪽 메뉴. iPad 탭 막대처럼 선택된 항목만 파란 글자 + 흰 바탕. 아래에 마이크 버튼(음성 명령을 켰을 때)과 호출어 대기 표시.
 class NavRail extends StatelessWidget {
   const NavRail({super.key});
 
@@ -150,8 +153,63 @@ class NavRail extends StatelessWidget {
                 ),
               ),
             ),
+          const Spacer(),
+          const _VoiceButton(),
         ],
       ),
+    );
+  }
+}
+
+/// 마이크 버튼 (React VoiceButton). 누르면 보드 마이크로 듣기 시작, 듣는 중에 누르면 멈춤.
+/// 서버가 호출어를 기다리는 중(standby)이면 주황 점 + '호출어 대기' — 음성 명령을 꺼 두었어도 마이크가 켜져 있음을 알린다.
+class _VoiceButton extends StatelessWidget {
+  const _VoiceButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.hv;
+    final elderly = context.elderly;
+    final enabled = context.select<Preferences, bool>((p) => p.voiceCommands);
+    final active = context.select<VoiceController, bool>((v) => v.open);
+    final standby = context.select<VoiceController, bool>((v) => v.standby);
+    if (!enabled && !standby) return const SizedBox.shrink();
+    final size = elderly ? 68.0 : 56.0;
+    final dot = Container(
+      width: 12,
+      height: 12,
+      decoration: BoxDecoration(color: HvColors.symOrange, shape: BoxShape.circle, border: Border.all(color: c.canvas, width: 2)),
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (enabled)
+          Pressable(
+            onTap: () => context.read<VoiceController>().toggleListen(),
+            semanticLabel: standby ? '음성으로 말하기 · 호출어 대기 중' : '음성으로 말하기',
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: size,
+                  height: size,
+                  decoration: BoxDecoration(color: active ? c.brandDark : c.brand, shape: BoxShape.circle),
+                  child: Icon(Ic.mic, size: elderly ? 28 : 24, color: Colors.white),
+                ),
+                if (standby) Positioned(top: 2, right: 2, child: dot),
+              ],
+            ),
+          )
+        else
+          Semantics(label: '호출어 대기 중 · 마이크 켜짐', child: dot),
+        if (standby)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ExcludeSemantics(
+              child: Text('호출어 대기', style: ts(elderly ? 14 : 11, weight: w500, color: c.ink3), maxLines: 1),
+            ),
+          ),
+      ],
     );
   }
 }
