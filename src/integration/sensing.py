@@ -86,7 +86,7 @@ def presence_evidence(observation, *, allowed_lateness, max_age, min_confidence)
     until = min(observation.valid_until if observation.valid_until is not None else at + max_age, at + max_age)
     if "backend_result" in payload:
         raw = payload["backend_result"]
-        if (not isinstance(raw, dict) or raw.get("reason") or "mockContract" in raw
+        if (not isinstance(raw, dict) or raw.get("presenceReason") or raw.get("reason") or "mockContract" in raw
                 or type(raw.get("validSec")) is not int or raw["validSec"] <= 0):
             return None
         until = min(until, at + raw["validSec"])

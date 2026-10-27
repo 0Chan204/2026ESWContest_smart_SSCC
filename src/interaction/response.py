@@ -22,7 +22,9 @@ class VoiceResponseService:
         if query == "presence":
             sensing = facts["presence"]
             confidence = sensing.get("confidence")
-            if confidence is None or confidence < 0.6 or sensing.get("present") is None:
+            if (confidence is None or confidence < 0.6 or sensing.get("present") is None
+                    or sensing.get("presenceReason") or sensing.get("reason")
+                    or (sensing.get("present") is False and sensing.get("room", "missing") is not None)):
                 return "현재 재실 상태를 확실하게 확인할 수 없습니다."
             if not sensing["present"]:
                 return "최신 센싱 결과에서 사람이 감지되지 않았습니다. 외출 여부까지 확인한 것은 아닙니다."

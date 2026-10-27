@@ -4,8 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import time
 
+from src.control.identifiers import ROOMS
+
 from .backend_client import BackendError
-from .behavior_labels import BEHAVIOR_LABELS, OBSERVED_STATES
 from .mqtt_source import Incoming, SensingFault
 from .schemas import ContractError, iso_time, measured_time, number
 
@@ -28,24 +29,35 @@ def normalize_result(raw, *, allow_mock_events=False):
         number(validity, "validSec")  # Reject integers that cannot be used in timestamp arithmetic.
     if raw.get("present") is not None and type(raw["present"]) is not bool:
         raise ContractError("present must be boolean or null")
+    room = raw.get("room")
+    if room is not None and (not isinstance(room, str) or room not in ROOMS):
+        raise ContractError("room must be room, kitchen, toilet or null")
+    for field in ("presenceReason", "activityReason", "reason", "activity"):
+        if raw.get(field) is not None and not isinstance(raw[field], str):
+            raise ContractError(f"{field} must be a string or null")
     confidence = number(raw.get("confidence"), "confidence", nullable=True, confidence=True)
-    location = raw.get("room") or "unknown"
-    if raw.get("present") is False:
+    activity_confidence = number(raw.get("activityConfidence"), "activityConfidence",
+                                 nullable=True, confidence=True)
+    # A room value cannot turn an indeterminate presence result into occupancy.
+    location = room if raw.get("present") is True and room is not None else "unknown"
+    if raw.get("present") is False and "room" in raw and room is None:
         # Preserve the full backend envelope: HomeAutomation separately requires
         # room=null and positive validSec before treating this as whole-home empty.
         location = "empty"
     payload = {"time": raw["observedAt"], "location": location,
                "location_confidence": confidence, "backend_result": raw}
-    if raw.get("reason"):
-        payload["reason"] = raw["reason"]
+    payload["reason"] = raw.get("presenceReason") or raw.get("reason")
     if validity is not None:
         payload["valid_until"] = iso_time(observed + validity)
+    else:
+        payload["valid"] = False
+        payload["reason"] = payload["reason"] or "missing_valid_sec"
     if mock:
         # Explicit mock contract separates an explanation from a diagnostic.
         # A legacy reason remains a diagnostic even alongside the new fields.
         payload["location_explanation"] = raw.get("locationExplanation")
         payload["valid"] = raw.get("locationValid", True)
-        payload["reason"] = raw.get("locationError") or raw.get("reason")
+        payload["reason"] = raw.get("locationError") or payload["reason"]
         if "mockBehavior" in raw:
             behavior = raw["mockBehavior"]
             if not isinstance(behavior, dict):
@@ -64,12 +76,13 @@ def normalize_result(raw, *, allow_mock_events=False):
             }
             return payload
     # No invented behavior validity/confidence, no mapping lying -> motion=still.
-    if validity and raw.get("activityConfidence") is not None and location in {"room", "kitchen", "toilet"}:
+    # Keep indeterminate behavior (including its reason and null confidence).
+    # Presence and activity are independent; joining still requires valid presence.
+    if validity and room in ROOMS:
         payload["behavior"] = {"time": raw["observedAt"], "valid_until": iso_time(observed + validity),
-            "location": location, "confidence": raw["activityConfidence"], "activity": raw.get("activity"),
+            "location": room, "confidence": activity_confidence, "activity": raw.get("activity"),
             "motion_state": raw.get("motion_state"), "fall_detected": raw.get("fall_detected"),
-            "reason": "unverified_activity_label" if raw.get("activity") is not None
-                      and raw["activity"] not in OBSERVED_STATES | BEHAVIOR_LABELS.keys() else None}
+            "reason": raw.get("activityReason")}
     return payload
 
 

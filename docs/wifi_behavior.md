@@ -2,10 +2,9 @@
 
 ## 확인 범위와 실행
 
-2026-10-26 원격 확인: 팀/개인 `HomeVIS-AI_main/main` 32153ec,
-`HomeVIS-AI_Wifi/main` f73c0ff, `HomeVIS-Backend/develop` fb22929 (AI 명세 v0.7).
-Wi-Fi 저장소에는 아직 행동 이벤트 생산자가 없고, `HomeVIS-EM_Wifi-RPI`는 접근 가능한 팀 저장소에서
-확인되지 않았습니다. 수집 안내의 입력 200이나 CSV 550→500 절차를 추론 JSON 계약으로 해석하지 않습니다.
+2026-10-27 사용자 제공 백엔드 v0.10 (#49) 계약에 맞춰 최종 재실·행동 통합 결과를 수신합니다.
+이 문서의 이전 학습 로그와 이벤트 정책은 유지하며, 통신 계약은 아래 v0.10 내용을 따릅니다.
+이번 검증은 로컬 테스트이며 운영 서버나 실제 Wi-Fi 장비를 호출한 검증은 아닙니다.
 
 ```sh
 python -m pip install -r requirements-runtime.txt
@@ -16,21 +15,53 @@ python -m src.integration --sensing-source backend --base-url http://백엔드IP
 센싱 GET과 기기 GET은 기본 1초이며 판단은 기존 `POST /api/v1/ai/decisions`로만 전송합니다.
 AI는 raw CSI 재처리/학습이나 기기 MQTT command 발행을 하지 않습니다. 백엔드·센싱 추론기는 별도 실행되어야 합니다.
 
-## 실제로 확인된 필드와 아직 모르는 것
+## v0.10 수신 계약
 
 | 경계 | 확인된 계약 |
 | --- | --- |
-| Wi-Fi 최종 위치 | `wifi/occupancy/state`: `time`, `location`, `location_confidence`, 선택적 진단 `reason` |
+| 엣지 → 서버 | `home/{구역}/edge/{노드}/features`: 재실 특성 19개 + 행동 특성 31개 |
+| 서버 → 재실·행동 추론기 | `home/edge/combined`: 1초마다 노드 메시지를 합침 |
 | 백엔드 최종 결과 | `home/edge/result` 저장 후 GET `/api/v1/sensing/results?since=...&limit=5000` |
-| 백엔드 공통 필드 | `resultId`, `observedAt`, `room`, `present`, `confidence`, `activity`, `activityConfidence`, `validSec`, `modelVersion`; 서버 `savedAt` |
+| 최신 결과 조회 | GET `/api/v1/sensing/results/latest`: 한 객체, 아직 없으면 404 |
+| 기간 조회 | `since/until/limit`, 오래된 순서, 최대 5000건; 실행기는 기존 `since` 커서 조회 유지 |
+| 재실 | `room`, `present`, `confidence`, `presenceReason` |
+| 행동 | `activity`, `activityConfidence`, `activityReason` |
+| 공통 | `resultId`, `observedAt`, `savedAt`, `validSec`, `modelVersion` |
 | 기존 내부 행동 어댑터 | `activity`, `motion_state`, `fall_detected` 및 유효 시각·confidence. 후자의 두 필드는 백엔드의 공식 필수 필드가 아닌 기존 확장 입력 |
 | 사용자 제공 학습 로그에서 확인 | 행동 클래스 `none`, `fall`, `lie_down`, `get_up` |
-| 미확정 | 실제 행동 생산자의 JSON, 이벤트 ID, 독립 측정 시각, 정상 설명·진단·오류 필드, 실제 움직임 제공 여부 |
+| 별도 확인 필요 | 물리적 이벤트 ID, 실제 움직임 관측 제공 여부, 장비의 발행 지연 |
 
-백엔드가 임의 추가 필드를 저장한다고 해서 해당 필드의 의미까지 검증된 것은 아닙니다.
-현재 Wi-Fi 특징 토픽과 백엔드의 `home/{room}/edge/{node}/features`·`home/edge/combined`는 서로 다릅니다.
-노드 매핑도 Wi-Fi r2=주방/r3=방/r4=화장실, 백엔드 문서 r1=방/r2=주방/r3=화장실로 달라 확인이 필요합니다.
-이 변경은 다른 저장소의 통신 코드를 고치지 않습니다. 실제 백엔드에 결과가 저장되어야 GET이 유효한 데이터를 반환합니다.
+판정 엔진은 원시 특성이나 `home/edge/combined` 대신 최종 결과를 소비합니다. 노드 ID를 로컬에서 구역으로 추론하지 않습니다.
+기본 입력은 HTTP이며, 직접 MQTT를 선택하면 기본 토픽 `home/edge/result`에 같은 어댑터를 적용합니다.
+이전 `wifi/occupancy/state` 형식은 명시적으로 해당 토픽을 설정한 경우 계속 사용할 수 있습니다.
+
+```json
+{
+  "resultId": "res-20261027-000123",
+  "observedAt": "2026-10-27T21:00:02+09:00",
+  "savedAt": "2026-10-27T12:00:02.150+00:00",
+  "room": "kitchen",
+  "present": true,
+  "confidence": 0.91,
+  "presenceReason": null,
+  "activity": "standing",
+  "activityConfidence": 0.80,
+  "activityReason": null,
+  "modelVersion": "fusion-0.2",
+  "validSec": 5
+}
+```
+
+- `present=null`이면 구역 값이 남아 있어도 유효한 재실 또는 부재로 쓰지 않습니다.
+- `present=false`이고 명시적 `room=null`인 경우만 전체 부재 검사의 입력이 됩니다. 기존 신뢰도·유효기간·전체 범위 설정도 검사합니다.
+- `activity="unknown"`은 행동 관측 불가입니다. 신뢰도가 있더라도 안전·회복·정지 근거로 쓰지 않습니다.
+- 재실이 유효하고 행동만 `unknown`이면 위치 기반 판단은 계속됩니다. 행동이 필요한 판단은 보류합니다.
+- `presenceReason`과 `activityReason`은 각각 해당 관측의 진단입니다. `warming_up/gap/no_csi/config_mismatch/low_confidence` 등 문자열을 원본 그대로 보존합니다.
+- 공통 유효기간은 `observedAt + validSec`입니다. 누락·0·만료 결과는 새 제어 근거가 되지 않으며, `savedAt`이나 반복 GET으로 연장하지 않습니다.
+- 통합 결과의 행동 누락·판단 불가를 이전 별도 행동 관측으로 채우지 않습니다.
+
+예를 들어 `room=null, present=null, confidence=null, presenceReason="warming_up", activity="unknown", activityConfidence=null, activityReason="gap"`은
+두 판단이 모두 불가한 결과로 받아들이며, 두 이유를 감사 기록에 보존합니다. 부재나 기존 위험의 해제를 뜻하지 않습니다.
 
 위치의 unknown/empty는 유효한 화장실 또는 outside로 바꾸지 않습니다. 기본 어댑터는 확인되지 않은 행동 문자열을
 이벤트로 변환하지 않고 `unverified_activity_label`로 보류합니다. 허용 자세 상태는 기존
@@ -65,10 +96,10 @@ Mock 옵션 없이 사용할 수 있고 원본 라벨·각 신뢰도를 보존�
 }
 ```
 
-공통 `observedAt/room/validSec`이 위치와 행동에 모두 적용되는 결과라는 전제입니다.
+v0.10의 공통 `observedAt/room/validSec`을 위치와 행동에 적용합니다.
 행동 측정 시각이 위치와 다르면 기존 별도 `BehaviorObservation` 결합 경로로 실제 시각을 전달해야 합니다.
 `validSec: 10`은 예시이지 자동 기본값이 아닙니다. 누락된 유효기간/행동 신뢰도는 채우지 않습니다.
-독립 JSON 샘플을 받은 후 공통 시각 사용 가능 여부를 확인해야 합니다.
+행동 신뢰도는 재실 신뢰도와 별도로 검사합니다.
 
 이벤트 생산자 ID가 미확정인 동안에는 구역+측정 시각에서 결정적인 `behavior-window:` ID를 만듭니다.
 이는 물리적 사건 ID가 아닌 **동일 관측 창의 재전송 중복 제거용**입니다. 수신 시각/DB resultId/클래스/신뢰도가 바뀌어도
@@ -104,7 +135,8 @@ Mock 옵션 없이 사용할 수 있고 원본 라벨·각 신뢰도를 보존�
 이벤트 ID는 SQLite `behavior_events`로 중복 제거하며, 같은 ID의 내용 변경도 새 사건으로 해석하지 않습니다.
 프로세스 재시작 후에도 이벤트 ID는 보존합니다. 동일 이벤트를 재전송할 때 측정 시각·만료를 갱신하면 안 됩니다.
 
-기존 `reason`은 아직 진단 사유로 취급합니다. `node_offline`, `config_mismatch` 및 알려지지 않은 사유를
+`presenceReason`은 위치 진단, `activityReason`은 행동 진단으로 전달합니다. 기존 `reason`도 위치 진단으로 취급합니다.
+`node_offline`, `config_mismatch` 및 알려지지 않은 사유를
 설명이라고 무조건 허용하지 않습니다. 정상 설명은 내부 `location_explanation` / `BehaviorObservation.explanation`과
 분리했지만, 실제 백엔드의 정상 설명 필드 매핑은 샘플 확인 후 추가해야 합니다. 원본 JSON은 audit에 남습니다.
 
@@ -221,9 +253,11 @@ Mock 오류는 `locationError` 또는 `mockBehavior.error`로 구분합니다. �
 - `integration/runtime.py`, `outbox.py`: 후보/사건 구분, 영속 이벤트 중복 제거, 기존 이력 저장, 송신 전 재검증.
 - `integration/config.py`, `settings.py`, `config/homevis.toml`, `.env.example`: HTTP 기본값·시나리오 설정.
 
-개발용 테스트 파일은 이후 삭제했습니다. 아래 수치는 삭제 전 검증 기록이며 현재 기동 확인은 실행 파일을 사용합니다.
+이전 개발용 테스트는 삭제되었으며 아래 2026-10-26 수치는 당시 검증 기록입니다.
+현재 v0.10 회귀 검증은 `tests/test_backend_sensing.py`에 있고 전체 테스트와 설정 확인은 다음과 같습니다.
 
 ```sh
+python -m unittest discover -s tests -v
 python run_homevis.py --check-config
 python run_homevis.py --mode mock --duration 15
 ```
@@ -231,9 +265,8 @@ python run_homevis.py --mode mock --duration 15
 실제 API·실가전·Wi-Fi 모델 시험은 포함하지 않습니다. 기존 음성 작업의 미커밋 변경은 보존했으며,
 이번 작업에 공기청정기·외출 전체 OFF·STT·TTS·새 음성 기능 개발은 포함하지 않았습니다.
 
-Wi-Fi 팀에서 다음을 받아야 운영 이벤트 어댑터를 확정할 수 있습니다:
-확정 라벨을 담은 실제 JSON 샘플, 측정 구간과 발행 지연, stable event ID, 유효기간,
-위치/행동 각자의 설명·오류 필드, 움직임 관측 제공 여부, 노드/구역 매핑 및 백엔드 저장 경로.
+실제 장비에서는 v0.10 최종 결과의 발행·저장·조회, 측정 기준 시각과 발행 지연을 함께 검증해야 합니다.
+물리적 사건 ID와 움직임 관측은 이번 계약에 없으므로 생성하지 않습니다.
 
 ### 이번 검증 결과 (2026-10-26)
 

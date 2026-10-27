@@ -28,7 +28,7 @@ ca_file = "" # HOMEVIS_MQTT_CA_FILE; TLS CA 인증서 경로. 빈 문자열이�
 # 전등 매핑: 방(room)=light-01, 화장실(toilet)=light-00, 주방(kitchen)=light-02.
 # HomeVIS-Backend develop c92b11a의 device_registry.py/AI-INTEGRATION.md와 대조함.
 # AI는 백엔드 기기 상태의 deviceId/room을 따라 HTTP로 제어를 요청합니다. 기기 MQTT 발행은 백엔드 담당입니다.
-location_topic = "wifi/occupancy/state" # HOMEVIS_LOCATION_TOPIC; sensing_source=mqtt일 때 직접 위치 수신
+location_topic = "home/edge/result" # HOMEVIS_LOCATION_TOPIC; sensing_source=mqtt일 때 재실+행동 최종 결과 수신
 behavior_topic = "" # HOMEVIS_BEHAVIOR_TOPIC; 합의된 행동 생산자가 있을 때만 설정
 fall_status_topic = "" # HOMEVIS_FALL_STATUS_TOPIC; 선택적 낙상 후속 상태 수신
 # 음성 토픽은 HOMEVIS_VOICE_TOPIC (기본 home/voice/request), 활성화는 HOMEVIS_VOICE_ENABLED=true.

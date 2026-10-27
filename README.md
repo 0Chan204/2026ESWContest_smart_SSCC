@@ -26,7 +26,7 @@ Docker가 있는 환경에서는 배포 안내의 `docker buildx build`와 Compo
 | 조리 중 공기청정기 ON | 유효한 기기 상태가 있으면 요청 가능. 임베디드가 다시 끄지 않도록 유지하는 계약은 미확정 |
 | 조리 종료 후 공기청정기 OFF | 로직은 구현. 현재 백엔드 GET에 명령 출처가 없어 **운영에서는 보류** |
 | 외출 전체 OFF | 로직은 구현. 집 전체 부재 의미 확인 전까지 **기본 보류** |
-| 행동 기반 기상·취침·낙상 | 실제 행동 입력 필요. 현재 확인한 Wi-Fi main은 위치만 발행 |
+| 행동 기반 기상·취침·낙상 | v0.10 통합 결과의 행동을 사용. unknown·만료·필요 관측 누락 시 보류 |
 | 음성 상호작용 | 선택 기능, 기본 OFF. 백엔드 STT·확인·TTS와 LLM 설정 필요 |
 | 자동 신고 | 확인한 백엔드는 상태·이벤트 기록까지 구현. 실제 119 신고 연동은 별도 |
 
@@ -165,15 +165,19 @@ Pi의 원시 CSI나 `features` 배열을 중앙 판단기에 직접 넣지 않�
 ### 재실·행동 의미
 
 - 구역은 `room`(방), `kitchen`(주방), `toilet`(화장실)입니다.
+- 백엔드 v0.10의 최종 결과 한 건에서 재실(`present/confidence/presenceReason`)과 행동(`activity/activityConfidence/activityReason`)을 따로 검사합니다.
+- `present=null`은 재실 판단 불가, `activity="unknown"`은 행동 판단 불가입니다. 부재나 안전의 근거로 사용하지 않습니다.
+- `present=true`이고 행동만 `unknown`이면 위치 기반 판단은 유지하고 행동이 필요한 판단은 보류합니다.
 - `unknown/empty`, 센서 오프라인, 메시지 미수신만으로 집 전체 외출을 확정하지 않습니다.
-- 행동 클래스는 제공된 학습 결과의 `none/fall/lie_down/get_up`을 처리합니다.
+- `standing/sitting/lying` 등 자세와 기존 학습 결과의 `none/fall/lie_down/get_up` 이벤트를 처리합니다.
 - `none`은 대상 이벤트 없음입니다. 부재·정지·낙상 회복을 뜻하지 않습니다.
 - `lie_down`은 눕는 이벤트이지 지속 자세 `lying`이나 `motion_state=still`이 아닙니다.
 - 위치와 행동의 신뢰도·측정 시각·유효성을 구분하며, 누락된 행동이나 설명을 만들어 넣지 않습니다.
 
-현재 Wi-Fi의 `wifi/occupancy/state`는 `time/location/location_confidence`,
-백엔드 입력 `home/edge/result`는 `observedAt/room/confidence` 등 다른 계약을 사용합니다.
-**토픽 이름만 변경해서는 연결되지 않습니다.** 행동 생산자의 실제 JSON과 정상 추론 이유 필드도 합의가 필요합니다.
+Wi-Fi 최종 재실·행동 결과는 `home/edge/result`로 백엔드에 저장되며, 기본 실행기는 기존 HTTP 이력 API를 조회합니다.
+직접 MQTT를 선택해도 기본 토픽은 `home/edge/result`이고 같은 결과 어댑터를 사용합니다.
+기존 `.env`에 `HOMEVIS_LOCATION_TOPIC=wifi/occupancy/state`가 있으면 직접 MQTT 사용 시 `home/edge/result`로 변경하세요.
+유효기간은 `observedAt + validSec`으로 검사하며, 저장 시각이나 반복 조회로 연장하지 않습니다.
 
 제공된 학습 로그의 이벤트 단위 감지율은 낙상 43%, 눕기 14%, 기상 21%였습니다.
 전체 정확도 92.6%를 낙상 안전 성능으로 해석하지 않으며, 학습 모델의 임계값을 중앙 정책에 일괄 복사하지 않습니다.

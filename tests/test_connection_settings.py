@@ -22,6 +22,8 @@ class ConnectionSettingsTests(unittest.TestCase):
         settings = load_settings(DEFAULT_CONFIG, environ={})
         self.assertEqual(settings.integration.base_url, 'http://localhost:8000')
         self.assertEqual((settings.mqtt.host, settings.mqtt.port), ('localhost', 1883))
+        self.assertEqual(settings.mqtt.location_topic, 'home/edge/result')
+        self.assertEqual(settings.sensing_source, 'backend')
         self.assertIsNone(settings.mqtt.ca_file)
         self.assertTrue(settings.integration.multi_room_lights)
 

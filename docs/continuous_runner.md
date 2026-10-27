@@ -90,21 +90,21 @@ Qwen 어댑터의 torch/transformers import를 초기화 시점으로 옮겼다.
 | 흐름 | 실제 연결 |
 | --- | --- |
 | 기본 센싱 수신 | GET `/api/v1/sensing/results?since=...&limit=5000`, 기본 1초 주기 |
-| 기존 직접 센싱 선택 | `--sensing-source mqtt`: MQTT `wifi/occupancy/state` |
+| 직접 센싱 선택 | `--sensing-source mqtt`: MQTT `home/edge/result` (재실 + 행동) |
 | 기기 상태 | GET `/api/v1/ai/device-states`, 기본 1초 주기 |
 | 모든 기기 제어·안내 | POST `/api/v1/ai/decisions` |
 | 진행 중 낙상 | GET `/api/v1/fall-incidents/{fallIncidentId}` |
 
-Wi-Fi 저장소와 백엔드의 센싱 토픽은 현재 서로 다릅니다. 2026-10-26부터 기본 실행은 백엔드 HTTP 조회입니다.
-Wi-Fi 담당자가 결과를 `home/edge/result`에 백엔드 형식으로 전달해야 데이터가 조회됩니다. 이 실행기가
-토픽/JSON 불일치를 자동으로 해결하거나 CSI 모델을 실행하는 것은 아닙니다. 두 소스를 섞어 판단하지 않습니다.
+2026-10-27 제공된 백엔드 v0.10 계약에서는 Wi-Fi 재실·행동 최종 결과가 `home/edge/result`로 전달됩니다.
+기본 실행은 백엔드 HTTP 조회이며, 원시 특성이나 `home/edge/combined`는 판정 엔진의 입력이 아닙니다.
+백엔드 HTTP와 직접 MQTT는 같은 최종 결과 어댑터를 사용하며, 두 소스를 섞어 판단하지 않습니다.
 기존 `.env`의 `HOMEVIS_SENSING_SOURCE=mqtt`는 설정을 덮어쓰므로 `backend`로 변경하거나 CLI로 명시하세요.
 백엔드 `docker compose --profile sim up -d`의 fusion simulator를 쓰면 이 backend 모드를 선택합니다.
-직접 MQTT로 백엔드 형식의 결과를 받으려면 `HOMEVIS_LOCATION_TOPIC=home/edge/result`를 설정합니다.
-그 형식의 `observedAt`, `validSec`, `activityConfidence`도 보존·검사합니다.
+직접 MQTT 기본 토픽도 `home/edge/result`입니다. 기존 환경변수에 이전 토픽이 남아 있으면 수정하세요.
+`observedAt`, `validSec`, 각 신뢰도와 `presenceReason/activityReason`을 보존·검사합니다.
 학습 로그로 확인한 `activity=none/fall/lie_down/get_up`을 지원합니다. `none`은 외출이나 정지가 아니며,
-`get_up`은 조건 충족 시 아침 방 전등 이벤트로 사용합니다. 실제 생산자 JSON과 공통 측정 시각 전제는
-[행동 연동 안내](wifi_behavior.md)의 예시·제한을 확인하세요. AI에서 CSI 행동 모델을 학습/실행하지 않습니다.
+`get_up`은 조건 충족 시 아침 방 전등 이벤트로 사용합니다. v0.10 통합 결과와 판단 불가 처리는
+[행동 연동 안내](wifi_behavior.md)를 확인하세요. AI에서 CSI 행동 모델을 학습/실행하지 않습니다.
 
 Wi-Fi 추론 서버가 노드 수집에 최대 2초를 기다리므로 실행기 정렬 여유는 기본 4초입니다.
 기존 직접 `IntegrationConfig()` 호출과 테스트의 기본 2초는 유지합니다. 시각을 현재 시각으로 덮어쓰지 않습니다.
@@ -196,13 +196,15 @@ EXAONE 실패 시 기존 문구 fallback을 사용하며 Qwen을 자동 로딩�
 화장실 눕기 후보와 기상 방 전등의 추가 정책, 정상 설명/오류 분리, Mock 전용 이벤트 계약은
 [Wi-Fi 행동 연동 안내](wifi_behavior.md)를 참고하세요. 후보만으로는 낙상 사건을 만들지 않습니다.
 
-현재 Wi-Fi 저장소는 위치만 발행합니다. 이 상태에서는 위치 기반 판단은 실행되지만
-기상 출수·취침·낙상에 필요한 실제 행동/움직임을 만들어내지 않습니다. `missing_inputs`를 확인하세요.
-백엔드 형식의 `activity/activityConfidence/validSec`나 별도 행동 토픽을 받아 연결할 준비는 되어 있습니다.
+v0.10에서는 위치와 행동을 한 결과에서 받습니다. `present=true`이고 행동만 `unknown`이면
+위치 기반 판단은 유지하고 행동이 필요한 판단은 보류합니다. `missing_inputs`를 확인하세요.
+`presenceReason`과 `activityReason`은 각각 해당 판단의 진단이며 서로의 유효성을 덮어쓰지 않습니다.
+통합 결과에 행동이 없거나 판단 불가이면 이전 별도 행동 토픽의 결과로 대체하지 않습니다.
 낙상 확인에는 `motion_state` 및 `fall_detected` 또는 관측된 행동 전이가 필요합니다.
 `lying`만으로 움직임 없음/낙상을 추정하지 않습니다.
 
-별도 행동 생산자가 정해지면 `HOMEVIS_BEHAVIOR_TOPIC`을 설정할 수 있습니다. 다음은 이 실행기 어댑터의
+v0.10 통합 결과에는 별도 행동 토픽 설정이 필요 없습니다. 기존 직접 위치 입력을 사용하는 경우에만
+`HOMEVIS_BEHAVIOR_TOPIC`으로 별도 관측을 결합할 수 있습니다. 다음은 이 실행기 어댑터의
 입력 예시이며 현재 Wi-Fi 서버가 이미 발행하는 형식이라는 뜻은 아닙니다.
 
 ```json

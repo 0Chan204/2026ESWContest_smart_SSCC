@@ -18,7 +18,7 @@ class MQTTSettings:
     host: str = "localhost"
     port: int = 1883
     client_id: str = "homevis-ai"
-    location_topic: str = "wifi/occupancy/state"
+    location_topic: str = "home/edge/result"
     behavior_topic: str = ""
     fall_status_topic: str = ""
     voice_topic: str = ""

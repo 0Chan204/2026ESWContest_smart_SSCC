@@ -3,8 +3,9 @@ import time
 from urllib.parse import quote
 
 from src.integration.backend_client import BackendError, HTTPResult
-from src.integration.schemas import ContractError, device_items, measured_time, number
-from .contracts import command_list, decision_payload, decision_response, string, ROOMS
+from src.integration.backend_sensing import normalize_result
+from src.integration.schemas import ContractError, device_items, measured_time
+from .contracts import command_list, decision_payload, decision_response, string
 
 
 class VoiceBackend:
@@ -49,12 +50,8 @@ class VoiceBackend:
         string(result.get("resultId"), "resultId", 100)
         at = measured_time(result.get("observedAt"))
         measured_time(result.get("savedAt"))
-        if result.get("room") not in {*ROOMS, None} or type(result.get("present")) not in (bool, type(None)):
-            raise ContractError("invalid sensing location/presence")
-        number(result.get("confidence"), "sensing confidence", nullable=True, confidence=True)
+        normalize_result(result)
         validity = result.get("validSec")
-        if validity is not None:
-            number(validity, "validSec")
         if at > self.clock() or validity is None or validity <= 0 or self.clock() >= at + validity:
             raise ContractError("stale or unbounded sensing")
         return result

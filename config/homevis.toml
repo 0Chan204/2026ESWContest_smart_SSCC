@@ -34,8 +34,8 @@ join_wait_seconds = 0.25
 tick_interval = 0.1
 status_interval = 5.0
 audit_retention_days = 7
-# GET /api/v1/sensing/results (home/edge/result stored by backend).
-# Legacy direct occupancy subscription remains available via --sensing-source mqtt.
+# GET /api/v1/sensing/results (v0.10 combined presence/activity stored by backend).
+# Subscribe to home/edge/result directly with --sensing-source mqtt.
 sensing_source = "backend"
 sensing_poll_interval = 1.0
 

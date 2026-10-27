@@ -160,6 +160,10 @@ HTTP 재시도는 같은 ID/본문을 사용하고, 프로세스 재시작으로
 
 ### Wi-Fi→백엔드의 남은 연결 작업
 
+아래 연결 불일치는 v0.7 확인 당시 기록입니다. 2026-10-27 제공된 v0.10에서는 `home/edge/result`에
+재실·행동 통합 결과를 보내도록 계약이 정리되었습니다. 현재 수신 구현과 이유 필드는
+[Wi-Fi 행동 연동](wifi_behavior.md)의 v0.10 계약을 따릅니다. 아래 담당별 확인 목록도 당시 기록입니다.
+
 현재 Wi-Fi main은 `wifi/occupancy/state`의 `time/location/location_confidence`를 발행하고,
 백엔드는 `home/edge/result`의 `observedAt/room/confidence`와 유효기간 등을 받습니다.
 현재 Wi-Fi 메시지를 실제 백엔드 스키마에 넣으면 `observedAt` 누락으로 거부됩니다.

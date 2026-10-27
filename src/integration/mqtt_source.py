@@ -52,6 +52,8 @@ def parse_behavior(payload, *, allow_mock_events=False):
         event = BEHAVIOR_LABELS[activity]
         event_id = observation_id(canonical_room(payload["location"]), measured_at)
         raw_activity, activity = activity, None
+    elif activity == "unknown":
+        reason = reason or "activity_unknown"
     elif activity is not None and activity not in OBSERVED_STATES:
         reason = reason or "unverified_activity_label"
     return BehaviorObservation(
@@ -227,7 +229,9 @@ class InputRouter:
     def flush(self, now):
         while self.pending and now - self.pending[0][0].received_at >= self.settings.join_wait_seconds:
             message, payload, behavior = self.pending.popleft()
-            if behavior is None:
+            # A backend envelope is the final combined result. Missing/unknown
+            # activity must never be replaced by an older separate-topic result.
+            if behavior is None and "backend_result" not in payload:
                 from src.control.identifiers import canonical_room
                 at = measured_time(payload["time"])
                 candidates = [b for b in self.behaviors if b.location == canonical_room(payload["location"])
