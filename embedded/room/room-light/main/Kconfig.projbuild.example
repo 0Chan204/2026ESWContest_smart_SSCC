@@ -1,0 +1,58 @@
+menu "HomeVIS room light"
+
+    config RL_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "HomeVIS-Devices"
+
+    config RL_WIFI_PASSWORD
+        string "Wi-Fi password (empty for open network)"
+        default ""
+
+    config RL_MQTT_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.4.1:1883"
+        help
+            Use mqtt://host:port or mqtts://host:port.
+            TLS uses the ESP-IDF public CA certificate bundle.
+
+    config RL_MQTT_USERNAME
+        string "MQTT username (empty for anonymous)"
+        default ""
+
+    config RL_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config RL_MQTT_CLIENT_ID
+        string "MQTT client ID (unique per physical board)"
+        default "homevis-room-light"
+
+    config RL_NTP_SERVER
+        string "NTP server"
+        default "192.168.4.1"
+
+    config RL_LED_GPIO
+        int "WS2812B strip DIN GPIO"
+        range 0 23
+        default 4
+        help
+            ESP32-C6 GPIOs: 0..7/10/11/18..23. Check the board header labels.
+            GPIO4/5 are strapping pins: do not override their level during reset.
+            USB12/13, UART16/17, strapping8/9/15 and flash pins are reserved.
+
+    config RL_LED_COUNT
+        int "Number of WS2812B pixels"
+        range 1 120
+        default 8
+        help
+            All pixels share the room light power and brightness.
+
+    config RL_LED_MAX_BRIGHTNESS
+        int "White channel value at logical brightness 100 percent (1-255)"
+        range 1 255
+        default 32
+        help
+            Scales every pixel's R/G/B channels. MQTT brightness stays 0-100.
+            Choose a limit suitable for the LED strip power supply.
+
+endmenu
