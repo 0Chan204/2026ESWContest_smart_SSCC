@@ -1,0 +1,9 @@
+{
+  "server": "http://192.168.0.10:8765",
+  "pi_id": "pi-01",
+  "spool_dir": "spool-pi-01",
+  "devices": [
+    {"id": "esp-01", "port": "/dev/ttyACM0", "baud": 115200, "target_mac": ""},
+    {"id": "esp-02", "port": "/dev/ttyACM1", "baud": 115200, "target_mac": ""}
+  ]
+}
