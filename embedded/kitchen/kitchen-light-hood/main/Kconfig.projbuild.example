@@ -1,0 +1,70 @@
+menu "HomeVIS kitchen light and hood"
+
+    config KLH_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "HomeVIS-Devices"
+
+    config KLH_WIFI_PASSWORD
+        string "Wi-Fi password (empty for open network)"
+        default ""
+
+    config KLH_MQTT_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.4.1:1883"
+        help
+            Use mqtt://host:port or mqtts://host:port.
+            TLS uses the ESP-IDF public CA certificate bundle.
+
+    config KLH_MQTT_USERNAME
+        string "MQTT username (empty for anonymous)"
+        default ""
+
+    config KLH_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config KLH_MQTT_CLIENT_ID
+        string "MQTT client ID (unique per physical board)"
+        default "homevis-kitchen-light-hood"
+
+    config KLH_NTP_SERVER
+        string "NTP server"
+        default "192.168.4.1"
+
+    config KLH_LED_GPIO
+        int "WS2812B DIN GPIO"
+        range 0 23
+        default 18
+        help
+            Supported header pins: GPIO0/1/2/3/6/7/18/19/20/21/22/23.
+            Strapping pins, native USB, UART0, flash and variant-specific
+            pins are excluded. Choose a pin exposed on your C6 board.
+
+    config KLH_LED_COUNT
+        int "Number of WS2812B pixels"
+        range 1 120
+        default 1
+
+    config KLH_LED_MAX_BRIGHTNESS
+        int "White channel value at logical brightness 100 percent (1-255)"
+        range 1 255
+        default 32
+        help
+            All pixels show white. This caps each R/G/B channel to limit
+            light intensity and supply current; MQTT brightness stays 0-100.
+
+    config KLH_RELAY_GPIO
+        int "Hood relay IN GPIO"
+        range 0 23
+        default 19
+        help
+            Use a supported header pin different from the LED pin.
+            Supported pins: GPIO0/1/2/3/6/7/18/19/20/21/22/23.
+
+    config KLH_RELAY_ACTIVE_LOW
+        bool "Relay turns on when IN is LOW"
+        default y
+        help
+            Disable for an active-high relay module. Both outputs start OFF.
+
+endmenu
