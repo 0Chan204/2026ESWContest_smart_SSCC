@@ -6,6 +6,8 @@
 tests/
 Kconfig.projbuild
 .clangd
+.aws
+build-network-check/
 
 # Build directories and compiled artifacts
 build/
@@ -87,3 +89,55 @@ env/
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Toilet light/fan: alternate build outputs and portable model tests.
+/toilet/toilet-light-fan/build-*/
+!/toilet/toilet-light-fan/tests/
+!/toilet/toilet-light-fan/tests/run.sh
+!/toilet/toilet-light-fan/tests/test_model.c
+
+# Kitchen light/hood: alternate build outputs and portable model tests.
+/kitchen/kitchen-light-hood/build-*/
+!/kitchen/kitchen-light-hood/tests/
+!/kitchen/kitchen-light-hood/tests/run.sh
+!/kitchen/kitchen-light-hood/tests/test_model.c
+
+# Room light: alternate build outputs and portable model tests.
+/room/room-light/build-*/
+!/room/room-light/tests/
+!/room/room-light/tests/run.sh
+!/room/room-light/tests/test_model.c
+
+# Room air purifier: alternate builds and portable model tests.
+/room/air-purifier/build-*/
+!/room/air-purifier/tests/
+!/room/air-purifier/tests/run.sh
+!/room/air-purifier/tests/test_model.c
+
+# Kitchen water purifier: alternate builds and portable model tests.
+/kitchen/water-purifier/build-*/
+!/kitchen/water-purifier/tests/
+!/kitchen/water-purifier/tests/run.sh
+!/kitchen/water-purifier/tests/test_model.c
+
+# Standalone kitchen light: alternate builds and portable model tests.
+/kitchen/kitchen-light/build-*/
+!/kitchen/kitchen-light/tests/
+!/kitchen/kitchen-light/tests/run.sh
+!/kitchen/kitchen-light/tests/test_model.c
+
+!/room/air-purifier/tests/check_backend.py
+
+# S3 USB gateway: local settings and credential backups.
+/gateway/esp32s3-gateway/host/*.local.json
+/gateway/esp32s3-gateway/host/backups/
+/gateway/esp32s3-gateway/build-*/
+!/gateway/esp32s3-gateway/tests/
+!/gateway/esp32s3-gateway/tests/test_gateway.py
+
+# Private environment and device-specific settings
+.env
+.env.*
+!.env.example
+*.local.json
+build-*/
