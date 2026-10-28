@@ -1,0 +1,8 @@
+{
+  "devices": [
+    {"id": "esp-01", "port": "/dev/ttyACM0", "baud": 115200, "target_mac": ""},
+    {"id": "esp-02", "port": "/dev/ttyACM1", "baud": 115200, "target_mac": ""},
+    {"id": "esp-03", "port": "/dev/ttyACM2", "baud": 115200, "target_mac": ""},
+    {"id": "esp-04", "port": "/dev/ttyACM3", "baud": 115200, "target_mac": ""}
+  ]
+}
