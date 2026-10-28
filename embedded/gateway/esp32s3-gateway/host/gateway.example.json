@@ -1,0 +1,7 @@
+{
+  "serial_port": "/dev/ttyACM0",
+  "serial_baud": 460800,
+  "broker_host": "127.0.0.1",
+  "broker_port": 1883,
+  "max_streams": 8
+}

@@ -1,0 +1,32 @@
+menu "HomeVIS USB gateway"
+    choice GW_TRANSPORT
+        prompt "Laptop serial transport"
+        default GW_TRANSPORT_UART0
+        config GW_TRANSPORT_UART0
+            bool "Board COM port (USB-UART to UART0, TX43/RX44)"
+        config GW_TRANSPORT_USB_SERIAL_JTAG
+            bool "Native USB Serial/JTAG port (GPIO19/20)"
+    endchoice
+    config GW_SERIAL_BAUD
+        int "UART0 data baud rate (must match laptop --baud)"
+        range 115200 921600
+        default 460800
+    config GW_AP_SSID
+        string "Appliance Wi-Fi SSID"
+        default "HomeVIS-Devices"
+    config GW_AP_PASSWORD
+        string "Appliance Wi-Fi WPA2 password (8-63 characters)"
+        default ""
+    config GW_AP_CHANNEL
+        int "2.4GHz Wi-Fi channel"
+        range 1 11
+        default 6
+    config GW_MAX_CLIENTS
+        int "Maximum Wi-Fi stations and MQTT streams"
+        range 6 10
+        default 8
+    config GW_MQTT_PORT
+        int "MQTT proxy listen port"
+        range 1024 65535
+        default 1883
+endmenu
