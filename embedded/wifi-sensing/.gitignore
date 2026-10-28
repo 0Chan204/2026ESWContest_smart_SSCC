@@ -1,0 +1,15 @@
+# Private Wi-Fi settings and generated ESP-IDF files
+Kconfig.projbuild
+sdkconfig
+sdkconfig.old
+build/
+build-*/
+managed_components/
+.env
+.env.*
+!.env.example
+.vscode/
+.devcontainer/
+.clangd
+__pycache__/
+*.pyc

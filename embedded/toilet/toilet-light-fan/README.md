@@ -2,7 +2,7 @@
 
 ![화장실 Wi-Fi 센싱·조명·환풍기 모듈](../../docs/images/toilet-wifi-sensing.jpg)
 
-사진은 전체 센싱 모듈입니다. 이 폴더는 조명·환풍기 제어 펌웨어이며, Raspberry Pi의 센싱 처리는 [ai-wifi-sensing](../../../ai-wifi-sensing/README.md)에서 확인해 주세요. CSI 송수신 ESP32 펌웨어는 이번 원본 폴더에 포함되어 있지 않습니다.
+사진은 전체 센싱 모듈입니다. 이 폴더는 조명·환풍기 제어 펌웨어이며, Raspberry Pi의 센싱 처리는 [ai-wifi-sensing](../../../ai-wifi-sensing/README.md)에서 확인해 주세요. CSI 수집용 ESP32 펌웨어는 [wifi-sensing](../../wifi-sensing/README.md)에 있습니다.
 
 ESP32-C3 SuperMini 한 대에서 WS2812B 전등과 릴레이 환풍기를 독립적으로 제어합니다.
 ESP-IDF 5.5.4 프로젝트이며, MQTT 기기 ID는 전등 `light-00`, 환풍기 `fan-02`입니다.

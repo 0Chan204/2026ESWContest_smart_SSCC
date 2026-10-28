@@ -1,6 +1,6 @@
 # HomeVIS 임베디드 장치
 
-ESP-IDF 5.5.4 기반 가전 시연 펌웨어와 ESP32-S3 USB 게이트웨이입니다. `HomeVIS-EM.devices`의 최신 작업 파일에서 소스·공개 설정·기존 테스트·라이선스만 선별했습니다. 원본은 보존했습니다.
+ESP-IDF 5.5.4 기반 가전 시연 펌웨어·ESP32-S3 USB 게이트웨이·ESP32-C6 CSI 수집 펌웨어입니다. `HomeVIS-EM.devices`와 `HomeVIS-CSI_Collection/firmware`에서 소스·공개 설정·기존 테스트·라이선스를 선별했습니다. 원본은 보존했습니다.
 
 ## 프로젝트
 
@@ -14,10 +14,14 @@ ESP-IDF 5.5.4 기반 가전 시연 펌웨어와 ESP32-S3 USB 게이트웨이입�
 | [kitchen/water-purifier](kitchen/water-purifier/README.md) | ESP32-C6 / 4MB | 터치·한글 OLED·LED 출수 시연, `water-01` |
 | [toilet/toilet-light-fan](toilet/toilet-light-fan/README.md) | ESP32-C3 / 4MB | 욕실 조명·환풍기, `light-00` / `fan-02` |
 | [gateway/esp32s3-gateway](gateway/esp32s3-gateway/README.md) | ESP32-S3 N16R8 / 16MB | 가전 Wi-Fi·NTP·USB TCP 중계 |
+| [wifi-sensing/ap](wifi-sensing/ap/README.md) | ESP32-C6 / 2MB | CSI 수신기용 Wi-Fi AP·DHCP·ping 응답 |
+| [wifi-sensing/receiver](wifi-sensing/receiver/README.md) | ESP32-C6 / 2MB | Wi-Fi CSI 측정·USB CSV 출력 |
 
 주방 단독 조명과 조명/후드는 같은 `light-02`를 사용하므로 둘 중 하나를 선택해 주세요. `dummy-data/`는 통합 저장소에 있던 서버 연동 예제를 보존한 폴더이며 실제 장치 업로드에는 위 프로젝트를 사용합니다.
 
 ## 환경 설정
+
+CSI 수집 AP·수신기는 SSID `HomeVIS-Local`과 별도의 로컬 WPA2 설정을 사용합니다. [CSI 펌웨어 안내](wifi-sensing/README.md)와 [수집 프로그램](../ai-wifi-sensing/collection/README.md)을 참고해 주세요.
 
 펌웨어는 `.env` 대신 ESP-IDF Kconfig를 사용합니다. `main/Kconfig.projbuild.example`에서 로컬 `main/Kconfig.projbuild`가 최초 구성 시 자동 생성됩니다. 실제 Wi-Fi·MQTT 인증값은 로컬 파일 또는 `idf.py menuconfig`에 입력해 주세요. `sdkconfig.defaults`에는 공개 가능한 보드 설정만 들어 있습니다.
 
