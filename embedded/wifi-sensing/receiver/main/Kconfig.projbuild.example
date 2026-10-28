@@ -1,0 +1,9 @@
+menu "HomeVIS CSI receiver"
+    config CSI_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "HomeVIS-Local"
+
+    config CSI_WIFI_PASSWORD
+        string "Wi-Fi WPA2 password (8-63 bytes)"
+        default ""
+endmenu
