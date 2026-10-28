@@ -1,5 +1,9 @@
 # HomeVIS 화장실 전등·환풍기
 
+![화장실 Wi-Fi 센싱·조명·환풍기 모듈](../../docs/images/toilet-wifi-sensing.jpg)
+
+사진은 전체 센싱 모듈입니다. 이 폴더는 조명·환풍기 제어 펌웨어이며, Raspberry Pi의 센싱 처리는 [ai-wifi-sensing](../../../ai-wifi-sensing/README.md)에서 확인해 주세요. CSI 송수신 ESP32 펌웨어는 이번 원본 폴더에 포함되어 있지 않습니다.
+
 ESP32-C3 SuperMini 한 대에서 WS2812B 전등과 릴레이 환풍기를 독립적으로 제어합니다.
 ESP-IDF 5.5.4 프로젝트이며, MQTT 기기 ID는 전등 `light-00`, 환풍기 `fan-02`입니다.
 
@@ -32,8 +36,8 @@ ESP-IDF 5.5.4 프로젝트이며, MQTT 기기 ID는 전등 `light-00`, 환풍기
 기존 로컬 파일이 있으면 덮어쓰지 않습니다. 공개 저장소에는 `.example`만 포함하세요.
 
 ```bash
-. /home/wonyj/.espressif/tools/activate_idf_v5.5.4.sh
-cd /home/wonyj/Desktop/2026ESWC/HomeVIS-EM.devices/toilet/toilet-light-fan
+# ESP-IDF 5.5.4 환경을 먼저 활성화해 주세요.
+cd /path/to/2026ESWContest_smart_SSCC/embedded/toilet/toilet-light-fan
 idf.py menuconfig
 idf.py build
 idf.py -p /dev/ttyACM0 flash monitor
@@ -136,8 +140,10 @@ MQTT 연결은 하나이고, 전등과 환풍기의 토픽 및 상태는 분리�
 
 ## 검증
 
+호스트 테스트는 일반 개발용 셸에서 `IDF_PATH`를 설치된 ESP-IDF 5.5.4 경로로 지정해 실행해 주세요. 교차 링커가 우선되는 경우의 실행 방법은 [공통 검증 안내](../../README.md#빌드와-검증)를 참고해 주세요.
+
 ```bash
-IDF_PATH=/home/wonyj/.espressif/v5.5.4/esp-idf sh tests/run.sh
+ASAN_OPTIONS=detect_leaks=0 sh tests/run.sh
 ```
 
 호스트 테스트는 명령 검증, 전등·팬 독립 동작, 깜빡임 복귀, 절전 밝기 전환,
