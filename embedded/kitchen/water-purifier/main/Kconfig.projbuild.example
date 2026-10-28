@@ -1,0 +1,112 @@
+menu "HomeVIS water purifier"
+
+    config WP_WIFI_SSID
+        string "Wi-Fi SSID"
+        default "HomeVIS-Devices"
+
+    config WP_WIFI_PASSWORD
+        string "Wi-Fi password (empty for open network)"
+        default ""
+
+    config WP_MQTT_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.4.1:1883"
+        help
+            Use mqtt://host:port or mqtts://host:port.
+            TLS uses the ESP-IDF public CA certificate bundle.
+
+    config WP_MQTT_USERNAME
+        string "MQTT username (empty for anonymous)"
+        default ""
+
+    config WP_MQTT_PASSWORD
+        string "MQTT password"
+        default ""
+
+    config WP_MQTT_CLIENT_ID
+        string "MQTT client ID (unique per physical board)"
+        default "homevis-kitchen-water-purifier"
+
+    config WP_NTP_SERVER
+        string "NTP server"
+        default "192.168.4.1"
+
+    config WP_LED_GPIO
+        int "WS2812B strip DIN GPIO (8 pixels)"
+        range 0 23
+        default 18
+        help
+            Allowed GPIOs: 0/1/2/3/6/7/18/19/20/21/22/23. No overlaps.
+
+    config WP_LED_BRIGHTNESS
+        int "Red/blue channel brightness (1-255)"
+        range 1 255
+        default 255
+
+    config WP_SDA_GPIO
+        int "OLED SDA GPIO"
+        range 0 23
+        default 6
+        help
+            Allowed GPIOs: 0/1/2/3/6/7/18/19/20/21/22/23. No overlaps.
+
+    config WP_SCL_GPIO
+        int "OLED SCL GPIO"
+        range 0 23
+        default 7
+        help
+            Allowed GPIOs: 0/1/2/3/6/7/18/19/20/21/22/23. No overlaps.
+
+    config WP_TOUCH_1_GPIO
+        int "Touch 1 output GPIO"
+        range 0 23
+        default 0
+        help
+            Allowed GPIOs: 0/1/2/3/6/7/18/19/20/21/22/23. No overlaps.
+
+    config WP_TOUCH_2_GPIO
+        int "Touch 2 output GPIO"
+        range 0 23
+        default 1
+        help
+            Allowed GPIOs: 0/1/2/3/6/7/18/19/20/21/22/23. No overlaps.
+
+    config WP_TOUCH_3_GPIO
+        int "Touch 3 output GPIO"
+        range 0 23
+        default 2
+        help
+            Allowed GPIOs: 0/1/2/3/6/7/18/19/20/21/22/23. No overlaps.
+
+    config WP_TOUCH_4_GPIO
+        int "Touch 4 dispense/stop output GPIO"
+        range 0 23
+        default 3
+        help
+            Allowed GPIOs: 0/1/2/3/6/7/18/19/20/21/22/23. No overlaps.
+
+    config WP_TOUCH_ACTIVE_LOW
+        bool "Touch module outputs are active low (direct/momentary mode)"
+        default n
+
+    config WP_OLED_ADDRESS
+        hex "SSD1306 I2C address"
+        range 0x3c 0x3d
+        default 0x3c
+
+    config WP_FLOW_ML_PER_MIN
+        int "Simulated dispensing rate (mL/minute)"
+        range 1 60000
+        default 600
+        help
+            Controls how long the LEDs stay on. No pump or flow sensor.
+            At 600 mL/minute, a 120 mL demonstration lasts 12 seconds.
+
+    config WP_MAX_RUN_SEC
+        int "Maximum continuous dispensing time (seconds)"
+        range 1 300
+        default 120
+        help
+            Commands requiring more time are rejected, not silently truncated.
+
+endmenu
