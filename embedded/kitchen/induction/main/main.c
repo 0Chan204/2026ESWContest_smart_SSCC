@@ -50,9 +50,10 @@ static void control_task(void *arg)
     induction_input_init();
     static induction_state_t s;
     induction_init(&s);
-    button_t touch = {.raw=gpio_get_level(CONFIG_INDUCTION_TOUCH_GPIO)};
     button_t sw = {.raw=gpio_get_level(CONFIG_INDUCTION_ENCODER_SW_GPIO)};
-    touch.stable=touch.raw; sw.stable=sw.raw;
+    sw.stable=sw.raw;
+    ESP_LOGI(TAG,"Encoder button: GPIO%d initial=%d, active=0, debounce=40ms; LED GPIO%d",
+        CONFIG_INDUCTION_ENCODER_SW_GPIO,sw.stable,CONFIG_INDUCTION_LED_GPIO);
     int previous_a=gpio_get_level(CONFIG_INDUCTION_ENCODER_A_GPIO);
     int64_t tick_at=esp_timer_get_time(), local_at=0;
     share_state(&s);
@@ -64,14 +65,11 @@ static void control_task(void *arg)
         bool local=false;
         static induction_command_t cmd;
         memset(&cmd,0,sizeof(cmd));
-        bool touch_event=pressed(&touch,gpio_get_level(CONFIG_INDUCTION_TOUCH_GPIO),1,now);
         bool sw_event=pressed(&sw,gpio_get_level(CONFIG_INDUCTION_ENCODER_SW_GPIO),0,now);
         int a=gpio_get_level(CONFIG_INDUCTION_ENCODER_A_GPIO);
-        if (touch_event) {
+        if (sw_event) {
             cmd.type=s.mode == ST_ON ? CMD_OFF : CMD_ON;
             local=true;
-        } else if (s.mode == ST_ON && sw_event) {
-            cmd.type=CMD_LEVEL; cmd.level=0; local=true;
         } else if (s.mode == ST_ON && a && !previous_a) {
             int next=(int)s.level + (gpio_get_level(CONFIG_INDUCTION_ENCODER_B_GPIO) ? -1 : 1);
             if (next>=0 && next<=9 && next!=(int)s.level) {
@@ -80,7 +78,11 @@ static void control_task(void *arg)
         }
         previous_a=a;
         if (local) {
-            induction_apply(&s,&cmd,true,CONFIG_INDUCTION_DEFAULT_LEVEL,now);
+            bool applied=induction_apply(&s,&cmd,true,CONFIG_INDUCTION_DEFAULT_LEVEL,now);
+            if (sw_event)
+                ESP_LOGI(TAG,"Encoder button command: %s, %s -> %s, level=%u",
+                    applied ? "applied" : "rejected",induction_mode_name(old_mode),
+                    induction_mode_name(s.mode),(unsigned)s.level);
             local_at=now; /* Reject older queued remote increases after local input. */
         }
         temperature_sample_t sample;
@@ -178,7 +180,7 @@ static void sound_task(void *arg)
 }
 static void validate_pins(void)
 {
-    int pins[]={CONFIG_INDUCTION_LED_GPIO,CONFIG_INDUCTION_TOUCH_GPIO,
+    int pins[]={CONFIG_INDUCTION_LED_GPIO,
         CONFIG_INDUCTION_ENCODER_A_GPIO,CONFIG_INDUCTION_ENCODER_B_GPIO,
         CONFIG_INDUCTION_ENCODER_SW_GPIO,CONFIG_INDUCTION_BUZZER_GPIO,
         CONFIG_INDUCTION_SDA_GPIO,CONFIG_INDUCTION_SCL_GPIO};

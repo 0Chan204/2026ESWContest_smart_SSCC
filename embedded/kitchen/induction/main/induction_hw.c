@@ -25,9 +25,6 @@ static spi_device_handle_t s_rgb;
 static DMA_ATTR uint8_t s_spi_frame[WS2812_SPI_FRAME_BYTES];
 void induction_input_init(void)
 {
-    gpio_config_t touch = {.pin_bit_mask=1ULL << CONFIG_INDUCTION_TOUCH_GPIO,
-        .mode=GPIO_MODE_INPUT, .pull_down_en=GPIO_PULLDOWN_ENABLE};
-    ESP_ERROR_CHECK(gpio_config(&touch));
     gpio_config_t enc = {.pin_bit_mask=(1ULL << CONFIG_INDUCTION_ENCODER_A_GPIO) |
         (1ULL << CONFIG_INDUCTION_ENCODER_B_GPIO) | (1ULL << CONFIG_INDUCTION_ENCODER_SW_GPIO),
         .mode=GPIO_MODE_INPUT, .pull_up_en=GPIO_PULLUP_ENABLE};

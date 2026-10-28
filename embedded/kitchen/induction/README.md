@@ -1,13 +1,16 @@
 # HomeVIS Induction · ESP32-C6
 
-ESP32-C6 기반 1구 인덕션 데모 펌웨어입니다. 실제 가열부 없이 12개 WS2812 LED의 점등 개수와 밝기로 화력을 표현합니다. 터치·엔코더로 직접 조작하거나 HomeVIS 서버에서 MQTT 명령을 보낼 수 있습니다.
+![인덕션 시연 장치](../../docs/images/induction.jpg)
+
+현재 통신은 가전 전용 Wi-Fi `HomeVIS-Devices`, MQTT `mqtt://192.168.4.1:1883`, NTP `192.168.4.1`을 사용합니다. ESP32-S3와 노트북 USB 중계 실행 방법은 [게이트웨이 README](../../gateway/esp32s3-gateway/README.md)를 참고하세요.
+
+ESP32-C6 기반 1구 인덕션 데모 펌웨어입니다. 실제 가열부 없이 12개 WS2812 LED의 점등 개수와 밝기로 화력을 표현합니다. 엔코더로 직접 조작하거나 HomeVIS 서버에서 MQTT 명령을 보낼 수 있습니다.
 
 ## 지원 구성
 
 - **ESP32-C6-DevKitC-1 (N8)**: 8MB Flash, 내부 SRAM 사용
 - ESP-IDF **5.5.4**
 - WS2812/WS2812B 12개, GRB 순서
-- 외부 터치 모듈: active high
 - 로터리 엔코더 A/B 및 버튼: 버튼 active low
 - SSD1306 128×64 I²C OLED: 주소 `0x3C`, 선택 사항
 - GY906 온도센서: 주소 `0x5A`
@@ -41,7 +44,6 @@ LED를 원형으로 배치하고 **물리적 연결 순서대로 1~12번**으로
 | 장치 신호 | C6 GPIO | 비고 |
 |---|---:|---|
 | WS2812 DIN | 18 | 외부 12개 LED의 첫 DIN |
-| 터치 모듈 OUT | 19 | 누르면 high |
 | 엔코더 A | 20 | 내부 pull-up |
 | 엔코더 B | 21 | 내부 pull-up |
 | 엔코더 SW | 22 | 누르면 GND |
@@ -51,11 +53,11 @@ LED를 원형으로 배치하고 **물리적 연결 순서대로 1~12번**으로
 
 WS2812 전원은 LED 개수와 밝기에 맞는 5V 전원을 사용하고 C6와 GND를 연결합니다. LED 전원을 GPIO에서 공급하지 마세요. 5V LED의 데이터 입력 조건에 맞는 레벨 변환을 사용하면 안정적인 연결에 도움이 됩니다. 센서와 OLED의 I²C pull-up은 C6에 맞는 3.3V로 연결합니다.
 
-DevKitC-1의 Flash용 GPIO24~30, USB GPIO12/13, USB-UART 브리지 GPIO16/17, 부팅 설정 GPIO4/5/8/9/15는 외부 장치 핀으로 허용하지 않습니다. GPIO8에는 보드 내장 RGB LED도 연결되어 있습니다. 중복 GPIO도 부팅 시 검사합니다. 터치는 외부 디지털 터치 모듈을 사용합니다.
+DevKitC-1의 Flash용 GPIO24~30, USB GPIO12/13, USB-UART 브리지 GPIO16/17, 부팅 설정 GPIO4/5/8/9/15는 외부 장치 핀으로 허용하지 않습니다. GPIO8에는 보드 내장 RGB LED도 연결되어 있습니다. 중복 GPIO도 부팅 시 검사합니다. 터치 입력은 사용하지 않습니다.
 
 LED는 별도 5V 전원으로 공급하고 C6는 USB로 공급할 수 있습니다. 이 구성에서는 외부 전원의 +5V를 LED에만 연결하고, C6·LED·외부 전원의 GND를 공통으로 연결합니다. LED 데이터는 GPIO18에서 74AHCT125 같은 3.3V→5V 레벨 변환기를 거쳐 DIN으로 전달합니다. LED에 연결하는 신호는 MOSI 한 가닥이며 SPI의 SCLK·MISO·CS는 외부에 연결하지 않습니다.
 
-GY906·OLED·터치 모듈의 공급 전압은 실제 제품 사양에 맞춰 연결하고, C6에 들어오는 신호는 3.3V 기준으로 맞춥니다. 수동 부저 모듈은 신호를 GPIO23에 연결하며, 2핀 부저는 정격에 맞는 구동 회로를 사용합니다.
+GY906·OLED의 공급 전압은 실제 제품 사양에 맞춰 연결하고, C6에 들어오는 신호는 3.3V 기준으로 맞춥니다. 수동 부저 모듈은 신호를 GPIO23에 연결하며, 2핀 부저는 정격에 맞는 구동 회로를 사용합니다.
 
 핀 위치와 8MB Flash 구성은 [Espressif 보드 문서](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32c6/esp32-c6-devkitc-1/user_guide.html)를 참고하세요.
 
@@ -90,7 +92,7 @@ idf.py menuconfig
 | Unique MQTT client / device ID | 기본 `induction-01`, 장치마다 고유하게 설정 |
 | Burner ID | 기본 `burner-1` |
 | MQTT topic prefix | 기본 `home/kitchen/induction/induction-01` |
-| NTP server | 기본 `pool.ntp.org`, 현장에서 접근 가능한 서버로 변경 가능 |
+| NTP server | 기본 `192.168.4.1`, 현장에서 접근 가능한 서버로 변경 가능 |
 | Maximum LED red channel brightness | 기본 96 |
 | Default level on power-on | 기본 5 |
 | GPIO 설정 | 실제 배선에 맞게 수정 |
@@ -129,7 +131,7 @@ flowchart TB
     end
 
     subgraph DeviceTasks["기기 동작 태스크"]
-        Input["터치 · 엔코더<br/>5ms마다 입력 확인"]
+        Input["엔코더<br/>5ms마다 입력 확인"]
         Control["control_task<br/>명령 판정 · 상태 전환 · 사용 시간"]
         Sensor["peripheral_task<br/>GY906 실측 · CRC 검증 · 500ms 주기"]
         LED["led_task<br/>점등 개수 · 밝기 계산 → SPI DMA"]
@@ -156,7 +158,7 @@ flowchart TB
     Transmit -->|"state / ack · QoS 1 · retain false"| Server
 ```
 
-- **로컬 조작:** 터치·엔코더 입력을 제어 태스크가 직접 읽고 상태에 반영합니다. 해당 루프에서는 원격 명령 처리를 미룹니다.
+- **로컬 조작:** 엔코더 입력을 제어 태스크가 직접 읽고 상태에 반영합니다. 해당 루프에서는 원격 명령 처리를 미룹니다.
 - **온도 측정:** 주변장치 태스크가 센서 응답을 검증해 최신 온도 큐에 넣고, 제어 태스크가 온도 유효성과 냉각·과열 상태를 관리합니다. OLED 출력도 같은 주변장치 태스크가 담당해 I²C 접근을 순서대로 처리합니다.
 - **원격 명령:** MQTT 콜백이 검증한 명령을 큐에 넣으면 제어 태스크가 중복 ID와 현재 상태를 확인합니다. 적용 결과와 당시 상태를 ACK 큐에 넣고, 중복 명령에는 캐시된 ACK를 재사용합니다.
 - **출력과 보고:** LED는 최신 상태에 따라 점등 개수와 밝기를 바꾸고, 부저는 효과음 요청을 처리합니다. 네트워크 태스크는 상태와 일반 ACK를, 수신 콜백은 검증 오류·명령 큐 초과에 대한 ACK를 MQTT 송신 큐에 넣습니다. JSON이 깨졌거나 문자열 `commandId`가 없어 식별할 수 없는 메시지는 ACK 없이 무시합니다.
@@ -179,11 +181,16 @@ C6의 RMT는 DMA를 지원하지 않으므로 LED에는 **SPI2 DMA**를 사용�
 
 ## 로컬 조작과 온도
 
-- 터치: 켜기/끄기. 켜면 기본 5단계입니다.
 - 엔코더 회전: 켜진 상태에서 0~9단계 변경.
-- 엔코더 버튼: 켜진 상태를 유지하고 0단계로 변경.
-- 터치·버튼: 40ms 디바운싱.
+- 엔코더 버튼: 누를 때마다 켜기/끄기. 켜면 기본 5단계입니다.
+- 엔코더 버튼: 40ms 디바운싱. 길게 눌러도 한 번만 처리하며, 뗀 후 다시 누르면 다음 동작을 처리합니다.
 - 로컬 입력이 있으면 해당 루프의 원격 명령 처리를 미룹니다. 그 입력보다 먼저 수신된 원격 켜기/단계 변경 명령은 거절합니다. 원격 끄기는 허용합니다.
+
+버튼이 동작하지 않으면 `idf.py -p <포트> flash monitor`로 현재 펌웨어를 올리고 로그를 확인합니다. 시작 시 `Encoder button: GPIO3 initial=1, active=0, debounce=40ms`처럼 실제 적용된 SW GPIO가 표시됩니다. GPIO 번호는 `menuconfig`의 `INDUCTION_ENCODER_SW_GPIO` 설정에 따릅니다. `Kconfig.projbuild`의 기본값만 변경해도 기존 `sdkconfig` 값은 유지됩니다.
+
+- 엔코더 SW는 설정된 GPIO에, GND는 보드 GND에 연결합니다. 버튼을 누르면 SW가 LOW가 되어야 합니다.
+- `Encoder button command: applied, off -> on, level=5`가 나오면 켜기 명령이 처리된 것입니다. LED가 켜지지 않으면 LED GPIO, DIN 방향, 전원 및 공통 GND를 확인합니다.
+- 부팅 시 버튼을 누르고 있었다면 뗀 후 다시 눌러 주세요. 고장 난 터치 모듈은 분리해도 됩니다. 터치 GPIO는 읽거나 제어에 사용하지 않습니다.
 
 GY906의 실제 센서값을 500ms마다 읽으며 CRC를 검증합니다. 센서 오류가 나거나 측정값이 2초 이상 오래되면 OLED에 `T --- C`를 표시합니다. 화력 단계나 경과 시간은 측정 온도를 변경하지 않습니다.
 

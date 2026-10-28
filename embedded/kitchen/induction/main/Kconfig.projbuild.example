@@ -7,7 +7,7 @@ menu "HomeVIS induction configuration"
 
     config INDUCTION_WIFI_SSID
         string "Wi-Fi SSID"
-        default ""
+        default "HomeVIS-Devices"
 
     config INDUCTION_WIFI_PASSWORD
         string "Wi-Fi password"
@@ -15,7 +15,7 @@ menu "HomeVIS induction configuration"
 
     config INDUCTION_MQTT_URI
         string "MQTT broker URI (mqtt://host:1883)"
-        default ""
+        default "mqtt://192.168.4.1:1883"
 
     config INDUCTION_MQTT_USERNAME
         string "MQTT username"
@@ -39,7 +39,7 @@ menu "HomeVIS induction configuration"
 
     config INDUCTION_NTP_SERVER
         string "NTP server"
-        default "pool.ntp.org"
+        default "192.168.4.1"
 
     config INDUCTION_LED_MAX_BRIGHTNESS
         int "Maximum LED red channel brightness (12 LEDs)"
@@ -69,11 +69,6 @@ menu "HomeVIS induction configuration"
         int "External 12-pixel WS2812 data GPIO"
         range 0 23
         default 18
-
-    config INDUCTION_TOUCH_GPIO
-        int "External touch module GPIO (active high)"
-        range 0 23
-        default 19
 
     config INDUCTION_ENCODER_A_GPIO
         int "Encoder A GPIO"
